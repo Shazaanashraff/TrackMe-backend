@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: bus-tracking-backend
+    runtime: node
+    startCommand: npm start
+    buildCommand: npm install
+    
+    # Health check to keep service warm
+    healthCheck:
+      path: /health
+      interval: 30  # Check every 30 seconds
+      timeout: 15   # Wait up to 15s for response (accounts for cold start DB connection)
+    
+    # Auto-deploy on git push
+    autoDeploy: true
+    
+    # Environment variables (set these in Render dashboard)
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      # These must be set in Render dashboard (don't put secrets in this file):
+      # MONGODB_URI=<your-mongodb-uri>
+      # JWT_SECRET=<your-secure-random-secret>
+      # CLIENT_ORIGINS=<comma-separated-urls>
+
+# Recommended Render dashboard setup:
+# 1. Create new Web Service
+# 2. Connect GitHub repository
+# 3. Select branch: main
+# 4. Deployment plan: Free
+# 5. Environment variables (Dashboard > Environment):
+#    - NODE_ENV: production
+#    - MONGODB_URI: <your MongoDB Atlas connection string>
+#    - JWT_SECRET: <generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+#    - CLIENT_ORIGINS: https://user-app-url.web.app,https://driver-app-url.web.app,http://localhost:* (for dev)
+
+# Keep-alive setup (Uptime Robot):
+# 1. Sign up at uptime.com (free tier)
+# 2. Create monitor:
+#    - URL: https://your-render-app.onrender.com/health
+#    - Monitor type: HTTP(s)
+#    - Check interval: 5 minutes (free tier)
+#    - Timeout: 30 seconds (to account for cold start + DB init)
+# This prevents Render from spinning down your instance after 15 minutes of inactivity.

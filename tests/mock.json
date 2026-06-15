@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "generated": "2026-05-22",
+    "ttl_seconds": 86400,
+    "notes": "Use this file as fixture input for unit, integration and stress tests. TTL ~ 1 day for stress runs."
+  },
+  "users": [
+    {"id": "user-1", "email": "test+valid@example.com", "password": "P@ssw0rd!"},
+    {"id": "user-2", "email": "missingfields@example.com"}
+  ],
+  "login": {
+    "valid": {"email": "test+valid@example.com", "password": "P@ssw0rd!"},
+    "invalid": {"email": "not-an-email", "password": ""},
+    "malformed": "{not:json}"
+  },
+  "buses": [
+    {"id": "bus-1", "plate": "ABC-123", "routeId": "route-1"}
+  ],
+  "routes": [
+    {"id": "route-1", "name": "Downtown Loop", "stops": ["stop-1","stop-2"]}
+  ],
+  "bookings": [
+    {"id": "booking-1", "userId": "user-1", "busId": "bus-1", "seat": 1, "status": "confirmed"}
+  ],
+  "notifications": [
+    {"id": "notif-1", "userId": "user-1", "title": "Test", "body": "Test message"}
+  ],
+  "eta": {
+    "valid": {"from": "stop-1", "to": "stop-2", "departure": "2026-05-22T12:00:00Z"},
+    "invalid": {"from": "", "to": 123}
+  },
+  "driverEarnings": [
+    {"id": "earning-1", "driverId": "driver-1", "amount": 100.5, "currency": "LKR"}
+  ],
+  "edgeCases": {
+    "oversizeString": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "sqlInjectionLike": "'; drop table users; --",
+    "veryLargeArray": [1,2,3,4,5,6,7,8,9,10]
+  }
+}

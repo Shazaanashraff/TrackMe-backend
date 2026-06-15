@@ -32,10 +32,30 @@ const io = new Server(server, {
   }
 });
 
-// Connect to MongoDB and bootstrap required auth accounts.
+// Startup state tracking for non-blocking initialization
+const startupState = {
+  httpReady: false,
+  dbConnected: false,
+  bootstrapComplete: false,
+  startTime: Date.now()
+};
+
+// Connect to MongoDB and bootstrap required auth accounts (runs in background).
 const bootstrap = async () => {
-  await connectDB();
-  await ensureSuperAdminAccount();
+  try {
+    console.log(`⏱️  [${new Date().toISOString()}] Starting DB connection...`);
+    await connectDB();
+    startupState.dbConnected = true;
+    console.log(`✅ [${new Date().toISOString()}] DB connected (${Date.now() - startupState.startTime}ms)`);
+
+    console.log(`⏱️  [${new Date().toISOString()}] Ensuring super admin account...`);
+    await ensureSuperAdminAccount();
+    startupState.bootstrapComplete = true;
+    console.log(`✅ [${new Date().toISOString()}] Bootstrap complete (${Date.now() - startupState.startTime}ms)`);
+  } catch (error) {
+    console.error('❌ Bootstrap failed:', error.message);
+    console.error('⚠️  Server will continue running, but DB-dependent features may fail');
+  }
 };
 
 // Middleware
@@ -55,11 +75,32 @@ app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);
 app.use('/api/bus-reviews', busReviewRoutes);
 
-// Health check endpoint
+// Health check endpoint (services receiving requests = keep-alive friendly)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    isReady: startupState.bootstrapComplete
+  });
+});
+
+// Readiness check endpoint (all services ready including DB)
+app.get('/ready', (req, res) => {
+  if (startupState.bootstrapComplete) {
+    return res.status(200).json({
+      status: 'ready',
+      message: 'All services initialized',
+      timestamp: new Date().toISOString(),
+      startupTimeMs: Date.now() - startupState.startTime
+    });
+  }
+  
+  res.status(202).json({
+    status: 'starting',
+    message: 'Services are initializing',
+    dbConnected: startupState.dbConnected,
+    bootstrapComplete: startupState.bootstrapComplete,
     uptime: process.uptime()
   });
 });
@@ -78,18 +119,27 @@ setupSocket(io);
 // Centralized error handling middleware (must be last)
 app.use(errorHandler);
 
-// Start server
+// Start server - HTTP server listens immediately, bootstrap runs in background
 const PORT = process.env.PORT || 5000;
-const startServer = async () => {
+const startServer = () => {
   try {
-    await bootstrap();
+    const httpStartTime = Date.now();
     server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`WebSocket server ready`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      startupState.httpReady = true;
+      const httpStartupTime = Date.now() - httpStartTime;
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`✅ HTTP Server listening on port ${PORT} (${httpStartupTime}ms)`);
+      console.log(`🔌 Socket.IO server ready`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`⏱️  Startup timestamp: ${new Date().toISOString()}`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+      console.log(`⏱️  Bootstrap running in background...\n`);
     });
+
+    // Start bootstrap in the background (non-blocking)
+    bootstrap();
   } catch (error) {
-    console.error('Server bootstrap failed:', error.message);
+    console.error('❌ Server startup failed:', error.message);
     process.exit(1);
   }
 };

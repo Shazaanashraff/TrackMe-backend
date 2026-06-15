@@ -56,8 +56,44 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
   const { data, error } = await resend.emails.send({
     from,
     to,
-    subject: 'TrackMe password reset code',
-    html: `<p>Your password reset code is <strong>${otp}</strong>. It expires in 10 minutes.</p>`
+    subject: 'Reset Your Password - TrackMe',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 500px; margin: 0 auto; padding: 20px; }
+          .header { margin-bottom: 30px; }
+          .code-box { background: #f5f5f5; padding: 15px; border-left: 3px solid #333; margin: 20px 0; }
+          .code { font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace; }
+          .footer { color: #666; font-size: 12px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <p>We received a request to reset your TrackMe password.</p>
+          </div>
+          
+          <p>Use this code to reset your password (valid for 10 minutes):</p>
+          
+          <div class="code-box">
+            <div class="code">${otp}</div>
+          </div>
+          
+          <p><strong>Or copy and paste this code in the password reset form.</strong></p>
+          
+          <div class="footer">
+            <p>Did not request this? You can safely ignore this email.</p>
+            <p>TrackMe © 2026</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
   });
 
   if (error) {
