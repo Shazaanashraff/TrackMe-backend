@@ -4,6 +4,8 @@ const {
   registerBus,
   getBusesByRoute,
   getAllRoutes,
+  getStops,
+  planJourney,
   getMyBus,
   getBusById,
   updateBus,
@@ -25,6 +27,12 @@ router.post('/register', protect, requireDriver, validateCreateBus, handleValida
 
 // GET /api/bus/routes - Get all active routes
 router.get('/routes', getAllRoutes);
+
+// GET /api/bus/routes/plan - Direct routes serving a from -> to trip
+router.get('/routes/plan', planJourney);
+
+// GET /api/bus/stops - Flat list of unique stops (for From/To autocomplete)
+router.get('/stops', getStops);
 
 // GET /api/bus/stats/overview - Get bus statistics
 router.get('/stats/overview', getBusesStats);

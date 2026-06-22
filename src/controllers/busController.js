@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Bus = require('../models/Bus');
 const Route = require('../models/Route');
+const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -136,13 +137,116 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination fare estimatedTime serviceType');
+      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
 
     res.status(200).json({
       success: true,
       count: routes.length,
       data: routes
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Flat list of every unique stop (for From/To autocomplete + snapping)
+// @route   GET /api/bus/stops
+exports.getStops = async (req, res, next) => {
+  try {
+    const routes = await Route.find({ isDeleted: false, isActive: true }).select('stops');
+
+    // Dedupe by stop name (case-insensitive); first coordinates win.
+    const seen = new Map();
+    for (const route of routes) {
+      for (const stop of route.stops || []) {
+        if (!stop?.stopName || typeof stop.lat !== 'number' || typeof stop.lng !== 'number') continue;
+        const key = stop.stopName.trim().toLowerCase();
+        if (!seen.has(key)) {
+          seen.set(key, { stopName: stop.stopName.trim(), lat: stop.lat, lng: stop.lng });
+        }
+      }
+    }
+
+    const stops = [...seen.values()].sort((a, b) => a.stopName.localeCompare(b.stopName));
+    res.status(200).json({ success: true, count: stops.length, data: stops });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Plan a trip: which direct routes carry a rider from -> to
+// @route   GET /api/bus/routes/plan?fromLat&fromLng&toLat&toLng[&maxWalkKm&serviceType]
+exports.planJourney = async (req, res, next) => {
+  try {
+    const fromLat = Number(req.query.fromLat);
+    const fromLng = Number(req.query.fromLng);
+    const toLat = Number(req.query.toLat);
+    const toLng = Number(req.query.toLng);
+
+    const coords = [fromLat, fromLng, toLat, toLng];
+    if (coords.some((n) => !Number.isFinite(n))) {
+      return res.status(400).json({
+        success: false,
+        message: 'fromLat, fromLng, toLat and toLng are required numeric query params',
+      });
+    }
+
+    // How far a rider is willing to walk to/from a stop (km). Clamp to a sane range.
+    const maxWalkKm = Math.min(Math.max(Number(req.query.maxWalkKm) || 2, 0.1), 20);
+
+    const filter = { isDeleted: false, isActive: true };
+    if (req.query.serviceType && SERVICE_TYPES.includes(String(req.query.serviceType).toUpperCase())) {
+      filter.serviceType = String(req.query.serviceType).toUpperCase();
+    }
+
+    const routes = await Route.find(filter)
+      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
+
+    const matches = [];
+    for (const route of routes) {
+      const stops = (route.stops || [])
+        .filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number')
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (stops.length < 2) continue;
+
+      const origin = nearestStop(stops, fromLat, fromLng);
+      const dest = nearestStop(stops, toLat, toLng);
+      if (!origin || !dest) continue;
+      if (origin.distanceKm > maxWalkKm || dest.distanceKm > maxWalkKm) continue;
+      // Direction matters: board stop must come BEFORE alight stop on the route.
+      if (origin.index >= dest.index) continue;
+
+      const rideKm = segmentDistanceKm(stops, origin.index, dest.index);
+      const totalKm = route.distance || segmentDistanceKm(stops, 0, stops.length - 1);
+      // Prorate the route fare by the portion of the route actually ridden.
+      const fareEstimate =
+        totalKm > 0 && route.fare ? Math.round((route.fare * rideKm) / totalKm) : route.fare || null;
+
+      matches.push({
+        routeId: route.routeId,
+        routeName: route.routeName,
+        source: route.source,
+        destination: route.destination,
+        serviceType: route.serviceType,
+        boardStop: { stopName: origin.stop.stopName, lat: origin.stop.lat, lng: origin.stop.lng },
+        alightStop: { stopName: dest.stop.stopName, lat: dest.stop.lat, lng: dest.stop.lng },
+        stopsBetween: dest.index - origin.index,
+        rideDistanceKm: Math.round(rideKm * 10) / 10,
+        walkToBoardKm: Math.round(origin.distanceKm * 100) / 100,
+        walkFromAlightKm: Math.round(dest.distanceKm * 100) / 100,
+        fareEstimate,
+      });
+    }
+
+    // Best first: least total walking, then fewest stops on the bus.
+    matches.sort((a, b) => {
+      const walkA = a.walkToBoardKm + a.walkFromAlightKm;
+      const walkB = b.walkToBoardKm + b.walkFromAlightKm;
+      if (walkA !== walkB) return walkA - walkB;
+      return a.stopsBetween - b.stopsBetween;
+    });
+
+    res.status(200).json({ success: true, count: matches.length, data: matches });
   } catch (error) {
     next(error);
   }
