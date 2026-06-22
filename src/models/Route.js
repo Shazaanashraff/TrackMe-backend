@@ -76,8 +76,8 @@ const routeSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
+// Note: routeId already has a unique index from `unique: true` on the field.
 routeSchema.index({ isActive: 1, isDeleted: 1 });
-routeSchema.index({ routeId: 1 });
 routeSchema.index({ serviceType: 1, isActive: 1, isDeleted: 1 });
 
 module.exports = mongoose.model('Route', routeSchema);

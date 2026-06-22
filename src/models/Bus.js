@@ -85,8 +85,8 @@ const busSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
+// Note: numberPlate already has a unique index from `unique: true` on the field.
 busSchema.index({ routeId: 1, isDeleted: 1 });
-busSchema.index({ numberPlate: 1 });
 busSchema.index({ driverId: 1 });
 busSchema.index({ managerId: 1 });
 busSchema.index({ isActive: 1, maintenanceStatus: 1 });

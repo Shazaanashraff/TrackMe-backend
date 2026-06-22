@@ -9,7 +9,9 @@ dotenv.config();
 const MANAGER_EMAIL = 'testadmin@mail.com';
 const MANAGER_DEFAULT_NAME = 'Test Admin Manager';
 const MANAGER_DEFAULT_PASSWORD = 'TestAdmin@123';
-const BUSES_PER_ROUTE = 3;
+// Buses created per route. Should be >= the simulator's per-route cap
+// (SIM_MAX_PER_ROUTE) so there are enough bus records to drive.
+const BUSES_PER_ROUTE = Number(process.env.BUSES_PER_ROUTE || 8);
 
 const ensureManager = async () => {
   const normalizedEmail = MANAGER_EMAIL.toLowerCase().trim();

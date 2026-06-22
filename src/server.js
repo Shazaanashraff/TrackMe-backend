@@ -144,10 +144,20 @@ const startServer = () => {
   }
 };
 
-startServer();
+// Only start listening when run directly (node src/server.js).
+// When imported by tests (require('../../src/server')), export the app/server
+// instead so supertest can drive it without spawning a real listener.
+if (require.main === module) {
+  startServer();
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err);
-  process.exit(1);
-});
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (err) => {
+    console.error('Unhandled Rejection:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
+module.exports.app = app;
+module.exports.server = server;
+module.exports.startServer = startServer;

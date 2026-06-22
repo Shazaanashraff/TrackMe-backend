@@ -8,10 +8,13 @@
     "dev": "nodemon src/server.js",
     "seed": "node scripts/seed.js",
     "seed:routes": "node scripts/seed-sri-lankan-routes.js",
+    "seed:wp": "node scripts/seed-wp-routes.js",
     "seed:buses": "node scripts/seed-test-buses.js",
     "seed:manager-buses": "node scripts/seed-manager-buses-per-route.js",
     "seed:start-journeys": "node scripts/start-two-buses-per-route.js",
-    "test": "node --test tests/manager-workflow.smoke.test.js"
+    "simulate": "node scripts/simulate-journeys.js",
+    "test": "node --test tests/manager-workflow.smoke.test.js",
+    "test:integration": "jest"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -27,6 +30,9 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "socket.io-client": "^4.8.3",
+    "supertest": "^7.2.2"
   }
 }

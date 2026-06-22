@@ -1,46 +1,139 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const fixtures = require('../mock.json');
+const User = require('../../src/models/User');
+const Route = require('../../src/models/Route');
+const Bus = require('../../src/models/Bus');
+const { connectTestDb, closeTestDb } = require('./db');
 
-describe('Bookings Integration - /api/bookings', () => {
-  let token;
+// Matches the real API: POST /api/bookings expects
+// { busId, routeId, seatNumbers[], journeyDate, pricePerSeat, totalPrice, ... }
+// and returns 201 { message: 'Booking created successfully', booking, ... }.
 
-  beforeAll(async () => {
-    const login = await request(app).post('/api/auth/login').send(fixtures.login.valid);
-    token = login.body.token;
+const JOURNEY_DATE = '2030-01-15T08:00:00.000Z';
+const PASSENGER = { email: `booker-${Date.now()}@test.com`, password: 'P@ssw0rd!' };
+
+let token;
+let bus;
+let route;
+
+beforeAll(async () => {
+  await connectTestDb();
+
+  // Passenger + auth token
+  await User.create({
+    name: 'Booking Tester',
+    email: PASSENGER.email,
+    password: PASSENGER.password,
+    role: 'user',
+    isEmailVerified: true,
+    isActive: true,
+  });
+  const login = await request(app)
+    .post('/api/auth/login')
+    .send({ email: PASSENGER.email, password: PASSENGER.password });
+  token = login.body.accessToken;
+
+  // A driver is required to create a bus.
+  const driver = await User.create({
+    name: 'Booking Driver',
+    email: `bdriver-${Date.now()}@test.com`,
+    password: 'Driver@123',
+    role: 'driver',
+    isEmailVerified: true,
+    isActive: true,
   });
 
-  test('create booking success', async () => {
-    const payload = { userId: fixtures.bookings[0].userId, busId: fixtures.bookings[0].busId, seat: 2 };
-    const res = await request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send(payload);
-    expect([201, 200]).toContain(res.status);
-    expect(res.body.code).toBe('BOOKING_CREATED');
-    expect(res.body.data).toHaveProperty('id');
+  route = await Route.create({
+    routeId: `T-${Date.now()}`,
+    routeName: 'Test Route',
+    source: 'Origin',
+    destination: 'Destination',
+    distance: 10,
+    fare: 50,
+    serviceType: 'PUBLIC',
+    stops: [
+      { stopName: 'Origin', order: 1, lat: 6.9271, lng: 79.8612 },
+      { stopName: 'Destination', order: 2, lat: 6.8472, lng: 79.9265 },
+    ],
   });
 
-  test('create booking missing fields -> 400 BOOKING_VALIDATION_ERROR', async () => {
-    const res = await request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send({ userId: fixtures.bookings[0].userId });
+  bus = await Bus.create({
+    busId: `BT-${Date.now()}`,
+    busName: 'Booking Test Bus',
+    registrationNumber: `REG-${Date.now()}`,
+    numberPlate: `NP-${Date.now()}`,
+    routeId: route.routeId,
+    driverId: driver._id,
+    seatCapacity: 45,
+    busType: 'NON-AC',
+    serviceType: 'PUBLIC',
+    bookingEnabled: true,
+  });
+});
+
+afterAll(async () => {
+  await closeTestDb();
+});
+
+function bookingPayload(seatNumbers) {
+  return {
+    busId: bus._id.toString(),
+    routeId: route._id.toString(),
+    seatNumbers,
+    journeyDate: JOURNEY_DATE,
+    pickupStopIndex: 0,
+    dropoffStopIndex: 1,
+    pricePerSeat: 50,
+    totalPrice: 50 * seatNumbers.length,
+  };
+}
+
+describe('Bookings Integration - POST /api/bookings', () => {
+  test('creates a booking with valid data (201)', async () => {
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(bookingPayload([2]));
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toMatch(/booking created successfully/i);
+    expect(res.body.booking).toHaveProperty('_id');
+    expect(res.body.booking.seatNumbers).toContain(2);
+  });
+
+  test('rejects missing required fields with 400 validation errors', async () => {
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ busId: bus._id.toString() }); // missing routeId, seatNumbers, etc.
+
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('BOOKING_VALIDATION_ERROR');
+    expect(Array.isArray(res.body.errors)).toBe(true);
+    expect(res.body.errors.length).toBeGreaterThan(0);
   });
 
-  test('seat conflict returns 409 BOOKING_CONFLICT', async () => {
-    const payload = { userId: fixtures.bookings[0].userId, busId: fixtures.bookings[0].busId, seat: 3 };
-    const r1 = await request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send(payload);
-    expect([201, 200]).toContain(r1.status);
+  test('requires authentication (401 without token)', async () => {
+    const res = await request(app)
+      .post('/api/bookings')
+      .send(bookingPayload([9]));
 
-    const r2 = await request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send(payload);
-    expect(r2.status).toBe(409);
-    expect(r2.body.code).toBe('BOOKING_CONFLICT');
+    expect(res.status).toBe(401);
   });
 
-  test('concurrent seat allocation (race) - one succeeds, others conflict', async () => {
-    const payload = { userId: 'user-concurrent', busId: fixtures.bookings[0].busId, seat: 4 };
-    const reqs = [1, 2, 3].map(() => request(app).post('/api/bookings').set('Authorization', `Bearer ${token}`).send(payload));
-    const res = await Promise.all(reqs);
-    const successCount = res.filter(r => r.status === 201).length;
-    const conflictCount = res.filter(r => r.status === 409).length;
-    expect(successCount).toBeGreaterThanOrEqual(1);
-    expect(conflictCount + successCount).toBe(res.length);
+  test('returns 409 when a seat is already booked', async () => {
+    const first = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(bookingPayload([3]));
+    expect(first.status).toBe(201);
+
+    const second = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(bookingPayload([3]));
+
+    expect(second.status).toBe(409);
+    expect(second.body.message).toMatch(/already booked/i);
+    expect(second.body.conflictingSeats).toContain(3);
   });
 });

@@ -49,6 +49,10 @@ const rateLimit = (() => {
 // Cleanup rate limits periodically
 setInterval(() => rateLimit.cleanup(), 60000);
 
+// High-frequency socket logging is gated behind SOCKET_DEBUG to avoid flooding
+// stdout (and stalling the event loop) when many buses stream locations.
+const debugLog = (...args) => { if (process.env.SOCKET_DEBUG) console.log(...args); };
+
 const setupSocket = (io) => {
   // Socket.IO middleware for authentication
   io.use((socket, next) => {
@@ -60,9 +64,9 @@ const setupSocket = (io) => {
     }
 
     try {
-      console.log('🔐 Verifying token with JWT_SECRET length:', process.env.JWT_SECRET?.length || 0);
+      debugLog('🔐 Verifying token with JWT_SECRET length:', process.env.JWT_SECRET?.length || 0);
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('✅ Token verified. User ID:', decoded.id);
+      debugLog('✅ Token verified. User ID:', decoded.id);
       socket.userId = decoded.id;
       next();
     } catch (error) {
@@ -192,7 +196,7 @@ const setupSocket = (io) => {
         }
 
         const { busId, routeId, lat, lng, accuracy, speed } = data;
-        console.log(`📍 driver:location received: bus=${busId}, lat=${lat}, lng=${lng}`);
+        debugLog(`📍 driver:location received: bus=${busId}, lat=${lat}, lng=${lng}`);
         
         const parsedLat = Number(lat);
         const parsedLng = Number(lng);
@@ -261,7 +265,7 @@ const setupSocket = (io) => {
           timestamp: new Date()
         });
         
-        console.log(`✅ Location saved for bus ${busId}`);
+        debugLog(`✅ Location saved for bus ${busId}`);
 
         // Ensure bus is marked as active
         if (!bus.isActive) {
@@ -269,7 +273,7 @@ const setupSocket = (io) => {
             { busId },
             { isActive: true }
           );
-          console.log(`✅ Marked bus ${busId} as active`);
+          debugLog(`✅ Marked bus ${busId} as active`);
         }
 
         // Prepare broadcast payload
@@ -527,7 +531,7 @@ const setupSocket = (io) => {
           activeBusesOnRoute.map(async (bus) => {
             const loc = await LiveLocation.findOne({ busId: bus.busId })
               .sort({ timestamp: -1 });
-            console.log(`📍 Bus ${bus.busId}: location = ${loc ? 'found' : 'NOT found'}`);
+            debugLog(`📍 Bus ${bus.busId}: location = ${loc ? 'found' : 'NOT found'}`);
             return {
               busId: bus.busId,
               busName: bus.busName,
