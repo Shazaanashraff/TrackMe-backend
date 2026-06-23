@@ -19,6 +19,8 @@ const driverEarningsRoutes = require('./routes/driverEarningsRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const managerRoutes = require('./routes/managerRoutes');
 const busReviewRoutes = require('./routes/busReviewRoutes');
+const placesRoutes = require('./routes/placesRoutes');
+const transitRoutes = require('./routes/transitRoutes');
 
 // Initialize Express app
 const app = express();
@@ -74,6 +76,8 @@ app.use('/api/driver-earnings', driverEarningsRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);
 app.use('/api/bus-reviews', busReviewRoutes);
+app.use('/api/places', placesRoutes);
+app.use('/api/transit', transitRoutes);
 
 // Health check endpoint (services receiving requests = keep-alive friendly)
 app.get('/health', (req, res) => {

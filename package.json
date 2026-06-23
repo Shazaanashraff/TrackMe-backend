@@ -12,6 +12,7 @@
     "seed:buses": "node scripts/seed-test-buses.js",
     "seed:manager-buses": "node scripts/seed-manager-buses-per-route.js",
     "seed:start-journeys": "node scripts/start-two-buses-per-route.js",
+    "snap:stops": "node scripts/snap-stops-to-busstops.js",
     "simulate": "node scripts/simulate-journeys.js",
     "test": "node --test tests/manager-workflow.smoke.test.js",
     "test:integration": "jest"

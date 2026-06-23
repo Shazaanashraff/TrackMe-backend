@@ -21,6 +21,7 @@ const {
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireDriver } = require('../middleware/auth');
+const { getRoutePath } = require('../controllers/routeGeometryController');
 
 // POST /api/bus/register - Register bus (driver only)
 router.post('/register', protect, requireDriver, validateCreateBus, handleValidationErrors, registerBus);
@@ -33,6 +34,9 @@ router.get('/routes/plan', planJourney);
 
 // GET /api/bus/stops - Flat list of unique stops (for From/To autocomplete)
 router.get('/stops', getStops);
+
+// GET /api/bus/routes/:routeId/path - road-following polyline for a route (cached)
+router.get('/routes/:routeId/path', getRoutePath);
 
 // GET /api/bus/stats/overview - Get bus statistics
 router.get('/stats/overview', getBusesStats);
