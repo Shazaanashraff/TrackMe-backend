@@ -40,3 +40,57 @@ describe('Places proxy guards (no upstream calls)', () => {
     }
   });
 });
+
+// Reverse geocode: name derivation + guards. `fetch` is mocked so no real Google/OSM
+// calls are made; we only assert how the controller shapes the response.
+describe('Places reverse geocode', () => {
+  it('rejects invalid coordinates without calling upstream', async () => {
+    const res = await request(app).get('/api/places/reverse?lat=abc&lng=10');
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  it('derives a short name from the first segment of the resolved address', async () => {
+    const original = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_PLACES_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      // Google Geocoding "disabled" -> fall through to the OSM fallback.
+      if (String(url).includes('maps.googleapis.com')) {
+        return { ok: true, json: async () => ({ status: 'ZERO_RESULTS' }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({ display_name: 'Janadhipathi Mawatha, Fort, Colombo, Sri Lanka' }),
+      };
+    });
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=6.9344&lng=79.8428');
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Janadhipathi Mawatha');
+      expect(res.body.data.address).toBe('Janadhipathi Mawatha, Fort, Colombo, Sri Lanka');
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.GOOGLE_PLACES_KEY = original;
+    }
+  });
+
+  it('falls back to a generic name and coordinate label when nothing resolves', async () => {
+    const original = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_PLACES_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('maps.googleapis.com')) {
+        return { ok: true, json: async () => ({ status: 'ZERO_RESULTS' }) };
+      }
+      return { ok: true, json: async () => ({}) }; // OSM: no display_name
+    });
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=6.9&lng=79.9');
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Pinned location');
+      expect(res.body.data.address).toBe('6.90000, 79.90000');
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.GOOGLE_PLACES_KEY = original;
+    }
+  });
+});

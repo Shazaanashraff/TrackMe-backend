@@ -6,6 +6,7 @@
 // in any response or log line.
 
 const PLACES_BASE = 'https://places.googleapis.com/v1';
+const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
 
 // Bias predictions to Sri Lanka so the fleet's local stops/addresses rank first.
 const REGION_CODES = ['lk'];
@@ -119,5 +120,79 @@ exports.placeDetails = async (req, res) => {
   } catch (err) {
     console.error('[places] details error:', err.message);
     res.status(500).json({ success: false, message: 'Place details error.' });
+  }
+};
+
+// Google Geocoding API reverse lookup. Returns a formatted address, or null when
+// the API is not enabled / has no match (so we can fall back to another provider).
+async function googleReverse(lat, lng, key) {
+  const url = new URL(GEOCODE_BASE);
+  url.searchParams.set('latlng', `${lat},${lng}`);
+  url.searchParams.set('region', 'lk');
+  url.searchParams.set('key', key);
+  const gRes = await fetch(url);
+  if (!gRes.ok) return null;
+  const json = await gRes.json();
+  if (json.status !== 'OK') {
+    // REQUEST_DENIED means the Geocoding API isn't enabled on the key's project.
+    if (json.status) console.warn(`[places] google reverse status ${json.status}`);
+    return null;
+  }
+  const top = Array.isArray(json.results) ? json.results[0] : null;
+  return top ? { placeId: top.place_id || 'reverse-geocode', address: top.formatted_address } : null;
+}
+
+// OpenStreetMap (Nominatim) reverse lookup — free, no key. Used as a fallback when
+// Google Geocoding isn't available. Nominatim requires a descriptive User-Agent.
+async function osmReverse(lat, lng) {
+  const url = new URL('https://nominatim.openstreetmap.org/reverse');
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lng));
+  const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (bus-tracking app)' } });
+  if (!gRes.ok) return null;
+  const json = await gRes.json();
+  return json.display_name ? { placeId: 'osm-reverse', address: json.display_name } : null;
+}
+
+// GET /api/places/reverse?lat=...&lng=...
+// Reverse-geocodes a coordinate (e.g. a dragged map pin) to a street address.
+// Tries Google Geocoding first, then OpenStreetMap, then a raw coordinate label.
+exports.reverseGeocode = async (req, res) => {
+  const key = getKey(res);
+  if (!key) return;
+
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ success: false, message: 'Valid lat and lng are required.' });
+  }
+
+  try {
+    let hit = null;
+    try { hit = await googleReverse(lat, lng, key); } catch (e) { console.warn('[places] google reverse error:', e.message); }
+    if (!hit) {
+      try { hit = await osmReverse(lat, lng); } catch (e) { console.warn('[places] osm reverse error:', e.message); }
+    }
+
+    // Short label for the From/To box: the first segment of the resolved address
+    // (e.g. the street or place name like "Janadhipathi Mawatha"). Only fall back to
+    // a generic label when nothing resolved, so the user actually sees where the pin is.
+    const name = hit?.address ? (hit.address.split(',')[0].trim() || 'Pinned location') : 'Pinned location';
+
+    res.status(200).json({
+      success: true,
+      data: {
+        placeId: hit?.placeId || 'reverse-geocode',
+        name,
+        // Final fallback: the raw coordinate so the UI always has something to show.
+        address: hit?.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        lat,
+        lng,
+      },
+    });
+  } catch (err) {
+    console.error('[places] reverse error:', err.message);
+    res.status(500).json({ success: false, message: 'Reverse geocode error.' });
   }
 };
