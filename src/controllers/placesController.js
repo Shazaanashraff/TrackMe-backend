@@ -142,17 +142,46 @@ async function googleReverse(lat, lng, key) {
   return top ? { placeId: top.place_id || 'reverse-geocode', address: top.formatted_address } : null;
 }
 
+// Picks the most specific human-readable label from a Nominatim structured
+// address. A dragged pin almost always sits on a road, so prefer the road/footway
+// name; only fall back to broader areas (neighbourhood → suburb → town) when the
+// point isn't on a named way. This avoids labelling a street pin with its coarse
+// suburb (e.g. a pin on "Pathanwatta Rd" reading "Atalgoda").
+function osmShortName(json) {
+  const a = json.address || {};
+  return (
+    a.road ||
+    a.pedestrian ||
+    a.footway ||
+    a.path ||
+    json.name ||            // named POI/feature at the point
+    a.neighbourhood ||
+    a.suburb ||
+    a.hamlet ||
+    a.village ||
+    a.town ||
+    a.city ||
+    (json.display_name ? json.display_name.split(',')[0].trim() : '') ||
+    null
+  );
+}
+
 // OpenStreetMap (Nominatim) reverse lookup — free, no key. Used as a fallback when
 // Google Geocoding isn't available. Nominatim requires a descriptive User-Agent.
+// zoom=18 + addressdetails=1 asks for building/road-level granularity and the
+// structured `address` object so we can pick a precise short name.
 async function osmReverse(lat, lng) {
   const url = new URL('https://nominatim.openstreetmap.org/reverse');
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('lat', String(lat));
   url.searchParams.set('lon', String(lng));
+  url.searchParams.set('zoom', '18');
+  url.searchParams.set('addressdetails', '1');
   const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (bus-tracking app)' } });
   if (!gRes.ok) return null;
   const json = await gRes.json();
-  return json.display_name ? { placeId: 'osm-reverse', address: json.display_name } : null;
+  if (!json.display_name) return null;
+  return { placeId: 'osm-reverse', address: json.display_name, name: osmShortName(json) };
 }
 
 // GET /api/places/reverse?lat=...&lng=...
@@ -175,10 +204,14 @@ exports.reverseGeocode = async (req, res) => {
       try { hit = await osmReverse(lat, lng); } catch (e) { console.warn('[places] osm reverse error:', e.message); }
     }
 
-    // Short label for the From/To box: the first segment of the resolved address
-    // (e.g. the street or place name like "Janadhipathi Mawatha"). Only fall back to
-    // a generic label when nothing resolved, so the user actually sees where the pin is.
-    const name = hit?.address ? (hit.address.split(',')[0].trim() || 'Pinned location') : 'Pinned location';
+    // Short label for the From/To box. Prefer a provider-supplied precise name
+    // (OSM's structured road/POI name); otherwise take the first segment of the
+    // resolved address (Google's formatted_address is street-level there). Only
+    // fall back to a generic label when nothing resolved.
+    const name =
+      hit?.name?.trim() ||
+      (hit?.address ? hit.address.split(',')[0].trim() : '') ||
+      'Pinned location';
 
     res.status(200).json({
       success: true,

@@ -74,6 +74,63 @@ describe('Places reverse geocode', () => {
     }
   });
 
+  it('prefers the structured road name over the coarse suburb in display_name', async () => {
+    const original = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_PLACES_KEY = 'test-key';
+    let osmUrl = '';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('maps.googleapis.com')) {
+        // Geocoding API not enabled on the key -> OSM fallback.
+        return { ok: true, json: async () => ({ status: 'REQUEST_DENIED' }) };
+      }
+      osmUrl = String(url);
+      return {
+        ok: true,
+        json: async () => ({
+          // display_name leads with the suburb, which is what produced the bug.
+          display_name: 'Atalgoda, Kadawatha, Gampaha District, Sri Lanka',
+          address: { road: 'Pathanwatta Rd', suburb: 'Atalgoda', town: 'Kadawatha' },
+        }),
+      };
+    });
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=7.0&lng=79.95');
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Pathanwatta Rd');
+      // We asked Nominatim for road-level detail + the structured address object.
+      expect(osmUrl).toContain('zoom=18');
+      expect(osmUrl).toContain('addressdetails=1');
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.GOOGLE_PLACES_KEY = original;
+    }
+  });
+
+  it('falls back to suburb when the point is not on a named road', async () => {
+    const original = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_PLACES_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('maps.googleapis.com')) {
+        return { ok: true, json: async () => ({ status: 'REQUEST_DENIED' }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          display_name: 'Atalgoda, Kadawatha, Sri Lanka',
+          address: { suburb: 'Atalgoda', town: 'Kadawatha' },
+        }),
+      };
+    });
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=7.0&lng=79.95');
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Atalgoda');
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.GOOGLE_PLACES_KEY = original;
+    }
+  });
+
   it('falls back to a generic name and coordinate label when nothing resolves', async () => {
     const original = process.env.GOOGLE_PLACES_KEY;
     process.env.GOOGLE_PLACES_KEY = 'test-key';
