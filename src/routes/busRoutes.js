@@ -12,7 +12,7 @@ const {
   deleteBus,
   getAllBuses,
   updateMaintenanceStatus,
-  getBusesStats
+  getBusesStats,
 } = require('../controllers/busController');
 const {
   validateCreateBus,
@@ -26,14 +26,14 @@ const { getRoutePath } = require('../controllers/routeGeometryController');
 // POST /api/bus/register - Register bus (driver only)
 router.post('/register', protect, requireDriver, validateCreateBus, handleValidationErrors, registerBus);
 
+// GET /api/bus/stops - Flat list of unique stops (for From/To autocomplete)
+router.get('/stops', getStops);
+
 // GET /api/bus/routes - Get all active routes
 router.get('/routes', getAllRoutes);
 
 // GET /api/bus/routes/plan - Direct routes serving a from -> to trip
 router.get('/routes/plan', planJourney);
-
-// GET /api/bus/stops - Flat list of unique stops (for From/To autocomplete)
-router.get('/stops', getStops);
 
 // GET /api/bus/routes/:routeId/path - road-following polyline for a route (cached)
 router.get('/routes/:routeId/path', getRoutePath);
