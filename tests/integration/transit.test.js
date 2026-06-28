@@ -1,6 +1,6 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const { _normalizeRoute } = require('../../src/controllers/transitController');
+const { _normalizeRoute, _groupRoutes, _pruneRedundant } = require('../../src/controllers/transitController');
 
 // A trimmed Google Routes API TRANSIT route (walk -> bus -> walk).
 const sampleRoute = {
@@ -54,6 +54,81 @@ describe('transit _normalizeRoute', () => {
     expect(bus.polyline).toBe('bus1');
     expect(r.legs[0].polyline).toBe('w1');
     expect(r.legs[0].durationSec).toBe(60);
+  });
+});
+
+describe('transit _groupRoutes (Maps-style interchangeable-bus grouping)', () => {
+  // Two "direct" trips with the SAME board->alight, different bus line.
+  const directA = mkDirect('3', 'Brandiyawatta', 'Colombo Fort', 4440, 2581);
+  const directB = mkDirect('98', 'Brandiyawatta', 'Colombo Fort', 4470, 2681);
+  // A genuinely different trip (different alight).
+  const other = mkDirect('138', 'Pettah', 'Maharagama', 3600, 175);
+
+  function mkDirect(line, board, alight, durationSec, walkMeters) {
+    return {
+      durationSec, walkMeters, transfers: 0, buses: [line],
+      legs: [
+        { type: 'WALK', meters: walkMeters, durationSec: 600 },
+        { type: 'BUS', line, board, alight, stops: 10, durationSec: durationSec - 600 },
+      ],
+    };
+  }
+
+  it('collapses interchangeable buses (same board->alight) into ONE option', () => {
+    const out = _groupRoutes([directA, directB]);
+    expect(out).toHaveLength(1);
+    const busLeg = out[0].legs.find((l) => l.type === 'BUS');
+    expect(busLeg.lines).toEqual(['3', '98']); // both lines listed on the leg
+    expect(busLeg.line).toBe('3');             // primary (fastest member)
+  });
+
+  it('keeps structurally different trips separate', () => {
+    const out = _groupRoutes([directA, directB, other]);
+    expect(out).toHaveLength(2);
+    expect(out.map((r) => r.legs.find((l) => l.type === 'BUS').lines.join('/')).sort())
+      .toEqual(['138', '3/98']);
+  });
+
+  it('sorts fastest-first and keeps the fastest member as representative', () => {
+    const out = _groupRoutes([directB, directA]);
+    expect(out[0].durationSec).toBe(4440); // directA is faster
+  });
+});
+
+describe('transit _pruneRedundant (drop only redundant worse options)', () => {
+  // direct option whose first bus leg can be 98 OR 3
+  const direct = {
+    durationSec: 3120, walkMeters: 960, transfers: 0,
+    legs: [{ type: 'WALK', meters: 960 }, { type: 'BUS', line: '98', lines: ['98', '3'], board: 'X', alight: 'Pettah' }],
+  };
+  // a slower transfer that STARTS with 98 (already offered by `direct`)
+  const transferStarting98 = {
+    durationSec: 3240, walkMeters: 960, transfers: 1,
+    legs: [{ type: 'BUS', line: '98', lines: ['98'], board: 'X', alight: 'Y' }, { type: 'BUS', line: '100', lines: ['100'], board: 'Y', alight: 'Pettah' }],
+  };
+  // a worse trip but starting with a DIFFERENT bus (15-1-1) → a real new choice
+  const transferNewBus = {
+    durationSec: 4000, walkMeters: 3500, transfers: 1,
+    legs: [{ type: 'BUS', line: '15-1-1', lines: ['15-1-1'], board: 'Z', alight: 'Y' }, { type: 'BUS', line: '2', lines: ['2'], board: 'Y', alight: 'Pettah' }],
+  };
+
+  it('drops the slower transfer that reuses an already-offered first bus (98/3 case)', () => {
+    const out = _pruneRedundant([direct, transferStarting98]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(direct);
+  });
+
+  it('KEEPS a worse option that offers a different first bus (variety preserved)', () => {
+    const out = _pruneRedundant([direct, transferNewBus]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('keeps everything when nothing is both worse and lead-covered', () => {
+    const out = _pruneRedundant([direct, transferNewBus, transferStarting98]);
+    // direct + transferNewBus kept; transferStarting98 dropped
+    expect(out).toHaveLength(2);
+    expect(out).toContain(direct);
+    expect(out).toContain(transferNewBus);
   });
 });
 
