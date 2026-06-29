@@ -74,6 +74,46 @@ describe('Places reverse geocode', () => {
     }
   });
 
+  it('derives a precise name from Google address_components when Geocoding is enabled', async () => {
+    const original = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_PLACES_KEY = 'test-key';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      // Geocoding API enabled -> OK. We must NOT fall through to OSM.
+      if (String(url).includes('maps.googleapis.com')) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: 'OK',
+            results: [
+              {
+                place_id: 'gp1',
+                // formatted_address leads with a plus-code -> the OLD code would
+                // have surfaced that. The new code must prefer the route component.
+                formatted_address: 'WMQX+2R, Pathanwatta Rd, Kaduwela, Sri Lanka',
+                address_components: [
+                  { long_name: 'WMQX+2R', types: ['plus_code'] },
+                  { long_name: 'Pathanwatta Road', types: ['route'] },
+                  { long_name: 'Atalgoda', types: ['neighborhood', 'political'] },
+                  { long_name: 'Kaduwela', types: ['locality', 'political'] },
+                ],
+              },
+            ],
+          }),
+        };
+      }
+      throw new Error('OSM should not be called when Google returns OK');
+    });
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=6.9356&lng=79.9847');
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Pathanwatta Road');
+      expect(res.body.data.placeId).toBe('gp1');
+    } finally {
+      fetchSpy.mockRestore();
+      process.env.GOOGLE_PLACES_KEY = original;
+    }
+  });
+
   it('prefers the structured road name over the coarse suburb in display_name', async () => {
     const original = process.env.GOOGLE_PLACES_KEY;
     process.env.GOOGLE_PLACES_KEY = 'test-key';

@@ -132,6 +132,57 @@ describe('transit _pruneRedundant (drop only redundant worse options)', () => {
   });
 });
 
+describe('transit service classification + ordering', () => {
+  const raw = (name, short, stopCount = 15, distanceMeters = 0) => ({
+    duration: '600s',
+    legs: [{ steps: [{
+      travelMode: 'TRANSIT', staticDuration: '600s', distanceMeters,
+      transitDetails: {
+        transitLine: { nameShort: short, name },
+        stopDetails: { departureStop: { name: 'A' }, arrivalStop: { name: 'B' } },
+        stopCount,
+      },
+    }] }],
+  });
+
+  it('flags an intercity line (far terminal) as long distance', () => {
+    const r = _normalizeRoute(raw('Colombo-Kataragama', '3'));
+    expect(r.serviceClass).toBe('LONG_DISTANCE');
+    expect(r.serviceLabel).toBe('Long distance');
+  });
+
+  it('treats a Western Province line as local (no badge)', () => {
+    const r = _normalizeRoute(raw('Hanwella-Pettah', '143'));
+    expect(r.serviceClass).toBe('LOCAL');
+    expect(r.serviceLabel).toBeNull();
+  });
+
+  it('flags a wide-stop-spacing bus as express even without a known far town', () => {
+    // 40 km over 5 stops = 8 km/stop -> skips local stops.
+    const r = _normalizeRoute(raw('Some-Local-Sounding', 'X', 5, 40000));
+    expect(r.serviceClass).toBe('EXPRESS');
+  });
+
+  const mk = (line, cls, dur, board = 'X') => ({
+    durationSec: dur, walkMeters: 100, transfers: 0, buses: [line], serviceClass: cls,
+    legs: [{ type: 'BUS', line, board, alight: 'Pettah', serviceClass: cls }],
+  });
+
+  it('a leg served by a local OR long-distance bus counts as local (rider can pick local)', () => {
+    const out = _groupRoutes([mk('2', 'LONG_DISTANCE', 3000), mk('400', 'LOCAL', 3300)]);
+    expect(out).toHaveLength(1);
+    const bus = out[0].legs.find((l) => l.type === 'BUS');
+    expect(bus.serviceClass).toBe('LOCAL');
+    expect(bus.lines).toEqual(['400', '2']); // local listed first
+    expect(out[0].serviceClass).toBe('LOCAL');
+  });
+
+  it('orders local options ahead of a FASTER long-distance one', () => {
+    const out = _groupRoutes([mk('2', 'LONG_DISTANCE', 2400, 'P'), mk('400', 'LOCAL', 3000, 'Q')]);
+    expect(out.map((o) => o.serviceClass)).toEqual(['LOCAL', 'LONG_DISTANCE']);
+  });
+});
+
 describe('GET /api/transit/plan guards (no upstream call)', () => {
   it('400s when coords are missing', async () => {
     const res = await request(app).get('/api/transit/plan?fromLat=6.9');

@@ -18,7 +18,8 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | /api/bus CRUD | integration | tests/integration/shared/buses.test.js | create, update, maintenance, delete | bus schema or status rules change |
 | /api/bus/routes + /api/bus/route/:id | integration | tests/integration/shared/bus-reads.test.js | list + filter | filtering rules change |
 | /api/bus/stops + /api/bus/routes/plan | integration + unit | tests/integration/journey-plan.test.js | stop list, direct A→B matching, direction filter, no-match, validation; geo helpers | journey-matching or geo logic changes |
-| /api/places/* (autocomplete, details, reverse) | integration | tests/integration/places-proxy.test.js | input guards, 503 no-key, no key leak, reverse coord validation, reverse name-from-address derivation + fallback | proxy guards or reverse-geocode response shape change |
+| /api/places/* (autocomplete, details, reverse) | integration | tests/integration/places-proxy.test.js | input guards, 503 no-key, no key leak, reverse coord validation, reverse name derivation: Google address_components (road/POI > town) + OSM structured + fallback | proxy guards or reverse-geocode name logic change |
+| /api/transit/plan (normalize, group, prune, classify) | integration | tests/integration/transit.test.js | leg extraction, interchangeable-bus grouping, redundant pruning, service classification (local/express/long-distance by line name + stop spacing) + local-first ordering, guards | transit normalisation, classification list, or ordering change |
 
 ## Bookings and ETA
 | Item | Test type | Test file | Cases covered | Update when |

@@ -27,6 +27,75 @@ const FIELD_MASK = [
 
 const secs = (v) => (typeof v === 'string' ? Number(v.replace('s', '')) || 0 : 0);
 
+// --- Service classification ---------------------------------------------------
+// Google's transit feed does NOT flag a line as express/long-distance, but the
+// transit line's FULL name carries its two terminals (e.g. "Colombo-Kataragama").
+// Local Colombo buses stay within the Western Province; intercity buses name a
+// far-flung town. We classify off that far terminal so we can rank local stoppers
+// first and push long-distance/express options to the bottom (with a label),
+// instead of hiding them. See probe data: 98=Colombo-Akkaraipattu, 3=Colombo-
+// Kataragama, 15-7=Colombo-Vavuniya — all intercity, none local stoppers.
+
+// Major SL towns OUTSIDE Greater Colombo / the Western Province corridor. If a
+// line's name mentions one of these, it's an intercity long-distance service.
+// Inverted list (match distant towns, default to LOCAL) so we never wrongly
+// demote a genuine local bus whose town we don't recognise.
+const DISTANT_DESTINATIONS = [
+  // Central
+  'kandy', 'gampola', 'nawalapitiya', 'nuwara eliya', 'nuwaraeliya', 'hatton', 'talawakele',
+  'lindula', 'maskeliya', 'bogawantalawa', 'dickoya', 'ginigathena', 'pussellawa', 'rikillagaskada',
+  'walapane', 'kotmale', 'matale', 'dambulla', 'galewela', 'naula', 'ukuwela',
+  // Uva
+  'badulla', 'bandarawela', 'ella', 'haputale', 'welimada', 'passara', 'mahiyanganaya',
+  'monaragala', 'wellawaya', 'bibile', 'buttala', 'siyambalanduwa', 'medagama',
+  // Southern
+  'galle', 'matara', 'tangalle', 'hambantota', 'tissamaharama', 'kataragama', 'beliatta',
+  'deniyaya', 'akuressa', 'kamburupitiya', 'deiyandara', 'morawaka', 'urubokka', 'pitabeddara',
+  'kotapola', 'weligama', 'ahangama', 'hikkaduwa', 'ambalangoda', 'elpitiya', 'pitigala',
+  // Sabaragamuwa
+  'ratnapura', 'balangoda', 'embilipitiya', 'pelmadulla', 'kahawatta', 'kegalle', 'mawanella',
+  'rambukkana', 'warakapola', 'ruwanwella', 'yatiyantota', 'deraniyagala',
+  // North-Western
+  'kurunegala', 'kuliyapitiya', 'chilaw', 'puttalam', 'wariyapola', 'nikaweratiya', 'galgamuwa',
+  'narammala', 'pannala', 'dankotuwa', 'wennappuwa', 'marawila',
+  // North-Central
+  'anuradhapura', 'polonnaruwa', 'kekirawa', 'kahatagasdigiliya', 'medawachchiya', 'mihintale',
+  'kebithigollewa', 'hingurakgoda', 'kaduruwela', 'thambuttegama', 'galnewa',
+  // Eastern
+  'trincomalee', 'batticaloa', 'ampara', 'akkaraipattu', 'kalmunai', 'kantale', 'kattankudy',
+  'eravur', 'valaichchenai', 'sammanthurai', 'pottuvil', 'dehiattakandiya',
+  // Northern
+  'jaffna', 'vavuniya', 'mannar', 'kilinochchi', 'mullaitivu', 'chavakachcheri', 'point pedro',
+  'chunnakam', 'kodikamam', 'paranthan', 'medawachchiya',
+  // Misc far hubs that show up in line names
+  'sigiriya', 'udupussellawa', 'ragala',
+  // Common romanisation variants Google sometimes returns (Th-/-aa-/etc.)
+  'thangalle', 'thissamaharama', 'hambanthota', 'anuradhapuraya', 'kandagasdeniya',
+  'nuwaraeliya', 'mathara', 'mathale', 'bandarawela', 'baduulla',
+];
+
+const CLASS_RANK = { LOCAL: 0, EXPRESS: 1, LONG_DISTANCE: 2 };
+const worseClass = (a, b) => (CLASS_RANK[a] >= CLASS_RANK[b] ? a : b);   // most-intercity wins
+const betterClass = (a, b) => (CLASS_RANK[a] <= CLASS_RANK[b] ? a : b);  // most-local wins
+
+// Classify one bus line from its full name + stop spacing on the boarded leg.
+function classifyLine(lineName, distanceMeters, stops) {
+  const name = String(lineName || '').toLowerCase();
+  // Word-boundary match so "Hanwella" doesn't match "ella" (Ella) etc. Multi-word
+  // towns (e.g. "nuwara eliya") fall back to a substring check.
+  const tokens = new Set(name.split(/[^a-z]+/).filter(Boolean));
+  const isDistant = DISTANT_DESTINATIONS.some((t) => (t.includes(' ') ? name.includes(t) : tokens.has(t)));
+  if (isDistant) return 'LONG_DISTANCE';
+  if (tokens.has('express') || tokens.has('expressway') || tokens.has('highway')) return 'EXPRESS';
+  // Fallback signal: a bus skipping local stops has a large gap between stops.
+  const kmPerStop = (distanceMeters / 1000) / Math.max(stops, 1);
+  if (kmPerStop >= 1.8) return 'EXPRESS';
+  return 'LOCAL';
+}
+
+// Human-readable badge for a serviceClass (null = local, no badge needed).
+const classLabel = (c) => (c === 'LONG_DISTANCE' ? 'Long distance' : c === 'EXPRESS' ? 'Express' : null);
+
 // Structure signature: the sequence of board->alight stops across the bus legs,
 // ignoring which line serves each leg. Itineraries with the same signature are
 // the "same trip" with interchangeable buses (e.g. take 3 OR 98 on that leg).
@@ -53,20 +122,34 @@ function groupRoutes(routes) {
     const rep = members[0];
     const repBusLegs = rep.legs.filter((l) => l.type === 'BUS');
 
-    // For each bus-leg position, union the lines seen across all members.
+    // For each bus-leg position, union the lines seen across all members. Sort the
+    // interchangeable lines local-first, and let the leg's class be the BEST (most
+    // local) option — if a rider can take a local bus on this leg, the leg is local.
     repBusLegs.forEach((leg, k) => {
       const lines = [];
+      const classOf = new Map();
+      let legClass = null;
       for (const m of members) {
-        const ln = m.legs.filter((l) => l.type === 'BUS')[k]?.line;
-        if (ln && !lines.includes(ln)) lines.push(ln);
+        const ml = m.legs.filter((l) => l.type === 'BUS')[k];
+        if (!ml?.line) continue;
+        if (!lines.includes(ml.line)) lines.push(ml.line);
+        if (!classOf.has(ml.line)) classOf.set(ml.line, ml.serviceClass);
+        legClass = legClass ? betterClass(legClass, ml.serviceClass) : ml.serviceClass;
       }
-      leg.lines = lines;     // interchangeable options for this leg
-      leg.line = lines[0];   // primary
+      lines.sort((a, b) => CLASS_RANK[classOf.get(a)] - CLASS_RANK[classOf.get(b)]);
+      leg.lines = lines;                                   // interchangeable options, local-first
+      leg.lineClasses = lines.map((l) => classOf.get(l));  // parallel class per line
+      leg.line = lines[0];                                 // primary (most local)
+      leg.serviceClass = legClass || leg.serviceClass;
     });
     rep.buses = repBusLegs.map((l) => l.line);
+    // Recompute option class from the (now best-per-leg) leg classes.
+    rep.serviceClass = repBusLegs.reduce((acc, l) => worseClass(acc, l.serviceClass), 'LOCAL');
+    rep.serviceLabel = classLabel(rep.serviceClass);
     out.push(rep);
   }
-  return out.sort((a, b) => a.durationSec - b.durationSec);
+  // Local stoppers first, then express, then long-distance; faster first within a class.
+  return out.sort((a, b) => CLASS_RANK[a.serviceClass] - CLASS_RANK[b.serviceClass] || a.durationSec - b.durationSec);
 }
 
 // The lines a rider could board FIRST on this option (the first bus leg).
@@ -121,14 +204,20 @@ function normalizeRoute(r) {
         const arr = lv.arrivalTime?.time?.text || null;
         if (!departureTime) departureTime = dep;
         arrivalTime = arr || arrivalTime;
+        const lineName = td.transitLine?.name || '';
+        const stops = td.stopCount || 0;
+        const distanceMeters = st.distanceMeters || 0;
+        const serviceClass = classifyLine(lineName, distanceMeters, stops);
         const bus = {
           type: 'BUS',
           line: td.transitLine?.nameShort || td.transitLine?.name || '?',
-          lineName: td.transitLine?.name || '',
+          lineName,
           vehicle: td.transitLine?.vehicle?.type || 'BUS',
           board: td.stopDetails?.departureStop?.name || '',
           alight: td.stopDetails?.arrivalStop?.name || '',
-          stops: td.stopCount || 0,
+          stops,
+          distanceMeters,
+          serviceClass,                 // LOCAL | EXPRESS | LONG_DISTANCE
           headsign: td.headsign || '',
           headwaySec: secs(td.headway),
           durationSec: secs(st.staticDuration),
@@ -142,6 +231,11 @@ function normalizeRoute(r) {
     }
   }
 
+  // Option-level class = the worst (most-intercity) class among its bus legs:
+  // a trip is only as "local" as its least-local mandatory bus.
+  const busLegs = legs.filter((l) => l.type === 'BUS');
+  const serviceClass = busLegs.reduce((acc, l) => worseClass(acc, l.serviceClass), 'LOCAL');
+
   return {
     durationSec: secs(r.duration),
     walkMeters,
@@ -149,6 +243,8 @@ function normalizeRoute(r) {
     arrivalTime,
     buses,                 // ['143'] or ['166','152'] for transfers
     transfers: Math.max(0, buses.length - 1),
+    serviceClass,                       // LOCAL | EXPRESS | LONG_DISTANCE
+    serviceLabel: classLabel(serviceClass),
     polyline: r.polyline?.encodedPolyline || null,
     legs,
   };
@@ -206,8 +302,10 @@ exports.planTransit = async (req, res) => {
     }
 
     const raw = results.flatMap((r) => r || []).map(normalizeRoute).filter((r) => r.buses.length > 0);
-    // Group interchangeable buses, then drop options another option strictly beats.
-    const data = pruneRedundant(groupRoutes(raw));
+    // Group interchangeable buses, drop options another option strictly beats, then
+    // order local stoppers first and push express/long-distance to the bottom.
+    const data = pruneRedundant(groupRoutes(raw))
+      .sort((a, b) => CLASS_RANK[a.serviceClass] - CLASS_RANK[b.serviceClass] || a.durationSec - b.durationSec);
 
     res.status(200).json({ success: true, count: data.length, data });
   } catch (err) {

@@ -123,6 +123,29 @@ exports.placeDetails = async (req, res) => {
   }
 };
 
+// Picks the most specific human-readable label from Google Geocoding results.
+// A dragged pin almost always sits on a road or at a named place, so prefer a
+// POI/premise/road name over the broad sublocality/town. Mirrors osmShortName so
+// both providers yield the same precise-name behaviour (the Google path used to
+// just take formatted_address.split(',')[0], which is often a plus-code or town).
+function googleShortName(results) {
+  const typeRank = [
+    'point_of_interest', 'establishment', 'premise', 'route',
+    'neighborhood', 'sublocality', 'sublocality_level_1', 'locality',
+  ];
+  // Scan results most-specific first; within each, pick the highest-ranked component.
+  for (const want of typeRank) {
+    for (const r of results) {
+      for (const c of r.address_components || []) {
+        if ((c.types || []).includes(want)) return c.long_name;
+      }
+    }
+  }
+  // Fall back to the first segment of the top result's formatted address.
+  const top = results[0];
+  return top?.formatted_address ? top.formatted_address.split(',')[0].trim() : null;
+}
+
 // Google Geocoding API reverse lookup. Returns a formatted address, or null when
 // the API is not enabled / has no match (so we can fall back to another provider).
 async function googleReverse(lat, lng, key) {
@@ -138,8 +161,11 @@ async function googleReverse(lat, lng, key) {
     if (json.status) console.warn(`[places] google reverse status ${json.status}`);
     return null;
   }
-  const top = Array.isArray(json.results) ? json.results[0] : null;
-  return top ? { placeId: top.place_id || 'reverse-geocode', address: top.formatted_address } : null;
+  const results = Array.isArray(json.results) ? json.results : [];
+  const top = results[0];
+  return top
+    ? { placeId: top.place_id || 'reverse-geocode', address: top.formatted_address, name: googleShortName(results) }
+    : null;
 }
 
 // Picks the most specific human-readable label from a Nominatim structured
