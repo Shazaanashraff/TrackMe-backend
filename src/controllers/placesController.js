@@ -214,8 +214,16 @@ async function osmReverse(lat, lng) {
 // Reverse-geocodes a coordinate (e.g. a dragged map pin) to a street address.
 // Tries Google Geocoding first, then OpenStreetMap, then a raw coordinate label.
 exports.reverseGeocode = async (req, res) => {
-  const key = getKey(res);
-  if (!key) return;
+  // The Geocoding API can use a dedicated key (GOOGLE_GEOCODING_KEY) so it can live
+  // on a billing-enabled project separate from the Places key. Falls back to
+  // GOOGLE_PLACES_KEY when not set. (OSM fallback needs no key.)
+  const key = process.env.GOOGLE_GEOCODING_KEY || process.env.GOOGLE_PLACES_KEY;
+  if (!key) {
+    return res.status(503).json({
+      success: false,
+      message: 'Reverse geocode is not configured on the server (missing GOOGLE_GEOCODING_KEY / GOOGLE_PLACES_KEY).',
+    });
+  }
 
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);

@@ -50,6 +50,49 @@ describe('Places reverse geocode', () => {
     expect(res.body.success).toBe(false);
   });
 
+  it('uses the dedicated GOOGLE_GEOCODING_KEY for the Geocoding call, not the Places key', async () => {
+    const origGeo = process.env.GOOGLE_GEOCODING_KEY;
+    const origPlaces = process.env.GOOGLE_PLACES_KEY;
+    process.env.GOOGLE_GEOCODING_KEY = 'geo-key-xyz';
+    process.env.GOOGLE_PLACES_KEY = 'places-key-abc';
+    let geoUrl = '';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('maps.googleapis.com')) {
+        geoUrl = u;
+        // Return OK so we don't fall through to OSM (and overwrite the captured url).
+        return { ok: true, json: async () => ({ status: 'OK', results: [{ place_id: 'g', formatted_address: 'Somewhere', address_components: [] }] }) };
+      }
+      throw new Error('OSM should not be called when Google returns OK');
+    });
+    try {
+      await request(app).get('/api/places/reverse?lat=6.9&lng=79.9');
+      expect(geoUrl).toContain('maps.googleapis.com');
+      expect(geoUrl).toContain('key=geo-key-xyz');
+      expect(geoUrl).not.toContain('places-key-abc');
+    } finally {
+      fetchSpy.mockRestore();
+      if (origGeo === undefined) delete process.env.GOOGLE_GEOCODING_KEY;
+      else process.env.GOOGLE_GEOCODING_KEY = origGeo;
+      process.env.GOOGLE_PLACES_KEY = origPlaces;
+    }
+  });
+
+  it('returns 503 when neither geocoding nor places key is configured', async () => {
+    const origGeo = process.env.GOOGLE_GEOCODING_KEY;
+    const origPlaces = process.env.GOOGLE_PLACES_KEY;
+    delete process.env.GOOGLE_GEOCODING_KEY;
+    delete process.env.GOOGLE_PLACES_KEY;
+    try {
+      const res = await request(app).get('/api/places/reverse?lat=6.9&lng=79.9');
+      expect(res.status).toBe(503);
+      expect(res.body.success).toBe(false);
+    } finally {
+      if (origGeo !== undefined) process.env.GOOGLE_GEOCODING_KEY = origGeo;
+      if (origPlaces !== undefined) process.env.GOOGLE_PLACES_KEY = origPlaces;
+    }
+  });
+
   it('derives a short name from the first segment of the resolved address', async () => {
     const original = process.env.GOOGLE_PLACES_KEY;
     process.env.GOOGLE_PLACES_KEY = 'test-key';
