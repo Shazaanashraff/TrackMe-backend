@@ -34,9 +34,72 @@ function orderedStops(route) {
     .sort((a, b) => (a.order || 0) - (b.order || 0));
 }
 
-const toWaypoint = (s) => ({ location: { latLng: { latitude: s.lat, longitude: s.lng } } });
+// Normalise a line/route number for comparison: "143 / 4" -> "143/4", upper-case.
+const normLine = (s) => String(s || '').replace(/\s+/g, '').toUpperCase();
+// Base number (drop #-disambiguator and any sub-route suffix): "138#2" -> "138".
+const baseNum = (s) => normLine(s).split('#')[0];
 
-// GET /api/bus/routes/:routeId/path  -> { success, data: { coords: [{lat,lng}], cached } }
+// Ask Google TRANSIT for the buses that serve origin->destination, and return each
+// bus leg's { line, polyline }. This is the REAL bus geometry (not driving directions
+// between town centres), so a route drawn from it follows the actual service.
+async function transitBusLegs(from, to, key) {
+  const bodyFor = (extra) => ({
+    origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+    destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
+    travelMode: 'TRANSIT',
+    computeAlternativeRoutes: true,
+    transitPreferences: { allowedTravelModes: ['BUS'], ...extra },
+  });
+  // Two routing variants (default + LESS_WALKING) surface far more distinct bus
+  // lines than a single call — critical for matching a specific route number.
+  const variants = [bodyFor({}), bodyFor({ routingPreference: 'LESS_WALKING' })];
+
+  const fetchVariant = async (body) => {
+    try {
+      const gRes = await fetch(ROUTES_API, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask':
+            'routes.legs.steps.transitDetails.transitLine.nameShort,routes.legs.steps.transitDetails.transitLine.name,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.travelMode',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!gRes.ok) {
+        console.error(`[route-path] transit ${gRes.status}: ${(await gRes.text()).slice(0, 200)}`);
+        return [];
+      }
+      return (await gRes.json()).routes || [];
+    } catch (err) {
+      console.error('[route-path] transit variant error:', err.message);
+      return [];
+    }
+  };
+
+  const results = await Promise.all(variants.map(fetchVariant));
+  const legs = [];
+  for (const routes of results) {
+    for (const r of routes) {
+      for (const leg of r.legs || []) {
+        for (const st of leg.steps || []) {
+          if (st.transitDetails && st.polyline?.encodedPolyline) {
+            const td = st.transitDetails;
+            legs.push({
+              line: td.transitLine?.nameShort || td.transitLine?.name || '',
+              polyline: st.polyline.encodedPolyline,
+            });
+          }
+        }
+      }
+    }
+  }
+  return legs;
+}
+
+// GET /api/bus/routes/:routeId/path  -> { success, data: { coords: [{lat,lng}], cached, matched } }
+// Accurate route geometry: the real polyline of the matching bus line from Google
+// Transit (origin -> destination). No match => no line (we do not invent geometry).
 exports.getRoutePath = async (req, res) => {
   const routeId = String(req.params.routeId);
 
@@ -50,46 +113,44 @@ exports.getRoutePath = async (req, res) => {
   }
 
   try {
-    const route = await Route.findOne({ routeId, isDeleted: false }).select('stops');
+    const route = await Route.findOne({ routeId, isDeleted: false }).select('stops routeId pathPolyline');
     if (!route) return res.status(404).json({ success: false, message: 'Route not found.' });
+
+    // Prefer pre-computed accurate geometry (backfilled from a matched transit line).
+    // Instant, stable, and no live API call.
+    if (route.pathPolyline) {
+      const coords = decodePolyline(route.pathPolyline);
+      pathCache.set(routeId, { coords, at: Date.now() });
+      return res.status(200).json({ success: true, data: { coords, cached: true, matched: true, source: 'stored' } });
+    }
 
     const stops = orderedStops(route);
     if (stops.length < 2) {
-      return res.status(200).json({ success: true, data: { coords: stops.map((s) => ({ lat: s.lat, lng: s.lng })), cached: false } });
+      return res.status(200).json({ success: true, data: { coords: [], cached: false, matched: false } });
     }
 
-    const body = {
-      origin: toWaypoint(stops[0]),
-      destination: toWaypoint(stops[stops.length - 1]),
-      intermediates: stops.slice(1, -1).map(toWaypoint),
-      travelMode: 'DRIVE',
-      polylineQuality: 'HIGH_QUALITY',
-    };
+    const from = stops[0];
+    const to = stops[stops.length - 1];
+    const want = baseNum(routeId);
 
-    const gRes = await fetch(ROUTES_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': key,
-        'X-Goog-FieldMask': 'routes.polyline.encodedPolyline',
-      },
-      body: JSON.stringify(body),
-    });
+    const legs = await transitBusLegs(from, to, key);
+    // Prefer an exact line match; fall back to a base-number match (ignoring suffixes).
+    let hit = legs.find((l) => normLine(l.line) === normLine(routeId));
+    if (!hit) hit = legs.find((l) => baseNum(l.line) === want);
 
-    if (!gRes.ok) {
-      const detail = await gRes.text();
-      console.error(`[route-path] Routes API ${gRes.status}: ${detail.slice(0, 300)}`);
-      // Graceful fallback: straight stop-to-stop line so the map still draws something.
-      const coords = stops.map((s) => ({ lat: s.lat, lng: s.lng }));
-      return res.status(200).json({ success: true, data: { coords, cached: false, fallback: true } });
+    if (!hit) {
+      // No transit line matched. We do NOT invent geometry (geocoded stop names are
+      // unreliable and can detour), so draw nothing — only real matched lines show.
+      return res.status(200).json({ success: true, data: { coords: [], cached: false, matched: false } });
     }
 
-    const json = await gRes.json();
-    const encoded = json.routes?.[0]?.polyline?.encodedPolyline;
-    const coords = encoded ? decodePolyline(encoded) : stops.map((s) => ({ lat: s.lat, lng: s.lng }));
-
+    const coords = decodePolyline(hit.polyline);
     pathCache.set(routeId, { coords, at: Date.now() });
-    res.status(200).json({ success: true, data: { coords, cached: false } });
+    // Persist so this route never needs another Routes API call (lazy backfill):
+    // the first view fills it, every later view serves from the stored polyline.
+    route.pathPolyline = hit.polyline;
+    route.save().catch((e) => console.warn('[route-path] persist failed:', e.message));
+    res.status(200).json({ success: true, data: { coords, cached: false, matched: true, line: hit.line } });
   } catch (err) {
     console.error('[route-path] error:', err.message);
     res.status(500).json({ success: false, message: 'Failed to compute route path.' });

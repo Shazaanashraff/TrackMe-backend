@@ -59,6 +59,14 @@ const routeSchema = new mongoose.Schema({
       lng: Number
     }
   ],
+  // Real road geometry for the route, stored as a Google-encoded polyline. Filled
+  // by scripts/backfill-route-geometry.js from a matched Google Transit line, so the
+  // map draws an accurate, stable line without a live API call. Empty = no accurate
+  // geometry available (we never store an invented/guessed line here).
+  pathPolyline: {
+    type: String,
+    default: ''
+  },
   isActive: {
     type: Boolean,
     default: true
