@@ -104,24 +104,27 @@ exports.getRoutePath = async (req, res) => {
   const routeId = String(req.params.routeId);
 
   if (pathCache.has(routeId)) {
-    return res.status(200).json({ success: true, data: { coords: pathCache.get(routeId).coords, cached: true } });
+    const c = pathCache.get(routeId);
+    return res.status(200).json({ success: true, data: { coords: c.coords, coordsReturn: c.coordsReturn || [], cached: true } });
   }
 
-  const key = process.env.GOOGLE_PLACES_KEY;
+  const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
   if (!key) {
     return res.status(503).json({ success: false, message: 'Routing not configured (missing GOOGLE_PLACES_KEY).' });
   }
 
   try {
-    const route = await Route.findOne({ routeId, isDeleted: false }).select('stops routeId pathPolyline');
+    const route = await Route.findOne({ routeId, isDeleted: false }).select('stops routeId pathPolyline pathPolylineReturn');
     if (!route) return res.status(404).json({ success: false, message: 'Route not found.' });
 
     // Prefer pre-computed accurate geometry (backfilled from a matched transit line).
-    // Instant, stable, and no live API call.
+    // Instant, stable, and no live API call. coordsReturn is the return-direction path
+    // (empty when it's the same road back).
     if (route.pathPolyline) {
       const coords = decodePolyline(route.pathPolyline);
-      pathCache.set(routeId, { coords, at: Date.now() });
-      return res.status(200).json({ success: true, data: { coords, cached: true, matched: true, source: 'stored' } });
+      const coordsReturn = route.pathPolylineReturn ? decodePolyline(route.pathPolylineReturn) : [];
+      pathCache.set(routeId, { coords, coordsReturn, at: Date.now() });
+      return res.status(200).json({ success: true, data: { coords, coordsReturn, cached: true, matched: true, source: 'stored' } });
     }
 
     const stops = orderedStops(route);

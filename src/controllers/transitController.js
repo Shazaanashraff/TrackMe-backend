@@ -252,7 +252,7 @@ function normalizeRoute(r) {
 
 // GET /api/transit/plan?fromLat&fromLng&toLat&toLng
 exports.planTransit = async (req, res) => {
-  const key = process.env.GOOGLE_PLACES_KEY;
+  const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
   if (!key) return res.status(503).json({ success: false, message: 'Transit planning not configured (missing GOOGLE_PLACES_KEY).' });
 
   const fromLat = Number(req.query.fromLat), fromLng = Number(req.query.fromLng);

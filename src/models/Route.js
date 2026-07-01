@@ -67,6 +67,13 @@ const routeSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  // Return-direction geometry (destination -> origin). Many routes take a slightly
+  // different road on the way back (one-way sections/loops); drawing both gives the
+  // full there-and-back shape. Empty when the return path isn't available/different.
+  pathPolylineReturn: {
+    type: String,
+    default: ''
+  },
   isActive: {
     type: Boolean,
     default: true

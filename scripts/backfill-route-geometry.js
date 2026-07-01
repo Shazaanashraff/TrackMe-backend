@@ -32,27 +32,36 @@ async function transitLegs(from, to, key) {
   });
   const variants = [bodyFor({}), bodyFor({ routingPreference: 'LESS_WALKING' })];
   const legs = [];
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
   for (const body of variants) {
-    try {
-      const r = await fetch(ROUTES_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': key,
-          'X-Goog-FieldMask':
-            'routes.legs.steps.transitDetails.transitLine.nameShort,routes.legs.steps.transitDetails.transitLine.name,routes.legs.steps.polyline.encodedPolyline',
-        },
-        body: JSON.stringify(body),
-      });
+    for (let attempt = 0; ; attempt += 1) {
+      let r;
+      try {
+        r = await fetch(ROUTES_API, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': key,
+            'X-Goog-FieldMask':
+              'routes.legs.steps.transitDetails.transitLine.nameShort,routes.legs.steps.transitDetails.transitLine.name,routes.legs.steps.polyline.encodedPolyline',
+          },
+          body: JSON.stringify(body),
+        });
+      } catch { break; } // network error — skip this variant
+
       if (r.status === 429) {
-        // Daily-quota exhaustion is permanent for the rest of the day — do NOT retry
-        // (retrying every call is what burned ~1,300 wasted requests). Abort the run.
-        const msg = (await r.text()).slice(0, 200);
-        const err = new Error(`Routes API quota exceeded (429): ${msg}`);
-        err.quota = true;
-        throw err;
+        const msg = await r.text();
+        // PER-DAY exhaustion is permanent for today -> abort the whole run.
+        if (/per\s*-?\s*day/i.test(msg)) {
+          const err = new Error(`Routes API daily quota exhausted: ${msg.slice(0, 160)}`);
+          err.quota = true;
+          throw err;
+        }
+        // PER-MINUTE (transient) -> wait out the window and retry, capped at 2 tries.
+        if (attempt < 2) { await sleep(62000); continue; }
+        break;
       }
-      if (!r.ok) continue;
+      if (!r.ok) break;
       for (const rt of (await r.json()).routes || []) {
         for (const leg of rt.legs || []) {
           for (const st of leg.steps || []) {
@@ -65,32 +74,34 @@ async function transitLegs(from, to, key) {
           }
         }
       }
-    } catch (err) {
-      if (err.quota) throw err;   // abort the whole run on daily-quota exhaustion
-      /* otherwise ignore this variant's transient failure */
+      break; // success for this variant
     }
   }
   return legs;
 }
 
 async function main() {
-  const key = process.env.GOOGLE_PLACES_KEY;
-  if (!key) throw new Error('GOOGLE_PLACES_KEY missing');
+  const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
+  if (!key) throw new Error('GOOGLE_ROUTES_KEY / GOOGLE_PLACES_KEY missing');
   await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/trackme');
 
+  const MIN_STOPS = Number(process.env.MIN_STOPS || 2); // set MIN_STOPS=3 for real corridors only
   const all = await Route.find({ isDeleted: false }).select('routeId stops pathPolyline');
   const targets = all.filter((r) => {
     const s = (r.stops || []).filter((x) => typeof x.lat === 'number' && typeof x.lng === 'number');
-    return s.length >= 2 && inWP(s[0]) && inWP(s[s.length - 1]) && !r.pathPolyline;
+    return s.length >= MIN_STOPS && inWP(s[0]) && inWP(s[s.length - 1]) && !r.pathPolyline;
   });
-  console.log(`WP routes needing geometry: ${targets.length}`);
+  // Optional LIMIT to process only N routes per run (batch-wise, gentle on the API).
+  const limit = Number(process.env.LIMIT || 0);
+  const work = limit > 0 ? targets.slice(0, limit) : targets;
+  console.log(`WP routes needing geometry: ${targets.length}${limit ? ` (this batch: ${work.length})` : ''}`);
 
   let filled = 0;
-  const CONC = 2;
+  const CONC = 1;                 // sequential — gentlest on the per-minute limit
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
   try {
-    for (let i = 0; i < targets.length; i += CONC) {
-      const batch = targets.slice(i, i + CONC);
+    for (let i = 0; i < work.length; i += CONC) {
+      const batch = work.slice(i, i + CONC);
       await Promise.all(batch.map(async (r) => {
         const s = r.stops.filter((x) => typeof x.lat === 'number');
         const legs = await transitLegs(s[0], s[s.length - 1], key);
@@ -103,8 +114,8 @@ async function main() {
           filled += 1;
         }
       }));
-      if (i % 20 === 0) console.log(`  ${Math.min(i + CONC, targets.length)}/${targets.length} processed, ${filled} matched`);
-      await sleep(250); // stay under the per-second limit
+      if (i % 10 === 0) console.log(`  ${Math.min(i + CONC, work.length)}/${work.length} processed, ${filled} matched`);
+      await sleep(1500); // ~2 calls/route + gap => well under the per-minute limit
     }
   } catch (err) {
     if (err.quota) {
