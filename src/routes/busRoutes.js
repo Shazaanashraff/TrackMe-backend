@@ -22,6 +22,7 @@ const {
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireDriver } = require('../middleware/auth');
 const { getRoutePath } = require('../controllers/routeGeometryController');
+const { getWalkPath } = require('../controllers/walkController');
 
 // POST /api/bus/register - Register bus (driver only)
 router.post('/register', protect, requireDriver, validateCreateBus, handleValidationErrors, registerBus);
@@ -37,6 +38,9 @@ router.get('/routes/plan', planJourney);
 
 // GET /api/bus/routes/:routeId/path - road-following polyline for a route (cached)
 router.get('/routes/:routeId/path', getRoutePath);
+
+// GET /api/bus/walk - real walking polyline between two points (one call per confirm)
+router.get('/walk', getWalkPath);
 
 // GET /api/bus/stats/overview - Get bus statistics
 router.get('/stats/overview', getBusesStats);
