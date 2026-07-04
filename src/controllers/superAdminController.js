@@ -5,6 +5,7 @@ const BusReview = require('../models/BusReview');
 const Route = require('../models/Route');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
+const { createProvisionalCustomRoute } = require('../utils/customRoute');
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
@@ -659,9 +660,18 @@ exports.reviewBusRequest = async (req, res, next) => {
         busPayload.registrationNumber = `AUTO-${busPayload.busId}`;
       }
 
-      const route = await Route.findOne({ routeId: busPayload.routeId, isDeleted: false });
-      if (!route) {
-        return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
+      const isCustomRoute = requestDoc.payload?.routeMode === 'CUSTOM';
+      if (isCustomRoute) {
+        const provisionalRoute = await createProvisionalCustomRoute({
+          managerId: requestDoc.managerId,
+          serviceType: busPayload.serviceType
+        });
+        busPayload.routeId = provisionalRoute.routeId;
+      } else {
+        const route = await Route.findOne({ routeId: busPayload.routeId, isDeleted: false });
+        if (!route) {
+          return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
+        }
       }
 
       const duplicateBus = await Bus.findOne({

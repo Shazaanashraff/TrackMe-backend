@@ -21,6 +21,7 @@ const managerRoutes = require('./routes/managerRoutes');
 const busReviewRoutes = require('./routes/busReviewRoutes');
 const placesRoutes = require('./routes/placesRoutes');
 const transitRoutes = require('./routes/transitRoutes');
+const customRouteRoutes = require('./routes/customRouteRoutes');
 
 // Initialize Express app
 const app = express();
@@ -78,6 +79,7 @@ app.use('/api/manager', managerRoutes);
 app.use('/api/bus-reviews', busReviewRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/transit', transitRoutes);
+app.use('/api/driver/custom-routes', customRouteRoutes);
 
 // Health check endpoint (services receiving requests = keep-alive friendly)
 app.get('/health', (req, res) => {

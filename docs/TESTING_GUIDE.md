@@ -43,9 +43,18 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | /api/manager/* | integration | tests/integration/admin/manager.test.js | dashboards, bus updates, requests | manager workflow changes |
 | /api/super-admin/* | integration | tests/integration/admin/super-admin.test.js | dashboards, reviews, audits, managers | admin workflow changes |
 
+## Custom Routes (School/Work Shuttles)
+| Item | Test type | Test file | Cases covered | Update when |
+|---|---|---|---|---|
+| geo helpers: pointToSegmentMeters, minDistanceToPolylineMeters, deviationStats | unit | tests/integration/custom-route-geo.test.js | on-segment, off-segment, degenerate polyline/breadcrumb, off-route threshold | deviation math or off-route thresholds change |
+| roadSnap: encode/decodePolyline, downsample, snapToRoads | unit | tests/integration/custom-route-road-snap.test.js | round-trip encoding, jitter downsampling, batching >100 pts, missing-key/API-error fallback | snap batching, fallback behavior, or polyline format changes |
+| Custom-route provisioning, recording, naming, visibility | integration | tests/integration/custom-routes.test.js | CUSTOM request provisions a PRIVATE PENDING_NAMING route; POST /api/driver/custom-routes/record fills+snaps; ownership 404s; PATCH .../name activates; manager-scoped list/dropdown; PRIVATE route absent from /api/routes, /api/routes/:id, /api/bus/routes, /api/bus/route/:id, /api/bus/stops, /api/bus/routes/:id/path, and cross-manager bus updates | custom-route flow, provisioning, or visibility filtering changes |
+| Off-route detection + resolve (Phase 2): report-journey, record-update, resolve | integration | tests/integration/route-change-requests.test.js | on-route journey not flagged; sustained off-route journey flags + creates exactly one RouteChangeRequest + notification; dedupe (no 2nd PENDING while one exists); record-update creates/updates a candidate with stops; resolve KEEP_OLD leaves geometry untouched, ADOPT_NEW overwrites pathPolyline/stops/distance; idempotent double-resolve; cross-manager 404; invalid resolution 400 | deviation thresholds, RouteChangeRequest lifecycle, or resolve logic changes |
+
 ## Websocket
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | driver tracking events | ws integration | tests/integration/ws/driver-tracking.test.js | start, update, stop | socket event payload changes |
+| join-route / route:get-recent-locations visibility | ws integration | tests/integration/ws/custom-route-visibility.test.js | PRIVATE route rejected from join-route and get-recent-locations; PUBLIC route allowed | socket visibility rules change |
 | user route subscription | ws integration | tests/integration/ws/user-route.test.js | join/leave/receive | rooming rules change |
 | manager bus tracking | ws integration | tests/integration/ws/manager-track.test.js | join/leave/receive | manager role rules change |

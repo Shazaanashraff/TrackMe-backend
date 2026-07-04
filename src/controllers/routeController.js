@@ -52,7 +52,10 @@ exports.createRoute = async (req, res, next) => {
 exports.getAllRoutes = async (req, res, next) => {
   try {
     const { isActive, serviceType } = req.query;
-    const filter = { isDeleted: false };
+    // Unauthenticated endpoint (user-app search, public listings) — a manager's
+    // PRIVATE custom route must never surface here. Use GET /api/manager/routes
+    // (or the recorded-route endpoints) for manager-scoped access.
+    const filter = { isDeleted: false, visibility: 'PUBLIC' };
 
     if (isActive === 'true') {
       filter.isActive = true;
@@ -83,7 +86,8 @@ exports.getRouteById = async (req, res, next) => {
   try {
     const { routeId } = req.params;
 
-    const route = await Route.findOne({ routeId, isDeleted: false });
+    // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
+    const route = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' });
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
@@ -172,7 +176,8 @@ exports.getRoutesPaginated = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const filter = { isDeleted: false };
+    // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
+    const filter = { isDeleted: false, visibility: 'PUBLIC' };
     if (req.query.isActive) {
       filter.isActive = req.query.isActive === 'true';
     }
@@ -230,17 +235,18 @@ exports.toggleRouteStatus = async (req, res, next) => {
 // @route   GET /api/routes/stats/overview
 exports.getRoutesStats = async (req, res, next) => {
   try {
-    const totalRoutes = await Route.countDocuments({ isDeleted: false });
-    const activeRoutes = await Route.countDocuments({ isDeleted: false, isActive: true });
+    // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
+    const totalRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC' });
+    const activeRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC', isActive: true });
     const inactiveRoutes = totalRoutes - activeRoutes;
 
     const avgDistance = await Route.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
       { $group: { _id: null, avg: { $avg: '$distance' } } }
     ]);
 
     const avgEstimatedTime = await Route.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
       { $group: { _id: null, avg: { $avg: '$estimatedTime' } } }
     ]);
 

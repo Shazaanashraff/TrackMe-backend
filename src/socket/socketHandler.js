@@ -445,14 +445,24 @@ const setupSocket = (io) => {
     });
 
     // User joins a route room to receive updates
-    socket.on('join-route', (data, callback) => {
+    socket.on('join-route', async (data, callback) => {
       try {
         const { routeId } = data;
 
         if (!routeId || typeof routeId !== 'string') {
-          return callback?.({ 
+          return callback?.({
             success: false,
-            error: 'Valid Route ID is required' 
+            error: 'Valid Route ID is required'
+          });
+        }
+
+        // A manager's PRIVATE custom route must never be joinable here — only
+        // PUBLIC routes have rider-facing live tracking.
+        const route = await Route.findOne({ routeId, isDeleted: false }).select('visibility');
+        if (route && route.visibility === 'PRIVATE') {
+          return callback?.({
+            success: false,
+            error: 'This route is not available for tracking'
           });
         }
 
@@ -512,10 +522,16 @@ const setupSocket = (io) => {
 
         if (!routeId) {
           console.log('❌ No routeId provided');
-          return callback?.({ 
+          return callback?.({
             success: false,
-            error: 'Route ID is required' 
+            error: 'Route ID is required'
           });
+        }
+
+        // A manager's PRIVATE custom route must never leak live locations here.
+        const route = await Route.findOne({ routeId, isDeleted: false }).select('visibility');
+        if (route && route.visibility === 'PRIVATE') {
+          return callback?.({ success: false, error: 'This route is not available for tracking' });
         }
 
         // Get the most recent location for each active bus on the route

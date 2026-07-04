@@ -50,4 +50,90 @@ function segmentDistanceKm(stops, from, to) {
   return total;
 }
 
-module.exports = { haversineKm, nearestStop, segmentDistanceKm };
+/**
+ * Project a lat/lng point to local planar metres relative to an origin point,
+ * using an equirectangular approximation (accurate enough at bus-route scale).
+ */
+function toLocalMeters(origin, point) {
+  const latRad = toRad(origin.lat);
+  const metersPerDegLat = 111_320;
+  const metersPerDegLng = 111_320 * Math.cos(latRad);
+  return {
+    x: (point.lng - origin.lng) * metersPerDegLng,
+    y: (point.lat - origin.lat) * metersPerDegLat
+  };
+}
+
+/**
+ * Shortest distance in metres from point `p` to the line segment `a`-`b`.
+ * All inputs are { lat, lng }.
+ */
+function pointToSegmentMeters(p, a, b) {
+  const origin = a;
+  const P = toLocalMeters(origin, p);
+  const A = { x: 0, y: 0 };
+  const B = toLocalMeters(origin, b);
+
+  const abx = B.x - A.x;
+  const aby = B.y - A.y;
+  const lengthSq = abx * abx + aby * aby;
+
+  let t = lengthSq === 0 ? 0 : ((P.x - A.x) * abx + (P.y - A.y) * aby) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+
+  const closest = { x: A.x + t * abx, y: A.y + t * aby };
+  const dx = P.x - closest.x;
+  const dy = P.y - closest.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * Shortest distance in metres from `point` ({ lat, lng }) to a polyline
+ * (array of { lat, lng }). Returns Infinity for a polyline with fewer than 2 points.
+ */
+function minDistanceToPolylineMeters(point, polylineCoords) {
+  if (!Array.isArray(polylineCoords) || polylineCoords.length < 2) return Infinity;
+
+  let min = Infinity;
+  for (let i = 0; i < polylineCoords.length - 1; i += 1) {
+    const d = pointToSegmentMeters(point, polylineCoords[i], polylineCoords[i + 1]);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+/**
+ * Compare a driven breadcrumb against a saved route polyline.
+ * `offThresholdMeters` classifies a breadcrumb point as "off route".
+ * Returns { maxMeters, fractionOff, sampleCount }; all zero when there's
+ * nothing usable to compare (degenerate breadcrumb or polyline).
+ */
+function deviationStats(breadcrumb, polylineCoords, offThresholdMeters = 150) {
+  if (!Array.isArray(breadcrumb) || breadcrumb.length === 0 ||
+      !Array.isArray(polylineCoords) || polylineCoords.length < 2) {
+    return { maxMeters: 0, fractionOff: 0, sampleCount: 0 };
+  }
+
+  let maxMeters = 0;
+  let offCount = 0;
+  breadcrumb.forEach((point) => {
+    const d = minDistanceToPolylineMeters(point, polylineCoords);
+    if (d > maxMeters) maxMeters = d;
+    if (d > offThresholdMeters) offCount += 1;
+  });
+
+  return {
+    maxMeters,
+    fractionOff: offCount / breadcrumb.length,
+    sampleCount: breadcrumb.length
+  };
+}
+
+module.exports = {
+  haversineKm,
+  nearestStop,
+  segmentDistanceKm,
+  pointToSegmentMeters,
+  minDistanceToPolylineMeters,
+  deviationStats
+};

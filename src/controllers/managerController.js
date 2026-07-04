@@ -4,6 +4,7 @@ const LiveLocation = require('../models/LiveLocation');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const Route = require('../models/Route');
+const RouteChangeRequest = require('../models/RouteChangeRequest');
 const User = require('../models/User');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -202,7 +203,16 @@ exports.updateManagerBus = async (req, res, next) => {
     }
 
     if (updateData.routeId) {
-      const route = await Route.findOne({ routeId: updateData.routeId, isDeleted: false });
+      // A manager may assign a PUBLIC route or one of their own named (ACTIVE)
+      // PRIVATE custom routes — never another manager's private route.
+      const route = await Route.findOne({
+        routeId: updateData.routeId,
+        isDeleted: false,
+        $or: [
+          { visibility: 'PUBLIC' },
+          { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
+        ]
+      });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
       }
@@ -259,6 +269,7 @@ exports.createBusAccountRequest = async (req, res, next) => {
       busName,
       numberPlate,
       routeId,
+      routeMode,
       seatCapacity,
       busType,
       serviceType,
@@ -272,16 +283,27 @@ exports.createBusAccountRequest = async (req, res, next) => {
       reason
     } = req.body;
 
+    // CUSTOM = school/work shuttle whose driver records the route by driving it
+    // (no existing route to pick). The backend provisions a private, unnamed
+    // route for the bus at approval time instead of requiring a routeId here.
+    const normalizedRouteMode = String(routeMode || 'EXISTING').toUpperCase();
+    if (!['EXISTING', 'CUSTOM'].includes(normalizedRouteMode)) {
+      return res.status(400).json({ success: false, message: 'routeMode must be EXISTING or CUSTOM' });
+    }
+    const isCustomRoute = normalizedRouteMode === 'CUSTOM';
+
     const normalizedBusId = String(busId || '').trim();
     const normalizedNumberPlate = String(numberPlate || '').trim().toUpperCase();
     const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedBusId}`).trim();
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
 
-    if (!normalizedBusId || !normalizedNumberPlate || !normalizedRouteId || !driverName || !normalizedEmail || !password) {
+    if (!normalizedBusId || !normalizedNumberPlate || (!isCustomRoute && !normalizedRouteId) || !driverName || !normalizedEmail || !password) {
       return res.status(400).json({
         success: false,
-        message: 'busId, numberPlate, routeId, driverName, driverEmail, and password are required'
+        message: isCustomRoute
+          ? 'busId, numberPlate, driverName, driverEmail, and password are required'
+          : 'busId, numberPlate, routeId, driverName, driverEmail, and password are required'
       });
     }
 
@@ -308,17 +330,20 @@ exports.createBusAccountRequest = async (req, res, next) => {
       });
     }
 
-    const route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
-    if (!route) {
-      return res.status(400).json({ success: false, message: 'Invalid route ID' });
+    let route = null;
+    if (!isCustomRoute) {
+      route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
+      if (!route) {
+        return res.status(400).json({ success: false, message: 'Invalid route ID' });
+      }
     }
 
-    const normalizedServiceType = String(serviceType || route.serviceType || 'PUBLIC').toUpperCase();
+    const normalizedServiceType = String(serviceType || route?.serviceType || 'PUBLIC').toUpperCase();
     if (!SERVICE_TYPES.includes(normalizedServiceType)) {
       return res.status(400).json({ success: false, message: 'Invalid service type' });
     }
 
-    if (route.serviceType && route.serviceType !== normalizedServiceType) {
+    if (route?.serviceType && route.serviceType !== normalizedServiceType) {
       return res.status(400).json({
         success: false,
         message: 'Bus service type must match route service type'
@@ -345,12 +370,15 @@ exports.createBusAccountRequest = async (req, res, next) => {
       busId: normalizedBusId,
       reason: String(reason || '').trim(),
       payload: {
+        routeMode: normalizedRouteMode,
         bus: {
           busId: normalizedBusId,
           busName,
           numberPlate: normalizedNumberPlate,
           registrationNumber: normalizedReg,
-          routeId: normalizedRouteId,
+          // routeId is left unset for CUSTOM; the super admin approval step
+          // provisions a private route and fills this in before Bus.create.
+          routeId: isCustomRoute ? undefined : normalizedRouteId,
           seatCapacity,
           busType: busType || 'AC',
           serviceType: normalizedServiceType,
@@ -531,6 +559,165 @@ exports.getManagerBusLocation = async (req, res, next) => {
         windowMinutes
       }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    List this manager's driver-recorded custom routes
+// @route   GET /api/manager/custom-routes?status=PENDING_NAMING|ACTIVE
+exports.getManagerCustomRoutes = async (req, res, next) => {
+  try {
+    const filter = { managerId: req.user._id, origin: 'RECORDED', isDeleted: false };
+
+    const status = String(req.query.status || '').toUpperCase();
+    if (['ACTIVE', 'PENDING_NAMING'].includes(status)) {
+      filter.status = status;
+    }
+
+    const routes = await Route.find(filter).sort({ createdAt: -1 }).lean();
+
+    return res.status(200).json({ success: true, count: routes.length, data: routes });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Name a driver-recorded custom route, activating it for reuse
+// @route   PATCH /api/manager/custom-routes/:routeId/name
+exports.nameCustomRoute = async (req, res, next) => {
+  try {
+    const routeName = String(req.body?.routeName || '').trim();
+    if (!routeName) {
+      return res.status(400).json({ success: false, message: 'routeName is required' });
+    }
+
+    const route = await Route.findOne({
+      routeId: req.params.routeId,
+      managerId: req.user._id,
+      origin: 'RECORDED',
+      isDeleted: false
+    });
+    if (!route) {
+      return res.status(404).json({ success: false, message: 'Custom route not found for this manager' });
+    }
+
+    if (!route.pathPolyline) {
+      return res.status(409).json({ success: false, message: 'Route has not been recorded yet' });
+    }
+
+    route.routeName = routeName;
+    route.status = 'ACTIVE';
+    await route.save();
+
+    await writeAuditLog({
+      managerId: req.user._id,
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'CUSTOM_ROUTE_NAMED',
+      entityType: 'ROUTE',
+      entityId: route.routeId,
+      metadata: { routeName }
+    });
+
+    return res.status(200).json({ success: true, message: 'Route named and activated', data: route });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Routes available for this manager to assign to a bus: public routes
+//          plus this manager's own named (ACTIVE) private custom routes.
+// @route   GET /api/manager/routes
+exports.getManagerAssignableRoutes = async (req, res, next) => {
+  try {
+    const routes = await Route.find({
+      isDeleted: false,
+      isActive: true,
+      $or: [
+        { visibility: 'PUBLIC' },
+        { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
+      ]
+    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops visibility');
+
+    return res.status(200).json({ success: true, count: routes.length, data: routes });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    List this manager's route-change requests (off-route flags / driver updates)
+// @route   GET /api/manager/route-change-requests?status=PENDING
+exports.getManagerRouteChangeRequests = async (req, res, next) => {
+  try {
+    const filter = { managerId: req.user._id };
+
+    const status = String(req.query.status || '').toUpperCase();
+    if (['PENDING', 'RESOLVED'].includes(status)) {
+      filter.status = status;
+    }
+
+    const requests = await RouteChangeRequest.find(filter)
+      .populate('currentRouteId', 'routeId routeName pathPolyline stops distance')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({ success: true, count: requests.length, data: requests });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Resolve a route-change request: keep the current route, or adopt
+//          the driver-recorded candidate as the route's new geometry.
+// @route   PATCH /api/manager/route-change-requests/:id/resolve
+exports.resolveRouteChangeRequest = async (req, res, next) => {
+  try {
+    const resolution = String(req.body?.resolution || '').toUpperCase();
+    if (!['KEEP_OLD', 'ADOPT_NEW'].includes(resolution)) {
+      return res.status(400).json({ success: false, message: 'resolution must be KEEP_OLD or ADOPT_NEW' });
+    }
+
+    const changeRequest = await RouteChangeRequest.findOne({ _id: req.params.id, managerId: req.user._id });
+    if (!changeRequest) {
+      return res.status(404).json({ success: false, message: 'Route change request not found' });
+    }
+
+    // Idempotent: a request already resolved (e.g. by a concurrent action) is
+    // returned as-is rather than reprocessed.
+    if (changeRequest.status === 'RESOLVED') {
+      return res.status(200).json({ success: true, message: 'Already resolved', data: changeRequest });
+    }
+
+    if (resolution === 'ADOPT_NEW') {
+      const route = await Route.findById(changeRequest.currentRouteId);
+      if (!route) {
+        return res.status(404).json({ success: false, message: 'The route this request refers to no longer exists' });
+      }
+      route.pathPolyline = changeRequest.candidate.pathPolyline;
+      if (changeRequest.candidate.stops?.length) {
+        route.stops = changeRequest.candidate.stops;
+        route.stopsCount = changeRequest.candidate.stops.length;
+      }
+      route.distance = changeRequest.candidate.distance;
+      await route.save();
+    }
+
+    changeRequest.status = 'RESOLVED';
+    changeRequest.resolution = resolution;
+    await changeRequest.save();
+
+    await writeAuditLog({
+      managerId: req.user._id,
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'ROUTE_CHANGE_REQUEST_RESOLVED',
+      entityType: 'ROUTE_CHANGE_REQUEST',
+      entityId: changeRequest._id.toString(),
+      metadata: { resolution }
+    });
+
+    return res.status(200).json({ success: true, message: 'Route change request resolved', data: changeRequest });
   } catch (error) {
     next(error);
   }

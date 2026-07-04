@@ -75,10 +75,12 @@ const getBusLocationCandidates = (bus, fallbackBusId) => {
   return [...new Set(candidates)];
 };
 
+// Rider-facing ETA — only resolves PUBLIC routes. A manager's PRIVATE custom
+// route has no rider-facing ETA (it's tracked via the manager dashboard instead).
 const findRouteByIdentifier = async (routeIdentifier) => {
-  let route = await Route.findOne({ routeId: routeIdentifier, isDeleted: false }).lean();
+  let route = await Route.findOne({ routeId: routeIdentifier, isDeleted: false, visibility: 'PUBLIC' }).lean();
   if (!route) {
-    route = await Route.findById(routeIdentifier).lean();
+    route = await Route.findOne({ _id: routeIdentifier, isDeleted: false, visibility: 'PUBLIC' }).lean();
   }
   return route;
 };

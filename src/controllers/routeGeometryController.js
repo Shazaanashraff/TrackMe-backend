@@ -114,7 +114,9 @@ exports.getRoutePath = async (req, res) => {
   }
 
   try {
-    const route = await Route.findOne({ routeId, isDeleted: false }).select('stops routeId pathPolyline pathPolylineReturn');
+    // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route geometry.
+    const route = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' })
+      .select('stops routeId pathPolyline pathPolylineReturn');
     if (!route) return res.status(404).json({ success: false, message: 'Route not found.' });
 
     // Prefer pre-computed accurate geometry (backfilled from a matched transit line).

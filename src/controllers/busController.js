@@ -27,8 +27,9 @@ exports.registerBus = async (req, res, next) => {
       });
     }
 
-    // Verify route exists
-    const routeExists = await Route.findOne({ routeId, isDeleted: false });
+    // Verify route exists — self-registration may only target a PUBLIC route;
+    // a manager's PRIVATE custom route is assigned only via the manager flow.
+    const routeExists = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' });
     if (!routeExists) {
       return res.status(400).json({
         success: false,
@@ -94,6 +95,12 @@ exports.getBusesByRoute = async (req, res, next) => {
       $or: [{ routeId }, ...(mongoose.Types.ObjectId.isValid(routeId) ? [{ _id: routeId }] : [])]
     });
 
+    // Unauthenticated endpoint — a manager's PRIVATE custom route (and its buses)
+    // must never be discoverable here.
+    if (route && route.visibility === 'PRIVATE') {
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
+
     // Filter buses by effective route lookup
     if (route) {
       filter.routeId = route.routeId;
@@ -130,7 +137,8 @@ exports.getBusesByRoute = async (req, res, next) => {
 exports.getAllRoutes = async (req, res, next) => {
   try {
     const { serviceType } = req.query;
-    const filter = { isDeleted: false, isActive: true };
+    // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
+    const filter = { isDeleted: false, isActive: true, visibility: 'PUBLIC' };
 
     if (serviceType && SERVICE_TYPES.includes(String(serviceType).toUpperCase())) {
       filter.serviceType = String(serviceType).toUpperCase();
@@ -153,7 +161,8 @@ exports.getAllRoutes = async (req, res, next) => {
 // @route   GET /api/bus/stops
 exports.getStops = async (req, res, next) => {
   try {
-    const routes = await Route.find({ isDeleted: false, isActive: true }).select('stops');
+    // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route stops.
+    const routes = await Route.find({ isDeleted: false, isActive: true, visibility: 'PUBLIC' }).select('stops');
 
     // Dedupe by stop name (case-insensitive); first coordinates win.
     const seen = new Map();
@@ -194,7 +203,9 @@ exports.planJourney = async (req, res, next) => {
     // How far a rider is willing to walk to/from a stop (km). Clamp to a sane range.
     const maxWalkKm = Math.min(Math.max(Number(req.query.maxWalkKm) || 2, 0.1), 20);
 
-    const filter = { isDeleted: false, isActive: true };
+    // Unauthenticated endpoint — journey planning must never surface a manager's
+    // PRIVATE custom route.
+    const filter = { isDeleted: false, isActive: true, visibility: 'PUBLIC' };
     if (req.query.serviceType && SERVICE_TYPES.includes(String(req.query.serviceType).toUpperCase())) {
       filter.serviceType = String(req.query.serviceType).toUpperCase();
     }
@@ -338,7 +349,16 @@ exports.updateBus = async (req, res, next) => {
     }
 
     if (updateData.routeId) {
-      const route = await Route.findOne({ routeId: updateData.routeId, isDeleted: false });
+      // A PRIVATE custom route may only be assigned by its owning manager
+      // (driver self-service and other managers are limited to PUBLIC routes).
+      const route = await Route.findOne({
+        routeId: updateData.routeId,
+        isDeleted: false,
+        $or: [
+          { visibility: 'PUBLIC' },
+          { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
+        ]
+      });
       if (!route) {
         return res.status(400).json({
           success: false,

@@ -37,6 +37,7 @@ Then fill in the Google keys:
 |------|----------|-------------------|-------|
 | `TrackMe-backend/.env` | `GOOGLE_PLACES_KEY` | Places API (New) | **server-side only** — never expose to the client |
 | `TrackMe-backend/.env` | `GOOGLE_GEOCODING_KEY` | Geocoding API (**billing enabled**) | reverse-geocode of dragged pins; falls back to `GOOGLE_PLACES_KEY` if unset |
+| `TrackMe-backend/.env` | `GOOGLE_ROADS_KEY` | Roads API | snaps driver-recorded custom routes to roads; optional — falls back to `GOOGLE_ROUTES_KEY`, then `GOOGLE_PLACES_KEY`, then the raw unsnapped breadcrumb if none are set |
 | `TrackMe-UserApp/.env` | `EXPO_PUBLIC_GOOGLE_MAPS_KEY` | Maps JavaScript API | **browser key** — ships in the client bundle; lock it down with an **HTTP-referrer restriction** (`http://localhost:8081/*`). Keep it separate from the server keys. |
 
 > The Geocoding API requires an **active billing account** on its Google Cloud project (Places API New has a free tier; Geocoding does not). Restrict every key to just the API it needs and set a daily quota cap.

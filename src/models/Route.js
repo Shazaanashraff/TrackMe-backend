@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+const VISIBILITY_TYPES = ['PUBLIC', 'PRIVATE'];
+const ORIGIN_TYPES = ['SYSTEM', 'RECORDED'];
+const ROUTE_STATUSES = ['ACTIVE', 'PENDING_NAMING'];
 
 const routeSchema = new mongoose.Schema({
   routeId: {
@@ -85,6 +88,38 @@ const routeSchema = new mongoose.Schema({
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  // Custom-route (school/work shuttle) fields. A PRIVATE route is owned by a single
+  // manager, reusable only for their own drivers, and must never surface in any
+  // user-app/public-facing query (see routeController.js / socketHandler.js filters).
+  visibility: {
+    type: String,
+    enum: VISIBILITY_TYPES,
+    default: 'PUBLIC'
+  },
+  managerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  origin: {
+    type: String,
+    enum: ORIGIN_TYPES,
+    default: 'SYSTEM'
+  },
+  // PENDING_NAMING = provisional route auto-created for a not-yet-recorded custom
+  // driver, or recorded but not yet named by the manager. Hidden everywhere until ACTIVE.
+  status: {
+    type: String,
+    enum: ROUTE_STATUSES,
+    default: 'ACTIVE'
+  },
+  recordedMeta: {
+    recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    recordedByBusId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bus', default: null },
+    recordedAt: { type: Date, default: null },
+    rawPointCount: { type: Number, default: 0 },
+    snapped: { type: Boolean, default: false }
   }
 }, {
   timestamps: true
@@ -94,5 +129,6 @@ const routeSchema = new mongoose.Schema({
 // Note: routeId already has a unique index from `unique: true` on the field.
 routeSchema.index({ isActive: 1, isDeleted: 1 });
 routeSchema.index({ serviceType: 1, isActive: 1, isDeleted: 1 });
+routeSchema.index({ managerId: 1, visibility: 1, status: 1, isDeleted: 1 });
 
 module.exports = mongoose.model('Route', routeSchema);
