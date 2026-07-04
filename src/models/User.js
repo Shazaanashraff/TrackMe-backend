@@ -38,6 +38,13 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  // Set on province-manager (role: 'admin') accounts to scope which province's
+  // routes/buses they manage. See scripts/assign-provinces-and-managers.js.
+  province: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   nicNumber: {
     type: String,
     trim: true,

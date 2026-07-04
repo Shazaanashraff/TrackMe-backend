@@ -28,6 +28,13 @@ const routeSchema = new mongoose.Schema({
     required: [true, 'Destination is required'],
     trim: true
   },
+  // Sri Lanka province this route operates in, derived from its stop coordinates
+  // (see scripts/assign-provinces-and-managers.js). Used to route ownership to the
+  // matching province manager account.
+  province: {
+    type: String,
+    default: ''
+  },
   distance: {
     type: Number,
     required: [true, 'Distance is required'],
@@ -76,6 +83,15 @@ const routeSchema = new mongoose.Schema({
   pathPolylineReturn: {
     type: String,
     default: ''
+  },
+  // Approximate size of the real-world fleet operating this route (both directions
+  // combined). Drives the client-side deterministic bus simulation on the live map
+  // (see UserApp useSimulatedBuses). 0 = no simulation for this route. Set for the
+  // curated demo routes by scripts/set-sim-bus-counts.js.
+  simBusCount: {
+    type: Number,
+    default: 0,
+    min: [0, 'Simulated bus count cannot be negative']
   },
   isActive: {
     type: Boolean,
@@ -130,5 +146,6 @@ const routeSchema = new mongoose.Schema({
 routeSchema.index({ isActive: 1, isDeleted: 1 });
 routeSchema.index({ serviceType: 1, isActive: 1, isDeleted: 1 });
 routeSchema.index({ managerId: 1, visibility: 1, status: 1, isDeleted: 1 });
+routeSchema.index({ province: 1 });
 
 module.exports = mongoose.model('Route', routeSchema);
