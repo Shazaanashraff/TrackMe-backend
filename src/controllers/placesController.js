@@ -130,16 +130,24 @@ exports.placeDetails = async (req, res) => {
 // "Road, Suburb" the point sits on, which is what's actually accurate, and only
 // fall back to the town or a cleaned address segment (never a Plus Code).
 function googleShortName(results) {
+  const compOf = (r, types) =>
+    (r.address_components || []).find((c) => (c.types || []).some((t) => types.includes(t)))?.long_name || null;
   const pick = (types) => {
     for (const r of results) {
-      for (const c of r.address_components || []) {
-        const ct = c.types || [];
-        if (types.some((t) => ct.includes(t))) return c.long_name;
-      }
+      const v = compOf(r, types);
+      if (v) return v;
     }
     return null;
   };
-  const road = pick(['route']);
+  // The road the point actually sits on is the result whose OWN type is 'route' (a
+  // road segment). Google's most-specific result is usually the nearest street
+  // ADDRESS, whose route component can be an adjacent road (e.g. a point on
+  // Pathanwatta Rd reading "Bopatta Rd" from the nearest house). Prefer the route
+  // result so we match the road you're really on.
+  const routeResult = results.find((r) => (r.types || []).includes('route'));
+  const road =
+    (routeResult && (compOf(routeResult, ['route']) || (routeResult.formatted_address || '').split(',')[0].trim())) ||
+    pick(['route']);
   const area = pick(['sublocality_level_1', 'sublocality', 'neighborhood', 'locality']);
   if (road && area && road !== area) return `${road}, ${area}`;
   if (road) return road;

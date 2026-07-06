@@ -8,6 +8,24 @@ const result = (components, formatted) => ({
   address_components: components.map(([long_name, types]) => ({ long_name, types })),
 });
 
+test('uses the road-segment result, not the nearest address on an adjacent road', () => {
+  const results = [
+    // Nearest street address sits on an adjacent road...
+    { types: ['premise', 'street_address'], formatted_address: '300/B Bopatta Rd, Kolonnawa, Sri Lanka',
+      address_components: [
+        { long_name: 'Bopatta Road', types: ['route'] },
+        { long_name: 'Kolonnawa', types: ['locality'] },
+      ] },
+    // ...but the actual road the point is on is the route-typed result.
+    { types: ['route'], formatted_address: 'Pathanwatta Rd, Kolonnawa, Sri Lanka',
+      address_components: [
+        { long_name: 'Pathanwatta Road', types: ['route'] },
+        { long_name: 'Kolonnawa', types: ['locality'] },
+      ] },
+  ];
+  assert.strictEqual(googleShortName(results), 'Pathanwatta Road, Kolonnawa');
+});
+
 test('prefers "Road, Suburb" over a nearby POI/establishment', () => {
   const results = [
     result([
