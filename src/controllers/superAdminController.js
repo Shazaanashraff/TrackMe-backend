@@ -3,9 +3,12 @@ const Bus = require('../models/Bus');
 const Booking = require('../models/Booking');
 const BusReview = require('../models/BusReview');
 const Route = require('../models/Route');
+const Organization = require('../models/Organization');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { createProvisionalCustomRoute } = require('../utils/customRoute');
+
+const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
@@ -13,13 +16,47 @@ const sanitizeManager = (manager) => ({
   email: manager.email,
   role: manager.role,
   isActive: manager.isActive !== false,
+  province: manager.province || '',
+  serviceType: manager.serviceType || 'PUBLIC',
+  // organization may be a populated doc, a raw ObjectId, or null.
+  organization:
+    manager.organization && manager.organization._id
+      ? { _id: manager.organization._id, name: manager.organization.name }
+      : null,
   createdAt: manager.createdAt,
   updatedAt: manager.updatedAt
 });
 
+// Validates a manager's service/organization pairing. Returns { organization }
+// (the resolved Organization doc or null) on success, or { error } with an HTTP
+// status + message. PUBLIC managers must have no organization; the private service
+// types must reference an existing organization of the matching service type.
+const resolveManagerService = async (serviceType, organizationId) => {
+  if (!MANAGER_SERVICE_TYPES.includes(serviceType)) {
+    return { error: { status: 400, message: 'Invalid service type' } };
+  }
+
+  if (serviceType === 'PUBLIC') {
+    return { organization: null };
+  }
+
+  if (!organizationId) {
+    return { error: { status: 400, message: 'An organization is required for this service type' } };
+  }
+
+  const organization = await Organization.findOne({ _id: organizationId, isDeleted: false });
+  if (!organization) {
+    return { error: { status: 404, message: 'Organization not found' } };
+  }
+  if (organization.serviceType !== serviceType) {
+    return { error: { status: 400, message: 'Organization does not match the selected service type' } };
+  }
+  return { organization };
+};
+
 exports.createManager = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, serviceType = 'PUBLIC', organizationId = null } = req.body;
 
     const existingManager = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingManager) {
@@ -29,14 +66,23 @@ exports.createManager = async (req, res, next) => {
       });
     }
 
+    const resolved = await resolveManagerService(serviceType, organizationId);
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+    }
+
     const manager = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password,
       role: 'admin',
       isActive: true,
-      isEmailVerified: true
+      isEmailVerified: true,
+      serviceType,
+      organization: resolved.organization ? resolved.organization._id : null
     });
+
+    await manager.populate('organization', 'name serviceType');
 
     return res.status(201).json({
       success: true,
@@ -72,6 +118,7 @@ exports.getManagers = async (req, res, next) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNumber)
+        .populate('organization', 'name serviceType')
         .lean(),
       User.countDocuments(filter)
     ]);
@@ -93,7 +140,9 @@ exports.getManagers = async (req, res, next) => {
 
 exports.getManagerById = async (req, res, next) => {
   try {
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' }).lean();
+    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' })
+      .populate('organization', 'name serviceType')
+      .lean();
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
@@ -185,7 +234,7 @@ exports.getManagerById = async (req, res, next) => {
 
 exports.updateManager = async (req, res, next) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, serviceType, organizationId } = req.body;
 
     const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' });
     if (!manager) {
@@ -199,10 +248,24 @@ exports.updateManager = async (req, res, next) => {
       }
     }
 
+    // Re-resolve service/organization when the service type is being changed.
+    if (serviceType !== undefined) {
+      const resolved = await resolveManagerService(
+        serviceType,
+        organizationId !== undefined ? organizationId : (manager.organization || null)
+      );
+      if (resolved.error) {
+        return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+      }
+      manager.serviceType = serviceType;
+      manager.organization = resolved.organization ? resolved.organization._id : null;
+    }
+
     if (name) manager.name = name.trim();
     if (email) manager.email = email.toLowerCase().trim();
 
     await manager.save();
+    await manager.populate('organization', 'name serviceType');
 
     return res.status(200).json({
       success: true,
@@ -808,6 +871,64 @@ exports.getAuditLogs = async (req, res, next) => {
       success: true,
       count: logs.length,
       data: logs
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    List organizations, optionally filtered by service type
+// @route   GET /api/super-admin/organizations?serviceType=SCHOOL
+exports.getOrganizations = async (req, res, next) => {
+  try {
+    const { serviceType } = req.query;
+    const filter = { isDeleted: false };
+    if (serviceType) filter.serviceType = String(serviceType).toUpperCase();
+
+    const organizations = await Organization.find(filter)
+      .sort({ name: 1 })
+      .select('name serviceType isActive')
+      .lean();
+
+    return res.status(200).json({ success: true, count: organizations.length, data: organizations });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create a new organization (school / university / office)
+// @route   POST /api/super-admin/organizations
+exports.createOrganization = async (req, res, next) => {
+  try {
+    const { name, serviceType } = req.body;
+    const trimmedName = String(name).trim();
+    const normalizedType = String(serviceType).toUpperCase();
+
+    if (!Organization.ORG_SERVICE_TYPES.includes(normalizedType)) {
+      return res.status(400).json({ success: false, message: 'Organizations only exist for school, university, or office services' });
+    }
+
+    // Case-insensitive duplicate guard within the same service type. Collation
+    // strength:2 makes the exact-name match case-insensitive without regex escaping.
+    const existing = await Organization.findOne({
+      serviceType: normalizedType,
+      name: trimmedName,
+      isDeleted: false
+    }).collation({ locale: 'en', strength: 2 });
+    if (existing) {
+      return res.status(409).json({ success: false, message: 'An organization with this name already exists for this service' });
+    }
+
+    const organization = await Organization.create({
+      name: trimmedName,
+      serviceType: normalizedType,
+      createdBy: req.user?._id || null
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Organization created successfully',
+      data: { _id: organization._id, name: organization.name, serviceType: organization.serviceType }
     });
   } catch (error) {
     next(error);

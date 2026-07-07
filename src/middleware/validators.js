@@ -267,6 +267,9 @@ exports.validateForgotPasswordReset = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
+const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+const ORG_SERVICE_TYPES = ['SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
 exports.validateCreateManager = [
   body('name')
     .trim()
@@ -278,7 +281,13 @@ exports.validateCreateManager = [
     .isEmail().withMessage('Invalid email format'),
   body('password')
     .notEmpty().withMessage('Password is required')
-    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters'),
+  body('serviceType')
+    .optional()
+    .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
+  body('organizationId')
+    .optional({ nullable: true })
+    .isMongoId().withMessage('Invalid organization id')
 ];
 
 exports.validateUpdateManager = [
@@ -289,7 +298,23 @@ exports.validateUpdateManager = [
   body('email')
     .optional()
     .trim()
-    .isEmail().withMessage('Invalid email format')
+    .isEmail().withMessage('Invalid email format'),
+  body('serviceType')
+    .optional()
+    .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
+  body('organizationId')
+    .optional({ nullable: true })
+    .isMongoId().withMessage('Invalid organization id')
+];
+
+exports.validateCreateOrganization = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('Organization name is required')
+    .isLength({ min: 2, max: 120 }).withMessage('Organization name must be between 2 and 120 characters'),
+  body('serviceType')
+    .notEmpty().withMessage('Service type is required')
+    .isIn(ORG_SERVICE_TYPES).withMessage('Organizations only exist for school, university, or office services')
 ];
 
 exports.validateManagerId = [

@@ -13,7 +13,9 @@ const {
   getManagerBusDetails,
   getPendingBusRequests,
   reviewBusRequest,
-  getAuditLogs
+  getAuditLogs,
+  getOrganizations,
+  createOrganization
 } = require('../controllers/superAdminController');
 const {
   validateCreateManager,
@@ -21,7 +23,8 @@ const {
   validateManagerId,
   validateManagerStatus,
   validateManagerPasswordReset,
-  validateAssignBuses
+  validateAssignBuses,
+  validateCreateOrganization
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireSuperAdmin } = require('../middleware/auth');
@@ -34,6 +37,9 @@ router.get('/operations/:managerId', validateManagerId, handleValidationErrors, 
 router.get('/bus-requests', getPendingBusRequests);
 router.patch('/bus-requests/:requestId/review', reviewBusRequest);
 router.get('/audit-logs', getAuditLogs);
+
+router.get('/organizations', getOrganizations);
+router.post('/organizations', validateCreateOrganization, handleValidationErrors, createOrganization);
 
 router.post('/managers', validateCreateManager, handleValidationErrors, createManager);
 router.get('/managers', getManagers);

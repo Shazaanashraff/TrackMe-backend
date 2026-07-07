@@ -45,6 +45,21 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  // Which transport service a manager (role: 'admin') is responsible for. PUBLIC
+  // managers oversee public routes (scoped by province); SCHOOL/UNIVERSITY/OFFICE
+  // managers belong to a specific `organization` below.
+  serviceType: {
+    type: String,
+    enum: ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'],
+    default: 'PUBLIC'
+  },
+  // The school/university/office this manager runs, for non-PUBLIC service types.
+  // Null for PUBLIC managers.
+  organization: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null
+  },
   nicNumber: {
     type: String,
     trim: true,
