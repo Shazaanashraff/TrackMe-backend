@@ -11,6 +11,8 @@ const {
 	requestPasswordResetOtp,
 	verifyPasswordResetOtp,
 	resetPasswordWithToken,
+	validateAccountSetup,
+	completeAccountSetup,
 	updateProfile
 } = require('../controllers/authController');
 const {
@@ -21,7 +23,9 @@ const {
 	validateRefreshToken,
 	validateForgotPasswordRequest,
 	validateForgotPasswordVerifyOtp,
-	validateForgotPasswordReset
+	validateForgotPasswordReset,
+	validateAccountSetupValidate,
+	validateAccountSetupComplete
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect } = require('../middleware/auth');
@@ -52,6 +56,12 @@ router.post('/forgot-password/verify-otp', validateForgotPasswordVerifyOtp, hand
 
 // POST /api/auth/forgot-password/reset
 router.post('/forgot-password/reset', validateForgotPasswordReset, handleValidationErrors, resetPasswordWithToken);
+
+// POST /api/auth/account-setup/validate  (public — invite/reset link lookup)
+router.post('/account-setup/validate', validateAccountSetupValidate, handleValidationErrors, validateAccountSetup);
+
+// POST /api/auth/account-setup/complete  (public — manager sets their own password)
+router.post('/account-setup/complete', validateAccountSetupComplete, handleValidationErrors, completeAccountSetup);
 
 // POST /api/auth/logout
 router.post('/logout', protect, logout);

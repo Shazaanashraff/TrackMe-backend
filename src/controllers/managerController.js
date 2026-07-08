@@ -6,6 +6,7 @@ const ManagerBusRequest = require('../models/ManagerBusRequest');
 const Route = require('../models/Route');
 const RouteChangeRequest = require('../models/RouteChangeRequest');
 const User = require('../models/User');
+const Organization = require('../models/Organization');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const BUS_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
@@ -47,7 +48,7 @@ exports.getManagerDashboard = async (req, res, next) => {
   try {
     const managerId = req.user._id;
 
-    const [fleetStats, bookingStats, pendingRequests] = await Promise.all([
+    const [fleetStats, bookingStats, pendingRequests, driverIds] = await Promise.all([
       Bus.aggregate([
         { $match: { managerId, isDeleted: false } },
         {
@@ -90,12 +91,25 @@ exports.getManagerDashboard = async (req, res, next) => {
           }
         }
       ]),
-      ManagerBusRequest.countDocuments({ managerId, status: 'PENDING' })
+      ManagerBusRequest.countDocuments({ managerId, status: 'PENDING' }),
+      // Distinct drivers assigned across this manager's fleet — the headline metric
+      // for private (school/office) managers who run many vehicles + drivers.
+      Bus.distinct('driverId', { managerId, isDeleted: false, driverId: { $ne: null } })
     ]);
+
+    const serviceType = req.user.serviceType || 'PUBLIC';
+    let organizationName = null;
+    if (serviceType !== 'PUBLIC' && req.user.organization) {
+      const org = await Organization.findById(req.user.organization).select('name').lean();
+      organizationName = org?.name || null;
+    }
 
     return res.status(200).json({
       success: true,
       data: {
+        serviceType,
+        organizationName,
+        driverCount: driverIds.length,
         fleet: fleetStats[0] || {
           totalBuses: 0,
           activeBuses: 0,

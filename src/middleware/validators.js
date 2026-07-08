@@ -279,9 +279,7 @@ exports.validateCreateManager = [
     .trim()
     .notEmpty().withMessage('Email is required')
     .isEmail().withMessage('Invalid email format'),
-  body('password')
-    .notEmpty().withMessage('Password is required')
-    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters'),
+  // No password: managers are invited and set their own via the emailed link.
   body('serviceType')
     .optional()
     .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
@@ -327,7 +325,21 @@ exports.validateManagerStatus = [
     .isBoolean().withMessage('isActive must be boolean')
 ];
 
-exports.validateManagerPasswordReset = [
+// Reset now issues an emailed link instead of accepting a password, so there is
+// no request body to validate (the managerId param is validated separately).
+exports.validateManagerPasswordReset = [];
+
+// Public invite/reset link endpoints (manager sets their own password).
+exports.validateAccountSetupValidate = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token is required')
+];
+
+exports.validateAccountSetupComplete = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token is required'),
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')

@@ -134,7 +134,14 @@ const userPayload = (user) => ({
   name: user.name,
   email: user.email,
   role: user.role,
-  isEmailVerified: user.isEmailVerified
+  isEmailVerified: user.isEmailVerified,
+  // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Buses").
+  // Always present for managers; harmless (PUBLIC/null) for other roles.
+  serviceType: user.serviceType || 'PUBLIC',
+  organization:
+    user.organization && user.organization.name
+      ? { _id: user.organization._id, name: user.organization.name }
+      : null
 });
 
 // @desc    Register new user
@@ -627,6 +634,80 @@ exports.resetPasswordWithToken = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Password reset successful. Please login with your new password.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Look up an account by its (raw) invite/reset token, enforcing expiry. Returns
+// the user with the setup + password fields selected, or null if the token is
+// unknown/expired. Shared by the validate + complete endpoints below.
+const findUserBySetupToken = async (rawToken, extraSelect = '') => {
+  const token = String(rawToken || '').trim();
+  if (!token) return null;
+
+  const user = await User.findOne({ 'accountSetup.tokenHash': hashToken(token) }).select(
+    `+accountSetup.tokenHash +accountSetup.expiresAt${extraSelect ? ` ${extraSelect}` : ''}`
+  );
+
+  if (!user || !user.accountSetup?.expiresAt) return null;
+  if (user.accountSetup.expiresAt.getTime() < Date.now()) return null;
+  return user;
+};
+
+// @desc    Validate an invite/reset link and reveal whose account it's for
+// @route   POST /api/auth/account-setup/validate
+exports.validateAccountSetup = async (req, res, next) => {
+  try {
+    const user = await findUserBySetupToken(req.body.token);
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'This link is invalid or has expired. Ask your super admin to resend it.'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      email: user.email,
+      name: user.name,
+      // INVITE = never set a password yet; RESET = already active, changing it.
+      purpose: user.activatedAt ? 'RESET' : 'INVITE'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Set a password via an invite/reset link (manager chooses their own)
+// @route   POST /api/auth/account-setup/complete
+exports.completeAccountSetup = async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+    const user = await findUserBySetupToken(
+      token,
+      '+password +refreshToken.tokenHash +refreshToken.expiresAt'
+    );
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'This link is invalid or has expired. Ask your super admin to resend it.'
+      });
+    }
+
+    user.password = password;
+    if (!user.activatedAt) user.activatedAt = new Date();
+    // Consume the token and drop any existing sessions so the new password is the
+    // only way in.
+    user.accountSetup = { tokenHash: null, expiresAt: null };
+    user.refreshToken = { tokenHash: null, expiresAt: null };
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password set successfully. You can now sign in.'
     });
   } catch (error) {
     next(error);

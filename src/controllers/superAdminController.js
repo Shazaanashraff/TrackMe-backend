@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const User = require('../models/User');
 const Bus = require('../models/Bus');
 const Booking = require('../models/Booking');
@@ -7,8 +8,18 @@ const Organization = require('../models/Organization');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { createProvisionalCustomRoute } = require('../utils/customRoute');
+const { generateSetupToken, buildSetupLink, isEmailConfigured, sendAccountSetupEmail } = require('../utils/accountSetup');
 
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
+// Roster status the super admin sees. INACTIVE (deactivated) takes precedence;
+// otherwise a manager who was invited but hasn't set a password yet is INVITED,
+// and everyone else (incl. pre-invite/seeded managers) is ACTIVE.
+const managerStatus = (manager) => {
+  if (manager.isActive === false) return 'INACTIVE';
+  if (manager.invitedAt && !manager.activatedAt) return 'INVITED';
+  return 'ACTIVE';
+};
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
@@ -16,6 +27,9 @@ const sanitizeManager = (manager) => ({
   email: manager.email,
   role: manager.role,
   isActive: manager.isActive !== false,
+  status: managerStatus(manager),
+  invitedAt: manager.invitedAt || null,
+  activatedAt: manager.activatedAt || null,
   province: manager.province || '',
   serviceType: manager.serviceType || 'PUBLIC',
   // organization may be a populated doc, a raw ObjectId, or null.
@@ -56,7 +70,7 @@ const resolveManagerService = async (serviceType, organizationId) => {
 
 exports.createManager = async (req, res, next) => {
   try {
-    const { name, email, password, serviceType = 'PUBLIC', organizationId = null } = req.body;
+    const { name, email, serviceType = 'PUBLIC', organizationId = null } = req.body;
 
     const existingManager = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingManager) {
@@ -71,24 +85,60 @@ exports.createManager = async (req, res, next) => {
       return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
     }
 
+    // Invite flow: the super admin never chooses a password. We seed the account
+    // with a random, undisclosed password (so it satisfies the schema and can't be
+    // logged into) and email the manager a one-time link to set their own. The raw
+    // token lives only in that link; we persist only its hash.
+    const setup = generateSetupToken();
     const manager = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
-      password,
+      password: crypto.randomBytes(24).toString('hex'),
       role: 'admin',
       isActive: true,
       isEmailVerified: true,
       serviceType,
-      organization: resolved.organization ? resolved.organization._id : null
+      organization: resolved.organization ? resolved.organization._id : null,
+      invitedAt: new Date(),
+      activatedAt: null,
+      accountSetup: { tokenHash: setup.tokenHash, expiresAt: setup.expiresAt }
     });
 
     await manager.populate('organization', 'name serviceType');
 
-    return res.status(201).json({
-      success: true,
-      message: 'Manager created successfully',
-      data: sanitizeManager(manager)
+    const link = buildSetupLink(setup.rawToken);
+    const emailSent = await sendAccountSetupEmail(manager.email, {
+      link,
+      name: manager.name,
+      purpose: 'INVITE'
     });
+
+    // Real email is configured but delivery failed: no demo-link fallback. Roll
+    // back the just-created manager so the operation stays atomic and can be retried.
+    if (!emailSent && isEmailConfigured()) {
+      await User.deleteOne({ _id: manager._id });
+      return res.status(502).json({
+        success: false,
+        message: 'Could not send the invitation email. Check the email configuration and try again.'
+      });
+    }
+
+    const response = {
+      success: true,
+      message: emailSent
+        ? 'Manager invited. An activation link was emailed to them.'
+        : 'Manager created. Email service is not configured — share the activation link below.',
+      emailSent,
+      data: sanitizeManager(manager)
+    };
+
+    // Demo mode only (no email configured): hand the link back so the super admin
+    // can copy it. Never in production, and never once real email is set up.
+    if (!emailSent && !isEmailConfigured() && process.env.NODE_ENV !== 'production') {
+      response.activationLink = link;
+    }
+
+    return res.status(201).json(response);
   } catch (error) {
     next(error);
   }
@@ -299,22 +349,50 @@ exports.updateManagerStatus = async (req, res, next) => {
   }
 };
 
+// Super-admin-triggered password reset. Like the invite, this never sets a
+// password directly — it issues a fresh one-time link and emails it so the
+// manager chooses their own. Doubles as "resend invite" for a manager who
+// hasn't activated yet.
 exports.resetManagerPassword = async (req, res, next) => {
   try {
-    const { password } = req.body;
-
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' }).select('+password');
+    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' });
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    manager.password = password;
+    const notYetActivated = Boolean(manager.invitedAt) && !manager.activatedAt;
+    const setup = generateSetupToken();
+    manager.accountSetup = { tokenHash: setup.tokenHash, expiresAt: setup.expiresAt };
     await manager.save();
 
-    return res.status(200).json({
-      success: true,
-      message: 'Manager password reset successfully'
+    const link = buildSetupLink(setup.rawToken);
+    const emailSent = await sendAccountSetupEmail(manager.email, {
+      link,
+      name: manager.name,
+      purpose: notYetActivated ? 'INVITE' : 'RESET'
     });
+
+    // Real email configured but failed to send: surface an error, never a demo link.
+    if (!emailSent && isEmailConfigured()) {
+      return res.status(502).json({
+        success: false,
+        message: 'Could not send the email. Check the email configuration and try again.'
+      });
+    }
+
+    const response = {
+      success: true,
+      message: emailSent
+        ? `${notYetActivated ? 'Invitation' : 'Password reset link'} emailed to the manager.`
+        : 'Email service is not configured — share the reset link below.',
+      emailSent
+    };
+
+    if (!emailSent && !isEmailConfigured() && process.env.NODE_ENV !== 'production') {
+      response.resetLink = link;
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }
