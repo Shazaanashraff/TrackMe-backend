@@ -15,7 +15,7 @@ const managerAuditLogSchema = new mongoose.Schema({
   },
   entityType: {
     type: String,
-    enum: ['BUS', 'BUS_REQUEST', 'BUS_ACCOUNT', 'ROUTE', 'ROUTE_CHANGE_REQUEST'],
+    enum: ['BUS', 'BUS_REQUEST', 'BUS_ACCOUNT', 'ROUTE', 'ROUTE_CHANGE_REQUEST', 'ROUTE_JOIN_REQUEST', 'ROUTE_MEMBERSHIP'],
     required: true
   },
   entityId: {

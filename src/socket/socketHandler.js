@@ -1,6 +1,7 @@
 const LiveLocation = require('../models/LiveLocation');
 const Bus = require('../models/Bus');
 const Route = require('../models/Route');
+const RouteMembership = require('../models/RouteMembership');
 const User = require('../models/User');
 const { createNotification } = require('../utils/notificationHelper');
 const jwt = require('jsonwebtoken');
@@ -456,14 +457,22 @@ const setupSocket = (io) => {
           });
         }
 
-        // A manager's PRIVATE custom route must never be joinable here — only
-        // PUBLIC routes have rider-facing live tracking.
+        // A PRIVATE route (manager custom shuttle, or a Private Routes feature
+        // route) only joins here for an authenticated user with an ACTIVE
+        // membership — see PRIVATE_ROUTES_PLAN.md §5.3.
         const route = await Route.findOne({ routeId, isDeleted: false }).select('visibility');
         if (route && route.visibility === 'PRIVATE') {
-          return callback?.({
-            success: false,
-            error: 'This route is not available for tracking'
+          const isMember = socket.userId && await RouteMembership.exists({
+            userId: socket.userId,
+            routeId,
+            status: 'ACTIVE'
           });
+          if (!isMember) {
+            return callback?.({
+              success: false,
+              error: 'Access denied'
+            });
+          }
         }
 
         socket.join(`route:${routeId}`);
@@ -528,10 +537,17 @@ const setupSocket = (io) => {
           });
         }
 
-        // A manager's PRIVATE custom route must never leak live locations here.
+        // A PRIVATE route only leaks live locations to an authenticated member.
         const route = await Route.findOne({ routeId, isDeleted: false }).select('visibility');
         if (route && route.visibility === 'PRIVATE') {
-          return callback?.({ success: false, error: 'This route is not available for tracking' });
+          const isMember = socket.userId && await RouteMembership.exists({
+            userId: socket.userId,
+            routeId,
+            status: 'ACTIVE'
+          });
+          if (!isMember) {
+            return callback?.({ success: false, error: 'Access denied' });
+          }
         }
 
         // Get the most recent location for each active bus on the route

@@ -1,6 +1,7 @@
 const Bus = require('../models/Bus');
 const LiveLocation = require('../models/LiveLocation');
 const Route = require('../models/Route');
+const RouteMembership = require('../models/RouteMembership');
 
 const getLat = (point) => point?.latitude ?? point?.lat;
 const getLng = (point) => point?.longitude ?? point?.lng;
@@ -75,14 +76,21 @@ const getBusLocationCandidates = (bus, fallbackBusId) => {
   return [...new Set(candidates)];
 };
 
-// Rider-facing ETA — only resolves PUBLIC routes. A manager's PRIVATE custom
-// route has no rider-facing ETA (it's tracked via the manager dashboard instead).
-const findRouteByIdentifier = async (routeIdentifier) => {
-  let route = await Route.findOne({ routeId: routeIdentifier, isDeleted: false, visibility: 'PUBLIC' }).lean();
-  if (!route) {
-    route = await Route.findOne({ _id: routeIdentifier, isDeleted: false, visibility: 'PUBLIC' }).lean();
-  }
-  return route;
+// Rider-facing ETA — resolves PUBLIC routes, or a PRIVATE route the caller has an
+// ACTIVE membership on (Private Routes feature). All other PRIVATE routes (e.g. a
+// manager's custom shuttle) stay invisible here.
+// Returns { route: null, forbidden: false } when the route doesn't exist at all,
+// or { route: null, forbidden: true } when it exists but the caller lacks access.
+const findRouteByIdentifier = async (routeIdentifier, userId) => {
+  const route =
+    (await Route.findOne({ routeId: routeIdentifier, isDeleted: false }).lean()) ||
+    (await Route.findOne({ _id: routeIdentifier, isDeleted: false }).lean());
+
+  if (!route) return { route: null, forbidden: false };
+  if (route.visibility === 'PUBLIC') return { route, forbidden: false };
+
+  const isMember = userId && await RouteMembership.exists({ userId, routeId: route.routeId, status: 'ACTIVE' });
+  return isMember ? { route, forbidden: false } : { route: null, forbidden: true };
 };
 
 /**
@@ -110,11 +118,14 @@ const calculateBusETA = async (req, res) => {
     }
     
     // Get route details
-    const route = await findRouteByIdentifier(routeId);
+    const { route, forbidden } = await findRouteByIdentifier(routeId, req.user?._id);
+    if (forbidden) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
     if (!route) {
       return res.status(404).json({ message: 'Route not found' });
     }
-    
+
     // Get bus details to check completed stops
     const completedStops = bus?.completedStops || [];
     
@@ -221,11 +232,14 @@ const getRouteETAs = async (req, res) => {
   try {
     const { routeId } = req.params;
 
-    const route = await findRouteByIdentifier(routeId);
+    const { route, forbidden } = await findRouteByIdentifier(routeId, req.user?._id);
+    if (forbidden) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
     if (!route) {
       return res.status(404).json({ message: 'Route not found' });
     }
-    
+
     // Get all active buses on this route
     const buses = await Bus.find({
       $or: [{ routeId }, { assignedRoute: routeId }],

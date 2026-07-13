@@ -16,6 +16,16 @@ const {
   resolveRouteChangeRequest,
   updateManagerBus
 } = require('../controllers/managerController');
+const {
+  getOwnedRoutes,
+  updateRoutePrivacy,
+  rotateRoomKey,
+  revealRoomKey,
+  getRouteJoinRequests,
+  decideJoinRequest,
+  getRouteMembers,
+  revokeRouteMember
+} = require('../controllers/managerPrivateRoutesController');
 const { protect, requireManager } = require('../middleware/auth');
 
 router.use(protect, requireManager);
@@ -34,5 +44,15 @@ router.get('/custom-routes', getManagerCustomRoutes);
 router.patch('/custom-routes/:routeId/name', nameCustomRoute);
 router.get('/route-change-requests', getManagerRouteChangeRequests);
 router.patch('/route-change-requests/:id/resolve', resolveRouteChangeRequest);
+
+// Private Routes (room-key / PIN) — see PRIVATE_ROUTES_PLAN.md §5.1
+router.get('/owned-routes', getOwnedRoutes);
+router.patch('/routes/:routeId/privacy', updateRoutePrivacy);
+router.post('/routes/:routeId/room-key/rotate', rotateRoomKey);
+router.get('/routes/:routeId/room-key', revealRoomKey);
+router.get('/routes/:routeId/join-requests', getRouteJoinRequests);
+router.patch('/join-requests/:id/decision', decideJoinRequest);
+router.get('/routes/:routeId/members', getRouteMembers);
+router.delete('/routes/:routeId/members/:userId', revokeRouteMember);
 
 module.exports = router;

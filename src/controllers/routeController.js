@@ -47,15 +47,36 @@ exports.createRoute = async (req, res, next) => {
   }
 };
 
+// PUBLIC routes, or unhidden PRIVATE routes shown as locked stubs (no stops/geometry)
+// per the Private Routes feature. Hidden PRIVATE routes (incl. migrated custom-route
+// shuttles) never appear here — see PRIVATE_ROUTES_PLAN.md §5.3.
+const listableRouteFilter = () => ({
+  $or: [
+    { visibility: 'PUBLIC' },
+    { visibility: 'PRIVATE', isHidden: { $ne: true } }
+  ]
+});
+
+const projectListedRoute = (route) => {
+  const isPrivate = route.visibility === 'PRIVATE';
+  const plain = route.toObject ? route.toObject() : route;
+  const { stops, pathPolyline, pathPolylineReturn, roomKey, ...rest } = plain;
+  return {
+    ...rest,
+    isPrivate,
+    requiresApproval: isPrivate ? !!route.joinApprovalRequired : false,
+    locked: isPrivate
+  };
+};
+
 // @desc    Get all routes
 // @route   GET /api/routes
 exports.getAllRoutes = async (req, res, next) => {
   try {
     const { isActive, serviceType } = req.query;
-    // Unauthenticated endpoint (user-app search, public listings) — a manager's
-    // PRIVATE custom route must never surface here. Use GET /api/manager/routes
-    // (or the recorded-route endpoints) for manager-scoped access.
-    const filter = { isDeleted: false, visibility: 'PUBLIC' };
+    // Unauthenticated endpoint (user-app search, public listings). Private-route
+    // manager custom routes (and hidden Private Routes) must never surface here.
+    const filter = { isDeleted: false, ...listableRouteFilter() };
 
     if (isActive === 'true') {
       filter.isActive = true;
@@ -68,12 +89,12 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simBusCount createdAt');
+      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simBusCount createdAt visibility isHidden joinApprovalRequired');
 
     res.status(200).json({
       success: true,
       count: routes.length,
-      data: routes
+      data: routes.map(projectListedRoute)
     });
   } catch (error) {
     next(error);
@@ -176,8 +197,8 @@ exports.getRoutesPaginated = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
-    const filter = { isDeleted: false, visibility: 'PUBLIC' };
+    // Unauthenticated endpoint — never surface a hidden/custom PRIVATE route.
+    const filter = { isDeleted: false, ...listableRouteFilter() };
     if (req.query.isActive) {
       filter.isActive = req.query.isActive === 'true';
     }
@@ -186,6 +207,7 @@ exports.getRoutesPaginated = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
+      .select('-stops -pathPolyline -pathPolylineReturn -roomKey')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -194,7 +216,7 @@ exports.getRoutesPaginated = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: routes,
+      data: routes.map(projectListedRoute),
       pagination: {
         page,
         limit,

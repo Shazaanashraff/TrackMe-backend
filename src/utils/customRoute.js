@@ -26,6 +26,9 @@ async function createProvisionalCustomRoute({ managerId, serviceType = 'PUBLIC' 
         stops: [],
         pathPolyline: '',
         visibility: 'PRIVATE',
+        // Custom-route (school/work shuttle) — must stay unlisted by default, unlike
+        // a manager-opted-in Private Routes feature route. See PRIVATE_ROUTES_PLAN.md §2.
+        isHidden: true,
         managerId,
         origin: 'RECORDED',
         status: 'PENDING_NAMING'

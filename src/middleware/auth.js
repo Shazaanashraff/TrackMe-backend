@@ -31,6 +31,28 @@ const protect = async (req, res, next) => {
   }
 };
 
+// Attaches req.user if a valid Bearer token is present; never blocks the request.
+// Used by endpoints that stay public for PUBLIC routes but need to recognize an
+// authenticated member for PRIVATE routes (e.g. bus/ETA reads).
+const optionalAuth = async (req, res, next) => {
+  try {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+    if (!token) return next();
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    if (user && user.isActive !== false) {
+      req.user = user;
+    }
+    next();
+  } catch (error) {
+    next();
+  }
+};
+
 const requireRoles = (...roles) => (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ message: 'Not authorized' });
@@ -67,6 +89,7 @@ const requireSuperAdmin = requireRoles('super-admin');
 
 module.exports = {
   protect,
+  optionalAuth,
   requireRoles,
   requireDriver,
   requireUser,
