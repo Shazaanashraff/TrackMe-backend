@@ -7,7 +7,8 @@ const {
   deleteNotification,
   getUnreadCount,
   getNotificationById,
-  cleanupOldNotifications
+  cleanupOldNotifications,
+  registerDeviceToken
 } = require('../controllers/notificationController');
 const { protect } = require('../middleware/auth');
 
@@ -19,6 +20,9 @@ router.get('/', getUserNotifications);
 
 // GET /api/notifications/count/unread - Get unread count
 router.get('/count/unread', getUnreadCount);
+
+// POST /api/notifications/device-token - Register caller's Expo push token
+router.post('/device-token', registerDeviceToken);
 
 // GET /api/notifications/:notificationId - Get single notification
 router.get('/:notificationId', getNotificationById);

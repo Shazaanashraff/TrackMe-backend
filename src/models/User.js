@@ -108,6 +108,14 @@ const userSchema = new mongoose.Schema({
       default: null,
       select: false
     }
+  },
+  // Expo push tokens for this account's device(s). Used to deliver QR boarding/
+  // alighting notifications (see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md).
+  // This system has no separate parent/child model — the rider's own account is the
+  // notification target.
+  pushTokens: {
+    type: [String],
+    default: []
   }
 }, {
   timestamps: true

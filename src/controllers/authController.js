@@ -35,7 +35,43 @@ const sendVerificationEmail = async (to, otp) => {
     from,
     to,
     subject: 'Verify your TrackMe account',
-    html: `<p>Your verification code is <strong>${otp}</strong>. It expires in 10 minutes.</p>`
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 500px; margin: 0 auto; padding: 20px; }
+          .header { margin-bottom: 30px; }
+          .code-box { background: #f5f5f5; padding: 15px; border-left: 3px solid #333; margin: 20px 0; }
+          .code { font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace; }
+          .footer { color: #666; font-size: 12px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <p>Welcome to TrackMe! Please verify your email address to finish setting up your account.</p>
+          </div>
+
+          <p>Use this code to verify your email (valid for 10 minutes):</p>
+
+          <div class="code-box">
+            <div class="code">${otp}</div>
+          </div>
+
+          <p><strong>Or copy and paste this code in the verification screen.</strong></p>
+
+          <div class="footer">
+            <p>Did not create a TrackMe account? You can safely ignore this email.</p>
+            <p>TrackMe © 2026</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
   });
 
   if (error) {
@@ -133,9 +169,12 @@ const userPayload = (user) => ({
   _id: user._id,
   name: user.name,
   email: user.email,
+  phoneNumber: user.phoneNumber,
   role: user.role,
   isEmailVerified: user.isEmailVerified
 });
+
+const PHONE_NUMBER_REGEX = /^[0-9+()\-\s]{7,20}$/;
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -639,7 +678,7 @@ exports.resetPasswordWithToken = async (req, res, next) => {
 exports.updateProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { name } = req.body;
+    const { name, phoneNumber } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -648,9 +687,22 @@ exports.updateProfile = async (req, res, next) => {
       });
     }
 
+    const update = { name: name.trim() };
+
+    if (phoneNumber !== undefined) {
+      const trimmedPhone = String(phoneNumber).trim();
+      if (trimmedPhone && !PHONE_NUMBER_REGEX.test(trimmedPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid phone number'
+        });
+      }
+      update.phoneNumber = trimmedPhone;
+    }
+
     const user = await User.findByIdAndUpdate(
       userId,
-      { name: name.trim() },
+      update,
       { new: true, runValidators: true }
     );
 
@@ -664,8 +716,7 @@ exports.updateProfile = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      name: user.name,
-      email: user.email
+      user: userPayload(user)
     });
   } catch (error) {
     next(error);

@@ -40,6 +40,17 @@ const routeMembershipSchema = new mongoose.Schema({
   revokedAt: {
     type: Date,
     default: null
+  },
+  // QR Attendance (see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md). Bumping
+  // tokenVersion instantly revokes every previously-issued QR for this membership;
+  // a verified token must carry a matching `ver` claim.
+  tokenVersion: {
+    type: Number,
+    default: 1
+  },
+  qrIssuedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

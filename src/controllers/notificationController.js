@@ -1,4 +1,5 @@
 const Notification = require('../models/Notification');
+const User = require('../models/User');
 
 // @desc    Get user's notifications
 // @route   GET /api/notifications
@@ -152,6 +153,25 @@ exports.getNotificationById = async (req, res, next) => {
       success: true,
       data: notification
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Register (or refresh) this device's Expo push token for the caller
+// @route   POST /api/notifications/device-token
+// Used by QR Attendance push delivery (see
+// docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md) and available to any push feature.
+exports.registerDeviceToken = async (req, res, next) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token is required' });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, { $addToSet: { pushTokens: token } });
+
+    return res.status(200).json({ success: true, message: 'Device token registered' });
   } catch (error) {
     next(error);
   }

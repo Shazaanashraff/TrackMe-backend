@@ -22,6 +22,9 @@ const busReviewRoutes = require('./routes/busReviewRoutes');
 const placesRoutes = require('./routes/placesRoutes');
 const transitRoutes = require('./routes/transitRoutes');
 const customRouteRoutes = require('./routes/customRouteRoutes');
+const qrRoutes = require('./routes/qrRoutes');
+const attendanceRoutes = require('./routes/attendanceRoutes');
+const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
 
 // Initialize Express app
 const app = express();
@@ -84,6 +87,10 @@ app.use('/api/bus-reviews', busReviewRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/transit', transitRoutes);
 app.use('/api/driver/custom-routes', customRouteRoutes);
+// QR Attendance (see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md)
+app.use('/api/qr', qrRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/driver/boarding', driverBoardingRoutes);
 
 // Health check endpoint (services receiving requests = keep-alive friendly)
 app.get('/health', (req, res) => {

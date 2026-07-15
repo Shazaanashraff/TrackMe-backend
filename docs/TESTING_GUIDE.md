@@ -5,11 +5,11 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Auth
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| POST /api/auth/register | integration | tests/integration/auth/register.test.js | valid, invalid, duplicate | payload or validation changes |
-| POST /api/auth/login | integration | tests/integration/auth/login.test.js | valid, wrong password, unverified | auth flow changes |
+| POST /api/auth/register + POST /api/auth/verify-email | integration | tests/integration/auth.test.js | register → unverified user + `requiresVerification` + `developmentOtp` (Resend mocked, never hits the real API); verify-email wrong OTP → 400; correct OTP → verified + tokens | register/verify contract, OTP flow, or verification email template changes |
+| POST /api/auth/login | integration | tests/integration/auth.test.js | valid creds → 200 + tokens, invalid creds → 401, missing password → 400, unverified account → 403 with `requiresVerification` + `email` | auth flow changes |
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
 | POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |
-| PUT /api/auth/profile | integration | tests/integration/auth/profile.test.js | update profile, invalid fields | profile schema changes |
+| PUT /api/auth/profile (name + phoneNumber) | integration | tests/integration/auth.test.js | accepts + persists `phoneNumber`, returned on `user`; rejects malformed `phoneNumber`; empty string clears it; 401 when unauthenticated | profile update contract or phoneNumber validation changes |
 
 ## Routes and Buses
 | Item | Test type | Test file | Cases covered | Update when |
@@ -31,6 +31,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
+| pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
 ## Driver Earnings
 | Item | Test type | Test file | Cases covered | Update when |
