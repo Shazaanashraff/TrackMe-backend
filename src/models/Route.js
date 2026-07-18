@@ -136,9 +136,33 @@ const routeSchema = new mongoose.Schema({
     recordedAt: { type: Date, default: null },
     rawPointCount: { type: Number, default: 0 },
     snapped: { type: Boolean, default: false }
+  },
+  // Privacy / room-key (Private Routes feature). visibility:'PRIVATE' => requires a room key to join.
+  isHidden: { type: Boolean, default: false }, // PRIVATE + not listed anywhere in user-app
+  joinApprovalRequired: { type: Boolean, default: false }, // PRIVATE + correct PIN also needs manager approval
+  roomKey: {
+    ciphertext: { type: String, default: null }, // AES-256-GCM of the 6-digit code (base64)
+    iv: { type: String, default: null },
+    authTag: { type: String, default: null },
+    // No default: must stay entirely absent (not null) so the sparse unique index
+    // below only ever applies to routes that actually have a key.
+    lookupHash: { type: String },
+    updatedAt: { type: Date, default: null },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
   }
 }, {
   timestamps: true
+});
+
+// PUBLIC routes must never carry privacy flags/room-key. Clears them whenever
+// visibility flips back to PUBLIC (see PRIVATE_ROUTES_PLAN.md §3.1).
+routeSchema.pre('save', function clearPrivacyOnPublic(next) {
+  if (this.visibility === 'PUBLIC' && this.isModified('visibility')) {
+    this.isHidden = false;
+    this.joinApprovalRequired = false;
+    this.roomKey = { ciphertext: null, iv: null, authTag: null, lookupHash: undefined, updatedAt: null, updatedBy: null };
+  }
+  next();
 });
 
 // Index for faster queries
@@ -147,5 +171,6 @@ routeSchema.index({ isActive: 1, isDeleted: 1 });
 routeSchema.index({ serviceType: 1, isActive: 1, isDeleted: 1 });
 routeSchema.index({ managerId: 1, visibility: 1, status: 1, isDeleted: 1 });
 routeSchema.index({ province: 1 });
+routeSchema.index({ 'roomKey.lookupHash': 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Route', routeSchema);

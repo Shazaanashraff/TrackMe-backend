@@ -61,6 +61,10 @@ const bootstrap = async () => {
   }
 };
 
+// Exposed so route handlers (e.g. revoking a private-route member) can emit
+// socket events without importing the io instance directly.
+app.set('io', io);
+
 // Middleware
 app.use(cors());
 app.use(express.json());

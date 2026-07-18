@@ -39,6 +39,7 @@ Then fill in the Google keys:
 | `TrackMe-backend/.env` | `GOOGLE_GEOCODING_KEY` | Geocoding API (**billing enabled**) | reverse-geocode of dragged pins; falls back to `GOOGLE_PLACES_KEY` if unset |
 | `TrackMe-backend/.env` | `GOOGLE_ROADS_KEY` | Roads API | snaps driver-recorded custom routes to roads; optional — falls back to `GOOGLE_ROUTES_KEY`, then `GOOGLE_PLACES_KEY`, then the raw unsnapped breadcrumb if none are set |
 | `TrackMe-UserApp/.env` | `EXPO_PUBLIC_GOOGLE_MAPS_KEY` | Maps JavaScript API | **browser key** — ships in the client bundle; lock it down with an **HTTP-referrer restriction** (`http://localhost:8081/*`). Keep it separate from the server keys. |
+| `TrackMe-backend/.env` | `ROOM_KEY_SECRET`, `ROOM_KEY_PEPPER` | — (no Google API) | Private Routes room-key encryption/lookup. Generate real values for anything beyond local dev: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 
 > The Geocoding API requires an **active billing account** on its Google Cloud project (Places API New has a free tier; Geocoding does not). Restrict every key to just the API it needs and set a daily quota cap.
 
@@ -66,6 +67,13 @@ cd TrackMe-backend
 npm run seed:wp               # 25 Western Province routes
 npm run seed:manager-buses    # manager + 3 buses/route (75 buses)
 npm run seed:start-journeys   # activates 2 buses/route with live positions
+```
+
+One-time migration for the Private Routes feature (backfills existing PRIVATE
+custom-route shuttles so they stay unlisted/unjoinable exactly as before):
+
+```bash
+node scripts/migrate-private-routes.js [--dry]
 ```
 
 ---

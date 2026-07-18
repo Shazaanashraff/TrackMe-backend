@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Bus = require('../models/Bus');
 const Route = require('../models/Route');
+const RouteMembership = require('../models/RouteMembership');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -95,10 +96,15 @@ exports.getBusesByRoute = async (req, res, next) => {
       $or: [{ routeId }, ...(mongoose.Types.ObjectId.isValid(routeId) ? [{ _id: routeId }] : [])]
     });
 
-    // Unauthenticated endpoint — a manager's PRIVATE custom route (and its buses)
-    // must never be discoverable here.
+    // A manager's PRIVATE route (custom shuttle, or a Private Routes feature route)
+    // only surfaces its buses to an authenticated user with an ACTIVE membership;
+    // everyone else (including unauthenticated custom-route callers) gets an empty
+    // list rather than a 403, preserving existing custom-route behavior.
     if (route && route.visibility === 'PRIVATE') {
-      return res.status(200).json({ success: true, count: 0, data: [] });
+      const isMember = req.user && await RouteMembership.exists({ userId: req.user._id, routeId: route.routeId, status: 'ACTIVE' });
+      if (!isMember) {
+        return res.status(200).json({ success: true, count: 0, data: [] });
+      }
     }
 
     // Filter buses by effective route lookup

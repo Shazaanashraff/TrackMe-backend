@@ -20,7 +20,7 @@ const {
   validateBusId
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
-const { protect, requireDriver } = require('../middleware/auth');
+const { protect, requireDriver, optionalAuth } = require('../middleware/auth');
 const { getRoutePath } = require('../controllers/routeGeometryController');
 const { getWalkPath } = require('../controllers/walkController');
 
@@ -52,7 +52,7 @@ router.get('/list/all', getAllBuses);
 router.get('/my-bus', protect, requireDriver, getMyBus);
 
 // GET /api/bus/route/:routeId - Get buses by route
-router.get('/route/:routeId', getBusesByRoute);
+router.get('/route/:routeId', optionalAuth, getBusesByRoute);
 
 // GET /api/bus/:busId - Get single bus by ID
 router.get('/:busId', validateBusId, handleValidationErrors, getBusById);
