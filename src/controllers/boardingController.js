@@ -1,6 +1,6 @@
-// Driver-facing QR scan endpoint — see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md.
+// Driver-facing QR scan endpoint — see docs/features/qr-attendance/QR_SYSTEM.md.
 const Bus = require('../models/Bus');
-const User = require('../models/User');
+const Route = require('../models/Route');
 const BoardingEvent = require('../models/BoardingEvent');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
@@ -19,7 +19,6 @@ function eventPayload(event) {
   return {
     eventId: String(event._id),
     studentId: String(event.studentId),
-    membershipId: String(event.membershipId),
     busId: event.busId,
     routeId: event.routeId,
     type: event.type,
@@ -29,7 +28,8 @@ function eventPayload(event) {
   };
 }
 
-// @desc    Driver scans a rider's QR to record a BOARD or ALIGHT event
+// @desc    Driver scans a rider's QR to record a BOARD or ALIGHT event. Requires the
+//          scanned bus's route to have QR attendance enabled by its manager.
 // @route   POST /api/driver/boarding/scan
 // body: { token, busId, type?: 'BOARD'|'ALIGHT', lat?, lng?, tripId? }
 // `type` explicit overrides toggle inference; omit it to auto-toggle off the
@@ -46,18 +46,18 @@ exports.scanBoarding = async (req, res, next) => {
 
     const verification = await verifyQr(token);
     if (!verification.valid) {
-      const status = verification.reason === 'EXPIRED' ? 401 : 401;
-      return res.status(status).json({ success: false, message: `Invalid QR token: ${verification.reason}` });
+      return res.status(401).json({ success: false, message: `Invalid QR token: ${verification.reason}` });
     }
-    const { membership } = verification;
+    const { user: rider } = verification;
 
     const bus = await Bus.findOne({ busId, driverId: req.user._id, isDeleted: false });
     if (!bus) {
       return res.status(404).json({ success: false, message: 'Bus not found or not assigned to you' });
     }
 
-    if (bus.routeId !== membership.routeId) {
-      return res.status(403).json({ success: false, message: "Rider's membership does not match this bus's route" });
+    const route = await Route.findOne({ routeId: bus.routeId, isDeleted: false });
+    if (!route?.qrEnabled) {
+      return res.status(403).json({ success: false, message: 'QR attendance is not enabled for this route' });
     }
 
     const tripId = req.body?.tripId ? String(req.body.tripId) : dayTripId(busId);
@@ -67,7 +67,7 @@ exports.scanBoarding = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'type must be BOARD or ALIGHT' });
     }
     if (!type) {
-      const lastForTrip = await BoardingEvent.findOne({ studentId: membership.userId, tripId })
+      const lastForTrip = await BoardingEvent.findOne({ studentId: rider._id, tripId })
         .sort({ timestamp: -1 });
       type = lastForTrip?.type === 'BOARD' ? 'ALIGHT' : 'BOARD';
     }
@@ -76,7 +76,7 @@ exports.scanBoarding = async (req, res, next) => {
     // is an idempotent replay, not a new attendance record.
     const debounceSince = new Date(Date.now() - DEBOUNCE_SECONDS * 1000);
     const recentDuplicate = await BoardingEvent.findOne({
-      studentId: membership.userId,
+      studentId: rider._id,
       busId,
       type,
       timestamp: { $gte: debounceSince }
@@ -87,10 +87,9 @@ exports.scanBoarding = async (req, res, next) => {
     }
 
     const event = await BoardingEvent.create({
-      studentId: membership.userId,
-      membershipId: membership._id,
+      studentId: rider._id,
       busId,
-      routeId: membership.routeId,
+      routeId: bus.routeId,
       driverId: req.user._id,
       type,
       lat: typeof lat === 'number' ? lat : null,
@@ -102,13 +101,12 @@ exports.scanBoarding = async (req, res, next) => {
     // Best-effort side effects — never fail the scan response over these.
     const io = req.app.get('io');
     if (io) {
-      io.to(`route:${membership.routeId}`).emit('attendance:event', eventPayload(event));
-      io.to(`student:${String(membership.userId)}`).emit('attendance:event', eventPayload(event));
+      io.to(`route:${bus.routeId}`).emit('attendance:event', eventPayload(event));
+      io.to(`student:${String(rider._id)}`).emit('attendance:event', eventPayload(event));
     }
 
     try {
-      const rider = await User.findById(membership.userId);
-      if (rider) await sendBoardingPush(rider, event, bus.busName);
+      await sendBoardingPush(rider, event, bus.busName);
     } catch (err) {
       console.error('Error dispatching boarding push:', err.message);
     }

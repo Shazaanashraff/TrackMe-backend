@@ -11,7 +11,8 @@ const {
 	requestPasswordResetOtp,
 	verifyPasswordResetOtp,
 	resetPasswordWithToken,
-	updateProfile
+	updateProfile,
+	updateAvatar
 } = require('../controllers/authController');
 const {
 	validateRegister,
@@ -58,5 +59,9 @@ router.post('/logout', protect, logout);
 
 // PUT /api/auth/profile
 router.put('/profile', protect, updateProfile);
+
+// PUT /api/auth/avatar — body carries a base64 image data URL; the app-wide JSON
+// limit (3 MB, set in server.js) covers it. Size is re-checked in the controller.
+router.put('/avatar', protect, updateAvatar);
 
 module.exports = router;

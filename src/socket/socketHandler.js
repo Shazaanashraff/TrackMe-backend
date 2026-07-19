@@ -95,6 +95,11 @@ const setupSocket = (io) => {
         activeBus: null
       };
 
+      // Every authenticated rider auto-joins their own notification room so
+      // server-side emits targeted at `student:<userId>` (QR attendance status
+      // flips, private-route access-revoked, etc.) always have a listener.
+      socket.join(`student:${socket.userId}`);
+
       socket.emit('connection-success', {
         socketId: socket.id,
         message: 'Connected to bus tracking server',

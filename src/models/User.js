@@ -38,6 +38,14 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  // Profile picture stored as a self-contained data URL (data:image/...;base64,...)
+  // so the app needs no external object store or credentials to hand off. Size is
+  // capped in the controller (see MAX_AVATAR_BYTES). To scale later, swap this for
+  // an https URL backed by S3/Cloudinary — userPayload already returns it verbatim.
+  avatarUrl: {
+    type: String,
+    default: ''
+  },
   // Set on province-manager (role: 'admin') accounts to scope which province's
   // routes/buses they manage. See scripts/assign-provinces-and-managers.js.
   province: {
@@ -116,6 +124,17 @@ const userSchema = new mongoose.Schema({
   pushTokens: {
     type: [String],
     default: []
+  },
+  // Account-scoped QR attendance pass (see docs/features/qr-attendance/QR_SYSTEM.md).
+  // One QR per user, valid across every route — bumping qrTokenVersion instantly
+  // revokes every previously-issued pass (used by the rotate/regenerate endpoint).
+  qrTokenVersion: {
+    type: Number,
+    default: 1
+  },
+  qrIssuedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

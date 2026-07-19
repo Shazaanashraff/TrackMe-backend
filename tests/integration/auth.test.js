@@ -223,3 +223,98 @@ describe('Auth Integration - PUT /api/auth/profile (phone number)', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('Auth Integration - PUT /api/auth/avatar (profile picture)', () => {
+  const AVATAR_USER = {
+    name: 'Avatar Tester',
+    email: `avatar-${Date.now()}@test.com`,
+    password: 'P@ssw0rd!',
+  };
+  // 1x1 transparent PNG.
+  const VALID_AVATAR =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  let token;
+
+  beforeAll(async () => {
+    await User.create({
+      ...AVATAR_USER,
+      role: 'user',
+      isEmailVerified: true,
+      isActive: true,
+    });
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: AVATAR_USER.email, password: AVATAR_USER.password });
+    token = login.body.accessToken;
+  });
+
+  test('login returns an (empty) avatarUrl field by default', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: AVATAR_USER.email, password: AVATAR_USER.password });
+
+    expect(res.body.user).toHaveProperty('avatarUrl', '');
+  });
+
+  test('accepts a valid image data URL and persists it', async () => {
+    const res = await request(app)
+      .put('/api/auth/avatar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ avatar: VALID_AVATAR })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.user.avatarUrl).toBe(VALID_AVATAR);
+
+    const stored = await User.findOne({ email: AVATAR_USER.email });
+    expect(stored.avatarUrl).toBe(VALID_AVATAR);
+  });
+
+  test('rejects a non-image / malformed data URL with 400', async () => {
+    const res = await request(app)
+      .put('/api/auth/avatar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ avatar: 'data:text/plain;base64,aGVsbG8=' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('rejects an image larger than the 2 MB cap with 413', async () => {
+    // ~2.1 MB decoded (2_800_000 base64 chars * 3/4), over the 2 MB limit.
+    const oversized = `data:image/png;base64,${'A'.repeat(2_800_000)}`;
+    const res = await request(app)
+      .put('/api/auth/avatar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ avatar: oversized })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(413);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('clears the avatar when sent an empty string', async () => {
+    const res = await request(app)
+      .put('/api/auth/avatar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ avatar: '' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.avatarUrl).toBe('');
+
+    const stored = await User.findOne({ email: AVATAR_USER.email });
+    expect(stored.avatarUrl).toBe('');
+  });
+
+  test('rejects when unauthenticated', async () => {
+    const res = await request(app)
+      .put('/api/auth/avatar')
+      .send({ avatar: VALID_AVATAR })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(401);
+  });
+});

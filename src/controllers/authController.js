@@ -170,11 +170,24 @@ const userPayload = (user) => ({
   name: user.name,
   email: user.email,
   phoneNumber: user.phoneNumber,
+  avatarUrl: user.avatarUrl || '',
   role: user.role,
   isEmailVerified: user.isEmailVerified
 });
 
 const PHONE_NUMBER_REGEX = /^[0-9+()\-\s]{7,20}$/;
+
+// Profile pictures are stored inline as base64 data URLs. Cap the decoded size so a
+// single document can't bloat the collection; ~2 MB of image is plenty for an avatar.
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_DATA_URL_REGEX = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+
+// Returns the decoded byte length of a base64 string without allocating a Buffer copy.
+const base64ByteLength = (b64) => {
+  const len = b64.length;
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return (len * 3) / 4 - padding;
+};
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -716,6 +729,73 @@ exports.updateProfile = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
+      user: userPayload(user)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update (or clear) the user's profile picture
+// @route   PUT /api/auth/avatar
+// @access  Private
+exports.updateAvatar = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { avatar } = req.body;
+
+    // An empty string / null clears the current avatar.
+    if (avatar === '' || avatar === null || avatar === undefined) {
+      const cleared = await User.findByIdAndUpdate(
+        userId,
+        { avatarUrl: '' },
+        { new: true }
+      );
+      if (!cleared) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Profile picture removed',
+        user: userPayload(cleared)
+      });
+    }
+
+    if (typeof avatar !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image format'
+      });
+    }
+
+    const match = AVATAR_DATA_URL_REGEX.exec(avatar);
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile picture must be a PNG, JPEG, or WebP image'
+      });
+    }
+
+    if (base64ByteLength(match[2]) > MAX_AVATAR_BYTES) {
+      return res.status(413).json({
+        success: false,
+        message: 'Profile picture is too large (max 2 MB)'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { avatarUrl: avatar },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile picture updated',
       user: userPayload(user)
     });
   } catch (error) {

@@ -33,6 +33,17 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
+## QR Attendance
+| Item | Test type | Test file | Cases covered | Update when |
+|---|---|---|---|---|
+| qrToken utils: signQr/verifyQr (account-scoped) | unit | tests/integration/qr-attendance.test.js | signQr payload is `{ sub: userId, ver: qrTokenVersion, jti }`; verifyQr resolves valid; rejects garbage/tampered, expired, stale version (after rotate), inactive/missing user | token payload shape or verification logic changes |
+| POST /api/qr/issue, POST /api/qr/rotate | integration | tests/integration/qr-attendance.test.js | issue returns one account-scoped token with no route gate (works even with zero route relationships); rotate bumps the caller's own qrTokenVersion, invalidating prior tokens | issue/rotate contract changes |
+| POST /api/driver/boarding/scan | integration | tests/integration/qr-attendance.test.js | 403 non-driver; 401 invalid/expired/stale token; 404 bus not assigned to driver; 403 when the bus's route has `qrEnabled:false`; auto-toggle BOARD→ALIGHT; debounces duplicate same-type scan within the window; dispatches push | scan logic, toggle/debounce, or route-gating changes |
+| PATCH /api/manager/routes/:routeId/qr | integration | tests/integration/qr-attendance.test.js | owning manager toggles `qrEnabled` on/off, scan endpoint reflects it immediately; 403 for a manager who doesn't own the route | route QR toggle endpoint or ownership scoping changes |
+| GET /api/attendance/student/:studentId, GET /api/manager/attendance | integration | tests/integration/qr-attendance.test.js | rider reads own history + summary; 403 non-manager reading another rider; manager per-student rollup scoped to owned routes; empty rollup for a manager with no routes | attendance read/authorization or rollup logic changes |
+| POST /api/notifications/device-token | integration | tests/integration/qr-attendance.test.js | registers a token idempotently (no duplicates in `pushTokens`); 400 missing token | device-token contract changes |
+| `student:<userId>` socket auto-join | ws integration | tests/integration/ws/qr-attendance-socket.test.js | every authenticated connection auto-joins its own student room with no explicit client-side join, so a server-side `attendance:event` emit is received | socket connection/room-join logic changes |
+
 ## Driver Earnings
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|

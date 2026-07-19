@@ -137,6 +137,10 @@ const routeSchema = new mongoose.Schema({
     rawPointCount: { type: Number, default: 0 },
     snapped: { type: Boolean, default: false }
   },
+  // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md). Manager-owned toggle —
+  // when true, a driver's bus on this route may record BOARD/ALIGHT scans. Independent
+  // of visibility/privacy; works on PUBLIC routes on purpose (most riders use those).
+  qrEnabled: { type: Boolean, default: false },
   // Privacy / room-key (Private Routes feature). visibility:'PRIVATE' => requires a room key to join.
   isHidden: { type: Boolean, default: false }, // PRIVATE + not listed anywhere in user-app
   joinApprovalRequired: { type: Boolean, default: false }, // PRIVATE + correct PIN also needs manager approval

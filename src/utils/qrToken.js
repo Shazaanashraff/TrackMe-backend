@@ -1,9 +1,9 @@
-// Rotating signed QR token utils — see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md.
+// Rotating signed QR token utils — see docs/features/qr-attendance/QR_SYSTEM.md.
 // Signed with a DEDICATED secret (QR_JWT_SECRET), never the auth JWT_SECRET, so a leaked
 // QR token can never be replayed as (or forged into) an auth session token.
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const RouteMembership = require('../models/RouteMembership');
+const User = require('../models/User');
 
 const QR_JWT_SECRET = process.env.QR_JWT_SECRET;
 // Moderate TTL — finalized default per todos/active/001-qr-attendance-foundation.md
@@ -17,25 +17,24 @@ function requireSecret() {
   return QR_JWT_SECRET;
 }
 
-// Signs a fresh QR token for a membership. Payload shape is part of the documented
-// cross-repo contract: { sub: membershipId, stu: studentId, rt: routeId, ver, jti }.
-function signQr(membership) {
+// Signs a fresh QR token for a rider's account. Payload shape is part of the documented
+// cross-repo contract: { sub: userId, ver, jti }. The token is account-scoped — it is not
+// tied to any particular route, so one pass is valid everywhere the rider boards.
+function signQr(user) {
   const secret = requireSecret();
   const payload = {
-    sub: String(membership._id),
-    stu: String(membership.userId),
-    rt: membership.routeId,
-    ver: membership.tokenVersion,
+    sub: String(user._id),
+    ver: user.qrTokenVersion,
     jti: crypto.randomUUID()
   };
   const token = jwt.sign(payload, secret, { expiresIn: QR_TOKEN_TTL });
   return { token, payload };
 }
 
-// Verifies a QR token: signature + expiry (via jwt.verify), then re-checks the
-// membership is still ACTIVE and that `ver` matches the membership's current
-// tokenVersion (instant revocation on rotate). Never throws — always resolves to
-// a { valid, reason? , decoded?, membership? } result so callers can respond cleanly.
+// Verifies a QR token: signature + expiry (via jwt.verify), then re-checks the user
+// account is still active and that `ver` matches the account's current qrTokenVersion
+// (instant revocation on rotate). Never throws — always resolves to a
+// { valid, reason?, decoded?, user? } result so callers can respond cleanly.
 async function verifyQr(token) {
   const secret = requireSecret();
   let decoded;
@@ -48,16 +47,16 @@ async function verifyQr(token) {
     return { valid: false, reason: 'INVALID' };
   }
 
-  const membership = await RouteMembership.findById(decoded.sub);
-  if (!membership || membership.status !== 'ACTIVE') {
-    return { valid: false, reason: 'MEMBERSHIP_NOT_FOUND', decoded };
+  const user = await User.findById(decoded.sub);
+  if (!user || !user.isActive) {
+    return { valid: false, reason: 'USER_NOT_FOUND', decoded };
   }
 
-  if (membership.tokenVersion !== decoded.ver) {
-    return { valid: false, reason: 'STALE_VERSION', decoded, membership };
+  if (user.qrTokenVersion !== decoded.ver) {
+    return { valid: false, reason: 'STALE_VERSION', decoded, user };
   }
 
-  return { valid: true, decoded, membership };
+  return { valid: true, decoded, user };
 }
 
 module.exports = { signQr, verifyQr, QR_TOKEN_TTL };

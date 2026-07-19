@@ -4,15 +4,17 @@ const jwt = require('jsonwebtoken');
 const User = require('../../src/models/User');
 const Route = require('../../src/models/Route');
 const Bus = require('../../src/models/Bus');
-const RouteMembership = require('../../src/models/RouteMembership');
 const BoardingEvent = require('../../src/models/BoardingEvent');
 const { signQr, verifyQr } = require('../../src/utils/qrToken');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
-// QR Attendance foundation — see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md
-// and todos/complete/001-qr-attendance-foundation.md. Covers token sign/verify,
-// issue/rotate, the driver scan endpoint (toggle + debounce), attendance reads,
-// and device-token registration. Push delivery is mocked (no real Expo calls).
+// QR Attendance — see docs/features/qr-attendance/QR_SYSTEM.md and
+// todos/complete/001-qr-attendance-foundation.md. The QR pass is account-scoped
+// (one per rider, reusable on every route) with NO route gate at issuance; the
+// manager's per-route `qrEnabled` toggle only gates whether a driver's scan on
+// that route is accepted. Covers token sign/verify, issue/rotate, the driver scan
+// endpoint (route gate + toggle + debounce), the manager QR toggle, attendance
+// reads, and device-token registration. Push delivery is mocked (no real Expo calls).
 
 jest.mock('expo-server-sdk', () => {
   const sendPushNotificationsAsync = jest.fn().mockResolvedValue([{ status: 'ok', id: 'ticket-1' }]);
@@ -29,12 +31,11 @@ async function loginAs(email, password) {
 }
 
 let managerToken, managerId;
-let otherManagerToken, otherManagerId;
+let otherManagerToken;
 let riderToken, riderId;
 let driverToken, driverId;
-let otherDriverToken, otherDriverId;
+let otherDriverToken;
 let route, bus;
-let membership;
 
 beforeAll(async () => {
   await connectTestDb();
@@ -51,7 +52,6 @@ beforeAll(async () => {
     name: 'QR Other Manager', email: `qr-mgr2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
     role: 'admin', isEmailVerified: true, isActive: true
   });
-  otherManagerId = otherManager._id;
   otherManagerToken = await loginAs(otherManager.email, 'P@ssw0rd!');
 
   const rider = await User.create({
@@ -73,14 +73,14 @@ beforeAll(async () => {
     name: 'QR Other Driver', email: `qr-drv2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
     role: 'driver', isEmailVerified: true, isActive: true
   });
-  otherDriverId = otherDriver._id;
   otherDriverToken = await loginAs(otherDriver.email, 'P@ssw0rd!');
 
   route = await Route.create({
     routeId: `QR-${Date.now()}`.toUpperCase(),
     routeName: 'QR Attendance Route',
     source: 'Home', destination: 'Work', distance: 10, fare: 100,
-    managerId, stops: [{ stopName: 'Stop A', order: 1, lat: 1, lng: 1 }], pathPolyline: 'abc'
+    managerId, qrEnabled: true,
+    stops: [{ stopName: 'Stop A', order: 1, lat: 1, lng: 1 }], pathPolyline: 'abc'
   });
 
   bus = await Bus.create({
@@ -89,13 +89,9 @@ beforeAll(async () => {
     registrationNumber: `REG-${Date.now()}`,
     numberPlate: `PLT-${Date.now()}`,
     routeId: route.routeId,
-    driverId,
+    driverId: driver._id,
     seatCapacity: 40,
     managerId
-  });
-
-  membership = await RouteMembership.create({
-    userId: riderId, routeId: route.routeId, managerId, status: 'ACTIVE', grantedVia: 'APPROVAL'
   });
 });
 
@@ -110,14 +106,14 @@ afterEach(async () => {
 
 describe('qrToken utils', () => {
   it('signQr produces a token that verifyQr resolves as valid', async () => {
-    const fresh = await RouteMembership.findById(membership._id);
+    const fresh = await User.findById(riderId);
     const { token, payload } = signQr(fresh);
     expect(payload.sub).toBe(String(fresh._id));
-    expect(payload.ver).toBe(fresh.tokenVersion);
+    expect(payload.ver).toBe(fresh.qrTokenVersion);
 
     const result = await verifyQr(token);
     expect(result.valid).toBe(true);
-    expect(String(result.membership._id)).toBe(String(fresh._id));
+    expect(String(result.user._id)).toBe(String(fresh._id));
   });
 
   it('rejects a garbage/tampered token', async () => {
@@ -127,9 +123,9 @@ describe('qrToken utils', () => {
   });
 
   it('rejects an expired token', async () => {
-    const fresh = await RouteMembership.findById(membership._id);
+    const fresh = await User.findById(riderId);
     const expired = jwt.sign(
-      { sub: String(fresh._id), stu: String(fresh.userId), rt: fresh.routeId, ver: fresh.tokenVersion, jti: 'x' },
+      { sub: String(fresh._id), ver: fresh.qrTokenVersion, jti: 'x' },
       process.env.QR_JWT_SECRET,
       { expiresIn: -10 }
     );
@@ -138,113 +134,81 @@ describe('qrToken utils', () => {
     expect(result.reason).toBe('EXPIRED');
   });
 
-  it('rejects a token whose tokenVersion is stale after a rotate', async () => {
-    const m = await RouteMembership.create({
-      userId: riderId, routeId: route.routeId, managerId, status: 'ACTIVE', grantedVia: 'APPROVAL'
+  it('rejects a token whose qrTokenVersion is stale after a rotate', async () => {
+    const u = await User.create({
+      name: 'QR Stale Rider', email: `qr-stale-${Date.now()}@test.com`, password: 'P@ssw0rd!',
+      role: 'user', isEmailVerified: true, isActive: true
     });
-    const { token } = signQr(m);
-    m.tokenVersion += 1;
-    await m.save();
+    const { token } = signQr(u);
+    u.qrTokenVersion += 1;
+    await u.save();
 
     const result = await verifyQr(token);
     expect(result.valid).toBe(false);
     expect(result.reason).toBe('STALE_VERSION');
-
-    await RouteMembership.deleteOne({ _id: m._id });
   });
 
-  it('rejects a token for a membership that no longer exists', async () => {
-    const m = await RouteMembership.create({
-      userId: riderId, routeId: route.routeId, managerId, status: 'ACTIVE', grantedVia: 'APPROVAL'
+  it('rejects a token for a user that no longer exists / is inactive', async () => {
+    const u = await User.create({
+      name: 'QR Deactivated Rider', email: `qr-deact-${Date.now()}@test.com`, password: 'P@ssw0rd!',
+      role: 'user', isEmailVerified: true, isActive: true
     });
-    const { token } = signQr(m);
-    await RouteMembership.deleteOne({ _id: m._id });
+    const { token } = signQr(u);
+    u.isActive = false;
+    await u.save();
 
     const result = await verifyQr(token);
     expect(result.valid).toBe(false);
-    expect(result.reason).toBe('MEMBERSHIP_NOT_FOUND');
+    expect(result.reason).toBe('USER_NOT_FOUND');
   });
 });
 
 describe('POST /api/qr/issue', () => {
-  it('issues a token for the caller\'s active membership', async () => {
+  it('issues a single account-scoped token for the caller, no route gate', async () => {
     const res = await request(app)
       .post('/api/qr/issue')
       .set('Authorization', `Bearer ${riderToken}`)
-      .send({ routeId: route.routeId });
+      .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.count).toBe(1);
-    expect(res.body.data[0].token).toEqual(expect.any(String));
-    expect(res.body.data[0].routeId).toBe(route.routeId);
+    expect(res.body.data.token).toEqual(expect.any(String));
+    expect(res.body.data.tokenVersion).toEqual(expect.any(Number));
+    expect(res.body.data.expiresAt).toEqual(expect.any(String));
   });
 
-  it('404s when the caller has no active membership on the requested route', async () => {
+  it('issues a token even for a caller with no route relationship at all', async () => {
     const res = await request(app)
       .post('/api/qr/issue')
       .set('Authorization', `Bearer ${otherManagerToken}`)
-      .send({ routeId: route.routeId });
-
-    expect(res.status).toBe(404);
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data.token).toEqual(expect.any(String));
   });
 });
 
 describe('POST /api/qr/rotate', () => {
-  it('bumps tokenVersion for the caller\'s own membership, revoking prior QRs', async () => {
-    const before = await RouteMembership.findById(membership._id);
+  it('bumps the caller\'s own qrTokenVersion, revoking every prior QR pass', async () => {
+    const before = await User.findById(riderId);
     const { token: oldToken } = signQr(before);
 
     const res = await request(app)
       .post('/api/qr/rotate')
       .set('Authorization', `Bearer ${riderToken}`)
-      .send({ routeId: route.routeId });
+      .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.data.tokenVersion).toBe(before.tokenVersion + 1);
+    expect(res.body.data.tokenVersion).toBe(before.qrTokenVersion + 1);
 
     const oldResult = await verifyQr(oldToken);
     expect(oldResult.valid).toBe(false);
     expect(oldResult.reason).toBe('STALE_VERSION');
   });
-
-  it('allows a manager to rotate a member\'s QR on a route they manage', async () => {
-    const res = await request(app)
-      .post('/api/qr/rotate')
-      .set('Authorization', `Bearer ${managerToken}`)
-      .send({ routeId: route.routeId, userId: String(riderId) });
-
-    expect(res.status).toBe(200);
-  });
-
-  it('403s a manager rotating on a route they do not manage', async () => {
-    const res = await request(app)
-      .post('/api/qr/rotate')
-      .set('Authorization', `Bearer ${otherManagerToken}`)
-      .send({ routeId: route.routeId, userId: String(riderId) });
-
-    expect(res.status).toBe(403);
-  });
-
-  it('403s a non-manager rider rotating another rider\'s QR', async () => {
-    const otherRider = await User.create({
-      name: 'QR Rider 2', email: `qr-rider2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-      role: 'user', isEmailVerified: true, isActive: true
-    });
-    const otherRiderToken = await loginAs(otherRider.email, 'P@ssw0rd!');
-
-    const res = await request(app)
-      .post('/api/qr/rotate')
-      .set('Authorization', `Bearer ${otherRiderToken}`)
-      .send({ routeId: route.routeId, userId: String(riderId) });
-
-    expect(res.status).toBe(403);
-  });
 });
 
 describe('POST /api/driver/boarding/scan', () => {
   async function freshTokenForRider() {
-    const m = await RouteMembership.findById(membership._id);
-    return signQr(m).token;
+    const u = await User.findById(riderId);
+    return signQr(u).token;
   }
 
   it('403s a non-driver caller', async () => {
@@ -272,25 +236,33 @@ describe('POST /api/driver/boarding/scan', () => {
     expect(res.status).toBe(404);
   });
 
-  it('403s when the rider\'s membership route does not match the bus route', async () => {
-    const otherRoute = await Route.create({
-      routeId: `QR-OTHER-${Date.now()}`.toUpperCase(),
-      routeName: 'Other Route', source: 'A', destination: 'B', distance: 5, fare: 50,
-      managerId, stops: [{ stopName: 'S', order: 1, lat: 1, lng: 1 }], pathPolyline: 'xyz'
+  it('403s when the bus\'s route does not have QR attendance enabled', async () => {
+    const disabledRoute = await Route.create({
+      routeId: `QR-DISABLED-${Date.now()}`.toUpperCase(),
+      routeName: 'QR Disabled Route', source: 'A', destination: 'B', distance: 5, fare: 50,
+      managerId, qrEnabled: false, stops: [{ stopName: 'S', order: 1, lat: 1, lng: 1 }], pathPolyline: 'xyz'
     });
-    const otherMembership = await RouteMembership.create({
-      userId: riderId, routeId: otherRoute.routeId, managerId, status: 'ACTIVE', grantedVia: 'APPROVAL'
+    const busOnDisabledRoute = await Bus.create({
+      busId: `QR-DIS-BUS-${Date.now()}`,
+      busName: 'Disabled Route Bus',
+      registrationNumber: `REG-D-${Date.now()}`,
+      numberPlate: `PLT-D-${Date.now()}`,
+      routeId: disabledRoute.routeId,
+      driverId,
+      seatCapacity: 40,
+      managerId
     });
-    const { token } = signQr(otherMembership);
 
+    const token = await freshTokenForRider();
     const res = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token, busId: bus.busId });
+      .send({ token, busId: busOnDisabledRoute.busId });
     expect(res.status).toBe(403);
+    expect(res.body.message).toMatch(/not enabled/i);
 
-    await RouteMembership.deleteOne({ _id: otherMembership._id });
-    await Route.deleteOne({ _id: otherRoute._id });
+    await Bus.deleteOne({ _id: busOnDisabledRoute._id });
+    await Route.deleteOne({ _id: disabledRoute._id });
   });
 
   it('records a BOARD on first scan (no explicit type = auto-toggle), then ALIGHT on the next, and dispatches a push', async () => {
@@ -351,10 +323,50 @@ describe('POST /api/driver/boarding/scan', () => {
   });
 });
 
+describe('PATCH /api/manager/routes/:routeId/qr', () => {
+  it('lets the owning manager toggle QR attendance for their route', async () => {
+    const off = await request(app)
+      .patch(`/api/manager/routes/${route.routeId}/qr`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ qrEnabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body.data.qrEnabled).toBe(false);
+
+    const tokenWhileOff = signQr(await User.findById(riderId)).token;
+    const scanWhileOff = await request(app)
+      .post('/api/driver/boarding/scan')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ token: tokenWhileOff, busId: bus.busId });
+    expect(scanWhileOff.status).toBe(403);
+
+    const on = await request(app)
+      .patch(`/api/manager/routes/${route.routeId}/qr`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ qrEnabled: true });
+    expect(on.status).toBe(200);
+    expect(on.body.data.qrEnabled).toBe(true);
+
+    const tokenWhileOn = signQr(await User.findById(riderId)).token;
+    const scanWhileOn = await request(app)
+      .post('/api/driver/boarding/scan')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ token: tokenWhileOn, busId: bus.busId });
+    expect(scanWhileOn.status).toBe(201);
+  });
+
+  it('403s a manager toggling a route they do not own', async () => {
+    const res = await request(app)
+      .patch(`/api/manager/routes/${route.routeId}/qr`)
+      .set('Authorization', `Bearer ${otherManagerToken}`)
+      .send({ qrEnabled: true });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('GET /api/attendance/student/:studentId', () => {
   beforeEach(async () => {
     await BoardingEvent.create({
-      studentId: riderId, membershipId: membership._id, busId: bus.busId, routeId: route.routeId,
+      studentId: riderId, busId: bus.busId, routeId: route.routeId,
       driverId, type: 'BOARD', tripId: 'trip-1'
     });
   });
@@ -374,19 +386,12 @@ describe('GET /api/attendance/student/:studentId', () => {
       .set('Authorization', `Bearer ${otherDriverToken}`);
     expect(res.status).toBe(403);
   });
-
-  it('lets the managing admin read a rider\'s attendance', async () => {
-    const res = await request(app)
-      .get(`/api/attendance/student/${riderId}`)
-      .set('Authorization', `Bearer ${managerToken}`);
-    expect(res.status).toBe(200);
-  });
 });
 
 describe('GET /api/manager/attendance', () => {
   beforeEach(async () => {
     await BoardingEvent.create({
-      studentId: riderId, membershipId: membership._id, busId: bus.busId, routeId: route.routeId,
+      studentId: riderId, busId: bus.busId, routeId: route.routeId,
       driverId, type: 'BOARD', tripId: 'trip-2'
     });
   });
@@ -401,14 +406,6 @@ describe('GET /api/manager/attendance', () => {
     const entry = res.body.data.find((d) => d.studentId === String(riderId));
     expect(entry).toBeTruthy();
     expect(entry.boardCount).toBeGreaterThan(0);
-  });
-
-  it('403s a routeId filter for a route the manager does not manage', async () => {
-    const res = await request(app)
-      .get('/api/manager/attendance')
-      .query({ routeId: route.routeId })
-      .set('Authorization', `Bearer ${otherManagerToken}`);
-    expect(res.status).toBe(403);
   });
 
   it('returns an empty rollup for a manager with no routes', async () => {
