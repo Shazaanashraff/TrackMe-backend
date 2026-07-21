@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
+const SuperAdmin = require('../../src/models/SuperAdmin');
 const Bus = require('../../src/models/Bus');
 const Route = require('../../src/models/Route');
 const RouteChangeRequest = require('../../src/models/RouteChangeRequest');
@@ -37,22 +38,22 @@ beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
 
-  const manager = await User.create({
+  const manager = await Manager.create({
     name: 'RCR Manager', email: `rcr-mgr-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   managerId = manager._id;
   managerToken = await loginAs(manager.email, 'P@ssw0rd!');
 
-  const otherManager = await User.create({
+  const otherManager = await Manager.create({
     name: 'RCR Other Manager', email: `rcr-mgr2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   otherManagerToken = await loginAs(otherManager.email, 'P@ssw0rd!');
 
-  const superAdmin = await User.create({
+  const superAdmin = await SuperAdmin.create({
     name: 'RCR Super Admin', email: `rcr-sa-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'super-admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   superAdminToken = await loginAs(superAdmin.email, 'P@ssw0rd!');
 });

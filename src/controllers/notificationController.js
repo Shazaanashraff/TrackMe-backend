@@ -169,7 +169,11 @@ exports.registerDeviceToken = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'token is required' });
     }
 
-    await User.findByIdAndUpdate(req.user._id, { $addToSet: { pushTokens: token } });
+    // Push tokens are a rider-only feature (see User.js pushTokens comment); other
+    // account types don't have this field, so there's nothing to store for them.
+    if (req.user.role === 'user') {
+      await User.findByIdAndUpdate(req.user._id, { $addToSet: { pushTokens: token } });
+    }
 
     return res.status(200).json({ success: true, message: 'Device token registered' });
   } catch (error) {

@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { findAccountById } = require('../utils/accountRegistry');
 
 // Verify JWT token
 const protect = async (req, res, next) => {
@@ -15,11 +15,14 @@ const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    const account = await findAccountById(decoded.id, decoded.role);
 
-    if (!req.user) {
+    if (!account) {
       return res.status(401).json({ message: 'User not found' });
     }
+
+    req.user = account.doc;
+    req.user.role = account.role;
 
     if (req.user.isActive === false) {
       return res.status(403).json({ message: 'Account is deactivated. Contact super admin.' });
@@ -43,9 +46,10 @@ const optionalAuth = async (req, res, next) => {
     if (!token) return next();
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id);
-    if (user && user.isActive !== false) {
-      req.user = user;
+    const account = await findAccountById(decoded.id, decoded.role);
+    if (account && account.doc.isActive !== false) {
+      req.user = account.doc;
+      req.user.role = account.role;
     }
     next();
   } catch (error) {

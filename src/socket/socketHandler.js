@@ -2,7 +2,6 @@ const LiveLocation = require('../models/LiveLocation');
 const Bus = require('../models/Bus');
 const Route = require('../models/Route');
 const RouteMembership = require('../models/RouteMembership');
-const User = require('../models/User');
 const { createNotification } = require('../utils/notificationHelper');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
@@ -69,6 +68,7 @@ const setupSocket = (io) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       debugLog('✅ Token verified. User ID:', decoded.id);
       socket.userId = decoded.id;
+      socket.userRole = decoded.role;
       next();
     } catch (error) {
       console.error('❌ Token verification failed:', error.message);
@@ -82,14 +82,10 @@ const setupSocket = (io) => {
     console.log(`✅ Client connected: ${socket.id} (User: ${socket.userId})`);
 
     try {
-      // Get user info
-      const user = await User.findById(socket.userId);
-      socket.userRole = user?.role;
-      
-      // Store connection metadata
+      // Store connection metadata (role already decoded from the JWT in io.use)
       socket.data = {
         userId: socket.userId,
-        userRole: user?.role,
+        userRole: socket.userRole,
         connectedAt: new Date(),
         activeRoute: null,
         activeBus: null

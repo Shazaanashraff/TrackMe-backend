@@ -34,12 +34,12 @@ const busSchema = new mongoose.Schema({
   },
   driverId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Driver',
     required: [true, 'Driver ID is required']
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     default: null
   },
   seatCapacity: {

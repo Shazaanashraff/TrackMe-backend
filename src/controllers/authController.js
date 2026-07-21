@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
+const { findAccountByEmail, findAccountById, isEmailRegistered, modelForRole } = require('../utils/accountRegistry');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -141,12 +142,12 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
   return true;
 };
 
-const issueTokensForUser = async (user) => {
-  const accessToken = jwt.sign({ id: user._id, tokenType: 'access' }, process.env.JWT_SECRET, {
+const issueTokensForUser = async (user, role) => {
+  const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access' }, process.env.JWT_SECRET, {
     expiresIn: accessTokenExpiresIn
   });
 
-  const refreshToken = jwt.sign({ id: user._id, tokenType: 'refresh' }, process.env.JWT_SECRET, {
+  const refreshToken = jwt.sign({ id: user._id, role, tokenType: 'refresh' }, process.env.JWT_SECRET, {
     expiresIn: refreshTokenExpiresIn
   });
 
@@ -165,13 +166,13 @@ const issueTokensForUser = async (user) => {
   };
 };
 
-const userPayload = (user) => ({
+const userPayload = (user, role) => ({
   _id: user._id,
   name: user.name,
   email: user.email,
   phoneNumber: user.phoneNumber,
   avatarUrl: user.avatarUrl || '',
-  role: user.role,
+  role,
   isEmailVerified: user.isEmailVerified
 });
 
@@ -196,7 +197,7 @@ exports.register = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const userExists = await User.findOne({ email: normalizedEmail });
+    const userExists = await isEmailRegistered(normalizedEmail);
     if (userExists) {
       return res.status(400).json({
         success: false,
@@ -212,7 +213,6 @@ exports.register = async (req, res, next) => {
       name: derivedName,
       email: normalizedEmail,
       password,
-      role: 'user',
       isEmailVerified: false,
       emailVerification: {
         otpHash,
@@ -234,7 +234,7 @@ exports.register = async (req, res, next) => {
         : 'Registration successful. Email service unavailable, use development OTP.',
       requiresVerification: true,
       email: normalizedEmail,
-      user: userPayload(user)
+      user: userPayload(user, 'user')
     };
 
     if (!emailSent && process.env.NODE_ENV !== 'production') {
@@ -254,13 +254,16 @@ exports.verifyEmail = async (req, res, next) => {
     const { email, otp } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select('+emailVerification.otpHash +emailVerification.expiresAt');
-    if (!user) {
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+emailVerification.otpHash +emailVerification.expiresAt'
+    });
+    if (!account) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.isEmailVerified) {
       return res.status(400).json({
@@ -293,13 +296,13 @@ exports.verifyEmail = async (req, res, next) => {
     user.isEmailVerified = true;
     user.emailVerification = { otpHash: null, expiresAt: null };
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Email verified successfully',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -320,14 +323,15 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const user = await User.findOne({ email: normalizedEmail }).select('+password');
+    const account = await findAccountByEmail(normalizedEmail, { select: '+password' });
 
-    if (!user) {
+    if (!account) {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.isActive === false) {
       return res.status(403).json({
@@ -351,7 +355,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const canBypassVerification = ['admin', 'super-admin'].includes(user.role);
+    const canBypassVerification = ['admin', 'super-admin'].includes(role);
 
     if (!user.isEmailVerified && !canBypassVerification) {
       return res.status(403).json({
@@ -362,13 +366,13 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Login successful',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -406,11 +410,18 @@ exports.googleSignIn = async (req, res, next) => {
     let user = await User.findOne({ email });
 
     if (!user) {
+      const takenByOtherAccountType = await isEmailRegistered(email);
+      if (takenByOtherAccountType) {
+        return res.status(409).json({
+          success: false,
+          message: 'This email is already registered to a different account type.'
+        });
+      }
+
       user = await User.create({
         name: payload.name || email.split('@')[0],
         email,
         googleId: payload.sub,
-        role: 'user',
         isEmailVerified: true
       });
     } else {
@@ -433,13 +444,13 @@ exports.googleSignIn = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, 'user');
 
     res.status(200).json({
       success: true,
       message: 'Google sign-in successful',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, 'user')
     });
   } catch (error) {
     next(error);
@@ -460,13 +471,16 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(decoded.id).select('+refreshToken.tokenHash +refreshToken.expiresAt');
-    if (!user || !user.refreshToken?.tokenHash) {
+    const account = await findAccountById(decoded.id, decoded.role, {
+      select: '+refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    if (!account || !account.doc.refreshToken?.tokenHash) {
       return res.status(401).json({
         success: false,
         message: 'Invalid refresh token'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.refreshToken.expiresAt && user.refreshToken.expiresAt.getTime() < Date.now()) {
       return res.status(401).json({
@@ -482,13 +496,13 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Token refreshed successfully',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -506,13 +520,15 @@ exports.logout = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(req.user._id).select('+refreshToken.tokenHash +refreshToken.expiresAt');
-    if (user) {
-      user.refreshToken = {
+    const account = await findAccountById(req.user._id, req.user.role, {
+      select: '+refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    if (account) {
+      account.doc.refreshToken = {
         tokenHash: null,
         expiresAt: null
       };
-      await user.save();
+      await account.doc.save();
     }
 
     res.status(200).json({
@@ -530,18 +546,19 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+    });
 
     const genericSuccess = {
       success: true,
       message: 'If this email is registered, an OTP has been sent.'
     };
 
-    if (!user || user.isActive === false) {
+    if (!account || account.doc.isActive === false) {
       return res.status(200).json(genericSuccess);
     }
+    const { doc: user } = account;
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.passwordReset = {
@@ -584,9 +601,10 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const otp = String(req.body.otp || '').trim();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || !user.passwordReset?.otpHash || !user.passwordReset?.expiresAt) {
       return res.status(400).json({
@@ -637,9 +655,10 @@ exports.resetPasswordWithToken = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const { resetToken, password } = req.body;
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt +refreshToken.tokenHash +refreshToken.expiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt +refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || !user.passwordReset?.resetTokenHash || !user.passwordReset?.resetTokenExpiresAt) {
       return res.status(400).json({
@@ -713,7 +732,8 @@ exports.updateProfile = async (req, res, next) => {
       update.phoneNumber = trimmedPhone;
     }
 
-    const user = await User.findByIdAndUpdate(
+    const model = modelForRole(req.user.role);
+    const user = await model.findByIdAndUpdate(
       userId,
       update,
       { new: true, runValidators: true }
@@ -729,7 +749,7 @@ exports.updateProfile = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      user: userPayload(user)
+      user: userPayload(user, req.user.role)
     });
   } catch (error) {
     next(error);
@@ -743,10 +763,11 @@ exports.updateAvatar = async (req, res, next) => {
   try {
     const userId = req.user._id;
     const { avatar } = req.body;
+    const model = modelForRole(req.user.role);
 
     // An empty string / null clears the current avatar.
     if (avatar === '' || avatar === null || avatar === undefined) {
-      const cleared = await User.findByIdAndUpdate(
+      const cleared = await model.findByIdAndUpdate(
         userId,
         { avatarUrl: '' },
         { new: true }
@@ -757,7 +778,7 @@ exports.updateAvatar = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message: 'Profile picture removed',
-        user: userPayload(cleared)
+        user: userPayload(cleared, req.user.role)
       });
     }
 
@@ -783,7 +804,7 @@ exports.updateAvatar = async (req, res, next) => {
       });
     }
 
-    const user = await User.findByIdAndUpdate(
+    const user = await model.findByIdAndUpdate(
       userId,
       { avatarUrl: avatar },
       { new: true }
@@ -796,7 +817,7 @@ exports.updateAvatar = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile picture updated',
-      user: userPayload(user)
+      user: userPayload(user, req.user.role)
     });
   } catch (error) {
     next(error);
@@ -809,9 +830,10 @@ exports.resendVerificationOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+emailVerification.otpHash +emailVerification.expiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+emailVerification.otpHash +emailVerification.expiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || user.isEmailVerified) {
       return res.status(200).json({ success: true, message: 'If unverified, a new code has been sent.' });

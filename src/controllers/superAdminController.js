@@ -1,4 +1,5 @@
-const User = require('../models/User');
+const Manager = require('../models/Manager');
+const Driver = require('../models/Driver');
 const Bus = require('../models/Bus');
 const Booking = require('../models/Booking');
 const BusReview = require('../models/BusReview');
@@ -6,12 +7,13 @@ const Route = require('../models/Route');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { createProvisionalCustomRoute } = require('../utils/customRoute');
+const { isEmailRegistered } = require('../utils/accountRegistry');
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
   name: manager.name,
   email: manager.email,
-  role: manager.role,
+  role: 'admin',
   isActive: manager.isActive !== false,
   createdAt: manager.createdAt,
   updatedAt: manager.updatedAt
@@ -20,8 +22,9 @@ const sanitizeManager = (manager) => ({
 exports.createManager = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
+    const normalizedEmail = email.toLowerCase().trim();
 
-    const existingManager = await User.findOne({ email: email.toLowerCase().trim() });
+    const existingManager = await isEmailRegistered(normalizedEmail);
     if (existingManager) {
       return res.status(409).json({
         success: false,
@@ -29,11 +32,10 @@ exports.createManager = async (req, res, next) => {
       });
     }
 
-    const manager = await User.create({
+    const manager = await Manager.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password,
-      role: 'admin',
       isActive: true,
       isEmailVerified: true
     });
@@ -55,25 +57,22 @@ exports.getManagers = async (req, res, next) => {
     const limitNumber = Math.min(100, Math.max(1, Number(limit) || 20));
     const skip = (pageNumber - 1) * limitNumber;
 
-    const filter = {
-      role: 'admin',
-      ...(search
-        ? {
-            $or: [
-              { name: { $regex: search, $options: 'i' } },
-              { email: { $regex: search, $options: 'i' } }
-            ]
-          }
-        : {})
-    };
+    const filter = search
+      ? {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } }
+          ]
+        }
+      : {};
 
     const [managers, total] = await Promise.all([
-      User.find(filter)
+      Manager.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNumber)
         .lean(),
-      User.countDocuments(filter)
+      Manager.countDocuments(filter)
     ]);
 
     return res.status(200).json({
@@ -93,7 +92,7 @@ exports.getManagers = async (req, res, next) => {
 
 exports.getManagerById = async (req, res, next) => {
   try {
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' }).lean();
+    const manager = await Manager.findById(req.params.managerId).lean();
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
@@ -187,13 +186,13 @@ exports.updateManager = async (req, res, next) => {
   try {
     const { name, email } = req.body;
 
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' });
+    const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
     if (email && email.toLowerCase().trim() !== manager.email) {
-      const duplicate = await User.findOne({ email: email.toLowerCase().trim(), _id: { $ne: manager._id } });
+      const duplicate = await isEmailRegistered(email.toLowerCase().trim(), { excludeId: manager._id, excludeRole: 'admin' });
       if (duplicate) {
         return res.status(409).json({ success: false, message: 'Email already in use by another account' });
       }
@@ -218,7 +217,7 @@ exports.updateManagerStatus = async (req, res, next) => {
   try {
     const { isActive } = req.body;
 
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' });
+    const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
@@ -240,7 +239,7 @@ exports.resetManagerPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
 
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' }).select('+password');
+    const manager = await Manager.findById(req.params.managerId).select('+password');
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
@@ -261,7 +260,7 @@ exports.assignBusesToManager = async (req, res, next) => {
   try {
     const { busIds } = req.body;
 
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' });
+    const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
@@ -291,8 +290,7 @@ exports.assignBusesToManager = async (req, res, next) => {
 exports.getSuperAdminDashboard = async (req, res, next) => {
   try {
     const [managerCounts, busCounts, bookingSummary, reviewSummary] = await Promise.all([
-      User.aggregate([
-        { $match: { role: 'admin' } },
+      Manager.aggregate([
         {
           $group: {
             _id: null,
@@ -363,7 +361,7 @@ exports.getSuperAdminDashboard = async (req, res, next) => {
 
 exports.getOperationsOverview = async (req, res, next) => {
   try {
-    const managers = await User.find({ role: 'admin' })
+    const managers = await Manager.find()
       .select('name email isActive createdAt')
       .sort({ createdAt: -1 })
       .lean();
@@ -485,8 +483,8 @@ exports.getOperationsOverview = async (req, res, next) => {
 
 exports.getManagerBusDetails = async (req, res, next) => {
   try {
-    const manager = await User.findOne({ _id: req.params.managerId, role: 'admin' })
-      .select('name email role isActive createdAt')
+    const manager = await Manager.findById(req.params.managerId)
+      .select('name email isActive createdAt')
       .lean();
 
     if (!manager) {
@@ -686,20 +684,21 @@ exports.reviewBusRequest = async (req, res, next) => {
         return res.status(409).json({ success: false, message: 'Cannot approve request: bus already exists' });
       }
 
-      let driver = await User.findOne({ email: String(driverPayload.email || '').toLowerCase() }).select('+password');
-      if (driver && driver.role !== 'driver') {
-        return res.status(409).json({ success: false, message: 'Cannot approve request: driver email belongs to another role' });
-      }
-
+      const driverEmail = String(driverPayload.email || '').toLowerCase();
+      let driver = await Driver.findOne({ email: driverEmail }).select('+password');
       if (!driver) {
-        driver = await User.create({
+        const takenByOtherAccountType = await isEmailRegistered(driverEmail);
+        if (takenByOtherAccountType) {
+          return res.status(409).json({ success: false, message: 'Cannot approve request: driver email belongs to another account type' });
+        }
+
+        driver = await Driver.create({
           name: driverPayload.name,
-          email: String(driverPayload.email || '').toLowerCase(),
+          email: driverEmail,
           phoneNumber: String(driverPayload.phoneNumber || '').trim(),
           nicNumber: String(driverPayload.nicNumber || '').trim(),
           licenseCardNumber: String(driverPayload.licenseCardNumber || '').trim(),
           password: driverPayload.password,
-          role: 'driver',
           isActive: true,
           isEmailVerified: true
         });

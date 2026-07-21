@@ -29,7 +29,7 @@ beforeAll(async () => {
     role: 'user', isEmailVerified: true, isActive: true
   });
   riderId = rider._id;
-  const riderToken = jwt.sign({ id: rider._id }, process.env.JWT_SECRET || 'test-secret');
+  const riderToken = jwt.sign({ id: rider._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
   riderClient = await new Promise((resolve, reject) => {
     const c = ioClient(`http://localhost:${port}`, { auth: { token: riderToken }, transports: ['websocket'] });

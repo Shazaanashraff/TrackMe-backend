@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 
+const ACTOR_MODEL_BY_ROLE = { admin: 'Manager', 'super-admin': 'SuperAdmin' };
+
 const managerAuditLogSchema = new mongoose.Schema({
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     required: true,
     index: true
   },
@@ -33,13 +35,25 @@ const managerAuditLogSchema = new mongoose.Schema({
     enum: ['admin', 'super-admin'],
     required: true
   },
+  // Derived from actorRole (see pre-validate hook below) so actorId can be
+  // populated correctly even though it points to two different collections
+  // depending on whether the actor was a manager or the super-admin.
+  actorModel: {
+    type: String,
+    enum: ['Manager', 'SuperAdmin']
+  },
   actorId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    refPath: 'actorModel',
     required: true
   }
 }, {
   timestamps: true
+});
+
+managerAuditLogSchema.pre('validate', function deriveActorModel(next) {
+  this.actorModel = ACTOR_MODEL_BY_ROLE[this.actorRole] || this.actorModel;
+  next();
 });
 
 managerAuditLogSchema.index({ createdAt: -1 });

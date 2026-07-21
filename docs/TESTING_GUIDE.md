@@ -10,6 +10,8 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
 | POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |
 | PUT /api/auth/profile (name + phoneNumber) | integration | tests/integration/auth.test.js | accepts + persists `phoneNumber`, returned on `user`; rejects malformed `phoneNumber`; empty string clears it; 401 when unauthenticated | profile update contract or phoneNumber validation changes |
+| accountRegistry (findAccountByEmail/findAccountById/isEmailRegistered) | integration | tests/integration/account-registry.test.js | cross-collection lookup by email (Manager/Driver/SuperAdmin/User), role-scoped lookup by id, `select` passthrough, cross-collection email uniqueness incl. `excludeId` | account-schema split changes (new account type added/removed, lookup signature changes) |
+| scripts/migrate-account-schemas.js dedup rule | unit (no DB) | tests/integration/migrate-account-schemas.test.js | `selectCanonicalSuperAdmin`: no/one/many super-admins, canonical-email preference, case-insensitive match, earliest-created fallback; `stripRole` | dedup rule or migration script logic changes |
 
 ## Routes and Buses
 | Item | Test type | Test file | Cases covered | Update when |

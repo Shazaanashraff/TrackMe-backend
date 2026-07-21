@@ -103,7 +103,7 @@ const routeSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'Manager'
   },
   // Custom-route (school/work shuttle) fields. A PRIVATE route is owned by a single
   // manager, reusable only for their own drivers, and must never surface in any
@@ -115,7 +115,7 @@ const routeSchema = new mongoose.Schema({
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     default: null
   },
   origin: {
@@ -131,7 +131,7 @@ const routeSchema = new mongoose.Schema({
     default: 'ACTIVE'
   },
   recordedMeta: {
-    recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', default: null },
     recordedByBusId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bus', default: null },
     recordedAt: { type: Date, default: null },
     rawPointCount: { type: Number, default: 0 },
@@ -152,7 +152,7 @@ const routeSchema = new mongoose.Schema({
     // below only ever applies to routes that actually have a key.
     lookupHash: { type: String },
     updatedAt: { type: Date, default: null },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Manager', default: null }
   }
 }, {
   timestamps: true

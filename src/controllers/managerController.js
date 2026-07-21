@@ -5,7 +5,8 @@ const ManagerAuditLog = require('../models/ManagerAuditLog');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const Route = require('../models/Route');
 const RouteChangeRequest = require('../models/RouteChangeRequest');
-const User = require('../models/User');
+const Driver = require('../models/Driver');
+const { isEmailRegistered } = require('../utils/accountRegistry');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const BUS_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
@@ -322,12 +323,15 @@ exports.createBusAccountRequest = async (req, res, next) => {
       });
     }
 
-    const existingDriverAccount = await User.findOne({ email: normalizedEmail });
-    if (existingDriverAccount && existingDriverAccount.role !== 'driver') {
-      return res.status(409).json({
-        success: false,
-        message: 'Email already exists on a non-driver account'
-      });
+    const existingDriverAccount = await Driver.findOne({ email: normalizedEmail });
+    if (!existingDriverAccount) {
+      const takenByOtherAccountType = await isEmailRegistered(normalizedEmail);
+      if (takenByOtherAccountType) {
+        return res.status(409).json({
+          success: false,
+          message: 'Email already exists on a non-driver account'
+        });
+      }
     }
 
     let route = null;
@@ -498,8 +502,8 @@ exports.resetBusAccountPassword = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
     }
 
-    const driver = await User.findById(bus.driverId).select('+password');
-    if (!driver || driver.role !== 'driver') {
+    const driver = await Driver.findById(bus.driverId).select('+password');
+    if (!driver) {
       return res.status(404).json({ success: false, message: 'Driver account not found for this bus' });
     }
 

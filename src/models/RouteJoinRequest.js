@@ -18,7 +18,7 @@ const routeJoinRequestSchema = new mongoose.Schema({
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     required: true,
     index: true
   },
@@ -34,7 +34,7 @@ const routeJoinRequestSchema = new mongoose.Schema({
   },
   decisionBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     default: null
   },
   decisionNote: {

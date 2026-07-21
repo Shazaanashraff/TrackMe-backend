@@ -2,6 +2,8 @@ const request = require('supertest');
 const app = require('../../src/server');
 const jwt = require('jsonwebtoken');
 const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
+const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
 const Bus = require('../../src/models/Bus');
 const BoardingEvent = require('../../src/models/BoardingEvent');
@@ -41,16 +43,16 @@ beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
 
-  const manager = await User.create({
+  const manager = await Manager.create({
     name: 'QR Manager', email: `qr-mgr-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   managerId = manager._id;
   managerToken = await loginAs(manager.email, 'P@ssw0rd!');
 
-  const otherManager = await User.create({
+  const otherManager = await Manager.create({
     name: 'QR Other Manager', email: `qr-mgr2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   otherManagerToken = await loginAs(otherManager.email, 'P@ssw0rd!');
 
@@ -62,16 +64,16 @@ beforeAll(async () => {
   riderId = rider._id;
   riderToken = await loginAs(rider.email, 'P@ssw0rd!');
 
-  const driver = await User.create({
+  const driver = await Driver.create({
     name: 'QR Driver', email: `qr-drv-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'driver', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   driverId = driver._id;
   driverToken = await loginAs(driver.email, 'P@ssw0rd!');
 
-  const otherDriver = await User.create({
+  const otherDriver = await Driver.create({
     name: 'QR Other Driver', email: `qr-drv2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'driver', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   otherDriverToken = await loginAs(otherDriver.email, 'P@ssw0rd!');
 
