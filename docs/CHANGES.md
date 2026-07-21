@@ -23,6 +23,25 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-07-22 — Driver on-board roster endpoint
+- **Branch:** main
+- **Modules touched:** qr-attendance — [docs/modules/QR_ATTENDANCE.md](modules/QR_ATTENDANCE.md)
+- **What changed:** Added `GET /api/driver/boarding/roster?busId=&tripId=` returning the enrolled
+  roster (ACTIVE `RouteMembership` on the bus's route) joined with each rider's current on-board
+  status for the trip, plus `onBoardCount`/`enrolledCount` and an on-board-non-member `guests`
+  list. Powers the driver-app "X / Y on board" card + roster page. Also wrote the previously-stub
+  QR_ATTENDANCE module doc.
+- **Why:** User request — driver app should show who has boarded and "17/20 on board" per route
+  (the roster deferred in driver-app todo 090).
+- **Contract impact:** new read-only endpoint (additive). Consumed by driver-app (roster hook +
+  screen). No existing shape changed.
+- **Tests:** added `tests/integration/qr-roster.test.js` (7 cases incl. 400/404/403 authz);
+  `qr-attendance.test.js` still green (22).
+- **Docs updated:** docs/modules/QR_ATTENDANCE.md (full rewrite from stub), TESTING_GUIDE row.
+- **Migration:** none.
+- **Follow-ups / known issues:** PUBLIC routes have no enrollment, so `enrolledCount` is 0 there;
+  the computed `guests`/boarded-this-trip count can become a fallback denominator later.
+
 ## 2026-07-22 — Documentation system (backend variant)
 - **Branch:** main
 - **Modules touched:** docs only (no `src/` change)
