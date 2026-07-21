@@ -43,7 +43,7 @@ beforeAll(async () => {
     isEmailVerified: true,
     isActive: true
   });
-  const riderToken = jwt.sign({ id: rider._id }, process.env.JWT_SECRET || 'test-secret');
+  const riderToken = jwt.sign({ id: rider._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
   await Route.create([
     {

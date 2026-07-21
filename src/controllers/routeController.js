@@ -6,7 +6,7 @@ const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 // @route   POST /api/routes
 exports.createRoute = async (req, res, next) => {
   try {
-    const { routeId, routeName, source, destination, distance, estimatedTime, fare, serviceType, stops } = req.body;
+    const { routeId, routeName, source, destination, distance, estimatedTime, fare, serviceType, stops, qrEnabled } = req.body;
 
     const normalizedStops = Array.isArray(stops)
       ? stops.map((stop, index) => ({
@@ -34,6 +34,7 @@ exports.createRoute = async (req, res, next) => {
       serviceType: serviceType || 'PUBLIC',
       stopsCount: normalizedStops.length,
       stops: normalizedStops,
+      qrEnabled: !!qrEnabled,
       createdBy: req.user._id
     });
 

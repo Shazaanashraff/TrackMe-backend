@@ -15,7 +15,7 @@ const managerBusRequestSchema = new mongoose.Schema({
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     required: true,
     index: true
   },
@@ -36,7 +36,7 @@ const managerBusRequestSchema = new mongoose.Schema({
   },
   decisionBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'SuperAdmin',
     default: null
   },
   decisionNote: {

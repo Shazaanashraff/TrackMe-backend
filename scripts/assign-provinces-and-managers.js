@@ -10,7 +10,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
-const User = require('../src/models/User');
+const Manager = require('../src/models/Manager');
 const Route = require('../src/models/Route');
 
 const DRY_RUN = process.argv.includes('--dry');
@@ -122,13 +122,12 @@ const routeLatLng = (route) => {
 
 const ensureManager = async (province) => {
   const email = `${province.slug}.manager@trackme.com`;
-  let manager = await User.findOne({ email });
+  let manager = await Manager.findOne({ email });
   if (!manager) {
-    manager = await User.create({
+    manager = await Manager.create({
       name: `${province.name} Province Manager`,
       email,
       password: MANAGER_PASSWORD,
-      role: 'admin',
       province: province.name,
       isEmailVerified: true,
       isActive: true
@@ -136,7 +135,6 @@ const ensureManager = async (province) => {
     console.log(`  created manager: ${email}`);
   } else {
     let changed = false;
-    if (manager.role !== 'admin') { manager.role = 'admin'; changed = true; }
     if (manager.province !== province.name) { manager.province = province.name; changed = true; }
     if (!manager.isEmailVerified) { manager.isEmailVerified = true; changed = true; }
     if (!manager.isActive) { manager.isActive = true; changed = true; }

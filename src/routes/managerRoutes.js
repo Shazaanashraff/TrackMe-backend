@@ -19,6 +19,7 @@ const {
 const {
   getOwnedRoutes,
   updateRoutePrivacy,
+  updateRouteQr,
   rotateRoomKey,
   revealRoomKey,
   getRouteJoinRequests,
@@ -26,6 +27,7 @@ const {
   getRouteMembers,
   revokeRouteMember
 } = require('../controllers/managerPrivateRoutesController');
+const { getManagerAttendance } = require('../controllers/managerAttendanceController');
 const { protect, requireManager } = require('../middleware/auth');
 
 router.use(protect, requireManager);
@@ -54,5 +56,9 @@ router.get('/routes/:routeId/join-requests', getRouteJoinRequests);
 router.patch('/join-requests/:id/decision', decideJoinRequest);
 router.get('/routes/:routeId/members', getRouteMembers);
 router.delete('/routes/:routeId/members/:userId', revokeRouteMember);
+
+// QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md)
+router.get('/attendance', getManagerAttendance);
+router.patch('/routes/:routeId/qr', updateRouteQr);
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/server');
 const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
 const Route = require('../../src/models/Route');
 const RouteMembership = require('../../src/models/RouteMembership');
 const RouteJoinRequest = require('../../src/models/RouteJoinRequest');
@@ -26,16 +27,16 @@ beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
 
-  const manager = await User.create({
+  const manager = await Manager.create({
     name: 'PR Manager', email: `pr-mgr-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   managerId = manager._id;
   managerToken = await loginAs(manager.email, 'P@ssw0rd!');
 
-  const otherManager = await User.create({
+  const otherManager = await Manager.create({
     name: 'PR Other Manager', email: `pr-mgr2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   otherManagerToken = await loginAs(otherManager.email, 'P@ssw0rd!');
 

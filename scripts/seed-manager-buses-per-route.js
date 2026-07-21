@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const User = require('../src/models/User');
+const Manager = require('../src/models/Manager');
+const Driver = require('../src/models/Driver');
 const Route = require('../src/models/Route');
 const Bus = require('../src/models/Bus');
 
@@ -15,22 +16,18 @@ const BUSES_PER_ROUTE = Number(process.env.BUSES_PER_ROUTE || 8);
 
 const ensureManager = async () => {
   const normalizedEmail = MANAGER_EMAIL.toLowerCase().trim();
-  let manager = await User.findOne({ email: normalizedEmail });
+  let manager = await Manager.findOne({ email: normalizedEmail });
 
   if (!manager) {
-    manager = await User.create({
+    manager = await Manager.create({
       name: MANAGER_DEFAULT_NAME,
       email: normalizedEmail,
       password: MANAGER_DEFAULT_PASSWORD,
-      role: 'admin',
       isEmailVerified: true,
       isActive: true
     });
     console.log(`Created manager: ${normalizedEmail}`);
   } else {
-    if (manager.role !== 'admin') {
-      manager.role = 'admin';
-    }
     if (!manager.isEmailVerified) {
       manager.isEmailVerified = true;
     }
@@ -51,13 +48,12 @@ const ensureDrivers = async (requiredCount) => {
     const suffix = String(index).padStart(3, '0');
     const email = `route.driver.${suffix}@bus.com`;
 
-    let driver = await User.findOne({ email });
+    let driver = await Driver.findOne({ email });
     if (!driver) {
-      driver = await User.create({
+      driver = await Driver.create({
         name: `Route Driver ${suffix}`,
         email,
         password: 'Driver@123',
-        role: 'driver',
         isEmailVerified: true,
         isActive: true
       });

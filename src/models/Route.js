@@ -103,7 +103,7 @@ const routeSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'Manager'
   },
   // Custom-route (school/work shuttle) fields. A PRIVATE route is owned by a single
   // manager, reusable only for their own drivers, and must never surface in any
@@ -115,7 +115,7 @@ const routeSchema = new mongoose.Schema({
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     default: null
   },
   origin: {
@@ -131,12 +131,16 @@ const routeSchema = new mongoose.Schema({
     default: 'ACTIVE'
   },
   recordedMeta: {
-    recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', default: null },
     recordedByBusId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bus', default: null },
     recordedAt: { type: Date, default: null },
     rawPointCount: { type: Number, default: 0 },
     snapped: { type: Boolean, default: false }
   },
+  // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md). Manager-owned toggle —
+  // when true, a driver's bus on this route may record BOARD/ALIGHT scans. Independent
+  // of visibility/privacy; works on PUBLIC routes on purpose (most riders use those).
+  qrEnabled: { type: Boolean, default: false },
   // Privacy / room-key (Private Routes feature). visibility:'PRIVATE' => requires a room key to join.
   isHidden: { type: Boolean, default: false }, // PRIVATE + not listed anywhere in user-app
   joinApprovalRequired: { type: Boolean, default: false }, // PRIVATE + correct PIN also needs manager approval
@@ -148,7 +152,7 @@ const routeSchema = new mongoose.Schema({
     // below only ever applies to routes that actually have a key.
     lookupHash: { type: String },
     updatedAt: { type: Date, default: null },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Manager', default: null }
   }
 }, {
   timestamps: true
