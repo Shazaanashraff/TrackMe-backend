@@ -1,6 +1,6 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const SuperAdmin = require('../../src/models/SuperAdmin');
 const Organization = require('../../src/models/Organization');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
@@ -18,10 +18,14 @@ let superAdminToken;
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
+  // Force the "no email service" path so manager creation isn't gated on a real
+  // send succeeding (this suite tests CRUD, not the invite-email flow itself).
+  delete process.env.RESEND_API_KEY;
+  process.env.NODE_ENV = 'test';
 
-  const superAdmin = await User.create({
+  const superAdmin = await SuperAdmin.create({
     name: 'Super Admin', email: `sa-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'super-admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   superAdminToken = await loginAs(superAdmin.email, 'P@ssw0rd!');
 });

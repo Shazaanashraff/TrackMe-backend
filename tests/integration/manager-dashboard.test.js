@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
+const Driver = require('../../src/models/Driver');
 const Bus = require('../../src/models/Bus');
 const Organization = require('../../src/models/Organization');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
@@ -17,13 +18,13 @@ beforeAll(async () => {
   await clearTestDb();
 
   const org = await Organization.create({ name: 'Royal College', serviceType: 'SCHOOL' });
-  manager = await User.create({
+  manager = await Manager.create({
     name: 'School Mgr', email: `school-mgr-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    role: 'admin', isEmailVerified: true, isActive: true, serviceType: 'SCHOOL', organization: org._id
+    isEmailVerified: true, isActive: true, serviceType: 'SCHOOL', organization: org._id
   });
 
-  const d1 = await User.create({ name: 'D1', email: `d1-${Date.now()}@t.com`, password: 'Driver@123', role: 'driver', isEmailVerified: true, isActive: true });
-  const d2 = await User.create({ name: 'D2', email: `d2-${Date.now()}@t.com`, password: 'Driver@123', role: 'driver', isEmailVerified: true, isActive: true });
+  const d1 = await Driver.create({ name: 'D1', email: `d1-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
+  const d2 = await Driver.create({ name: 'D2', email: `d2-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
 
   const baseBus = (n, driverId) => ({
     busId: `SVH-${Date.now()}-${n}`,

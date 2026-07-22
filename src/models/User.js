@@ -1,168 +1,31 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const applyAccountFields = require('./shared/accountFields');
 
-const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    lowercase: true,
-    trim: true
-  },
-  googleId: {
-    type: String,
-    unique: true,
-    sparse: true,
-    index: true
-  },
-  password: {
-    type: String,
-    required: function requiredPassword() {
-      return !this.googleId;
-    },
-    minlength: 8,
-    select: false
-  },
-  role: {
-    type: String,
-    enum: ['driver', 'user', 'admin', 'super-admin'],
-    default: 'user'
-  },
+const userSchema = applyAccountFields(new mongoose.Schema({
   phoneNumber: {
     type: String,
     trim: true,
     default: ''
   },
-  // Set on province-manager (role: 'admin') accounts to scope which province's
-  // routes/buses they manage. See scripts/assign-provinces-and-managers.js.
-  province: {
-    type: String,
-    trim: true,
-    default: ''
+  // Expo push tokens for this account's device(s). Used to deliver QR boarding/
+  // alighting notifications (see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md).
+  // This system has no separate parent/child model — the rider's own account is the
+  // notification target.
+  pushTokens: {
+    type: [String],
+    default: []
   },
-  // Which transport service a manager (role: 'admin') is responsible for. PUBLIC
-  // managers oversee public routes (scoped by province); SCHOOL/UNIVERSITY/OFFICE
-  // managers belong to a specific `organization` below.
-  serviceType: {
-    type: String,
-    enum: ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'],
-    default: 'PUBLIC'
+  // Account-scoped QR attendance pass (see docs/features/qr-attendance/QR_SYSTEM.md).
+  // One QR per user, valid across every route — bumping qrTokenVersion instantly
+  // revokes every previously-issued pass (used by the rotate/regenerate endpoint).
+  qrTokenVersion: {
+    type: Number,
+    default: 1
   },
-  // The school/university/office this manager runs, for non-PUBLIC service types.
-  // Null for PUBLIC managers.
-  organization: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Organization',
-    default: null
-  },
-  nicNumber: {
-    type: String,
-    trim: true,
-    default: ''
-  },
-  licenseCardNumber: {
-    type: String,
-    trim: true,
-    default: ''
-  },
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-  isEmailVerified: {
-    type: Boolean,
-    default: false
-  },
-  emailVerification: {
-    otpHash: {
-      type: String,
-      default: null,
-      select: false
-    },
-    expiresAt: {
-      type: Date,
-      default: null,
-      select: false
-    }
-  },
-  passwordReset: {
-    otpHash: {
-      type: String,
-      default: null,
-      select: false
-    },
-    expiresAt: {
-      type: Date,
-      default: null,
-      select: false
-    },
-    resetTokenHash: {
-      type: String,
-      default: null,
-      select: false
-    },
-    resetTokenExpiresAt: {
-      type: Date,
-      default: null,
-      select: false
-    }
-  },
-  refreshToken: {
-    tokenHash: {
-      type: String,
-      default: null,
-      select: false
-    },
-    expiresAt: {
-      type: Date,
-      default: null,
-      select: false
-    }
-  },
-  // Manager provisioning (invite / password-reset by link). The super admin never
-  // learns a manager's password: on invite we email a one-time link carrying this
-  // token; the manager follows it to set their own password. `invitedAt` records
-  // the invite; `activatedAt` is stamped the first time they set a password (so the
-  // roster can show Invited vs Active). The token itself is stored hashed.
-  accountSetup: {
-    tokenHash: {
-      type: String,
-      default: null,
-      select: false
-    },
-    expiresAt: {
-      type: Date,
-      default: null,
-      select: false
-    }
-  },
-  invitedAt: {
-    type: Date,
-    default: null
-  },
-  activatedAt: {
+  qrIssuedAt: {
     type: Date,
     default: null
   }
-}, {
-  timestamps: true
-});
-
-// Hash password before saving
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 12);
-  next();
-});
-
-// Compare password method
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
-};
+}, { timestamps: true }));
 
 module.exports = mongoose.model('User', userSchema);

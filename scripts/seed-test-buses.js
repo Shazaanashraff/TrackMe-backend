@@ -1,28 +1,28 @@
 const mongoose = require('mongoose');
 const Bus = require('../src/models/Bus');
-const User = require('../src/models/User');
+const Driver = require('../src/models/Driver');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 // Test driver data - we'll create these first
 const TEST_DRIVERS = [
-  { email: 'driver.slt100@bus.com', name: 'Drivers Team 100', phone: '+94701234567', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt101@bus.com', name: 'Drivers Team 101', phone: '+94701234568', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt102@bus.com', name: 'Drivers Team 102', phone: '+94701234569', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt103@bus.com', name: 'Drivers Team 103', phone: '+94701234570', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt104@bus.com', name: 'Drivers Team 104', phone: '+94701234571', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt105@bus.com', name: 'Drivers Team 105', phone: '+94701234572', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt106@bus.com', name: 'Drivers Team 106', phone: '+94701234573', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt107@bus.com', name: 'Drivers Team 107', phone: '+94701234574', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt108@bus.com', name: 'Drivers Team 108', phone: '+94701234575', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt109@bus.com', name: 'Drivers Team 109', phone: '+94701234576', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt110@bus.com', name: 'Drivers Team 110', phone: '+94701234577', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt111@bus.com', name: 'Drivers Team 111', phone: '+94701234578', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt112@bus.com', name: 'Drivers Team 112', phone: '+94701234579', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt113@bus.com', name: 'Drivers Team 113', phone: '+94701234580', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt114@bus.com', name: 'Drivers Team 114', phone: '+94701234581', password: 'TestDriver@123', role: 'driver' },
-  { email: 'driver.slt115@bus.com', name: 'Drivers Team 115', phone: '+94701234582', password: 'TestDriver@123', role: 'driver' }
+  { email: 'driver.slt100@bus.com', name: 'Drivers Team 100', phone: '+94701234567', password: 'TestDriver@123' },
+  { email: 'driver.slt101@bus.com', name: 'Drivers Team 101', phone: '+94701234568', password: 'TestDriver@123' },
+  { email: 'driver.slt102@bus.com', name: 'Drivers Team 102', phone: '+94701234569', password: 'TestDriver@123' },
+  { email: 'driver.slt103@bus.com', name: 'Drivers Team 103', phone: '+94701234570', password: 'TestDriver@123' },
+  { email: 'driver.slt104@bus.com', name: 'Drivers Team 104', phone: '+94701234571', password: 'TestDriver@123' },
+  { email: 'driver.slt105@bus.com', name: 'Drivers Team 105', phone: '+94701234572', password: 'TestDriver@123' },
+  { email: 'driver.slt106@bus.com', name: 'Drivers Team 106', phone: '+94701234573', password: 'TestDriver@123' },
+  { email: 'driver.slt107@bus.com', name: 'Drivers Team 107', phone: '+94701234574', password: 'TestDriver@123' },
+  { email: 'driver.slt108@bus.com', name: 'Drivers Team 108', phone: '+94701234575', password: 'TestDriver@123' },
+  { email: 'driver.slt109@bus.com', name: 'Drivers Team 109', phone: '+94701234576', password: 'TestDriver@123' },
+  { email: 'driver.slt110@bus.com', name: 'Drivers Team 110', phone: '+94701234577', password: 'TestDriver@123' },
+  { email: 'driver.slt111@bus.com', name: 'Drivers Team 111', phone: '+94701234578', password: 'TestDriver@123' },
+  { email: 'driver.slt112@bus.com', name: 'Drivers Team 112', phone: '+94701234579', password: 'TestDriver@123' },
+  { email: 'driver.slt113@bus.com', name: 'Drivers Team 113', phone: '+94701234580', password: 'TestDriver@123' },
+  { email: 'driver.slt114@bus.com', name: 'Drivers Team 114', phone: '+94701234581', password: 'TestDriver@123' },
+  { email: 'driver.slt115@bus.com', name: 'Drivers Team 115', phone: '+94701234582', password: 'TestDriver@123' }
 ];
 
 async function seedBuses() {
@@ -37,15 +37,14 @@ async function seedBuses() {
     const drivers = [];
     
     for (const driverData of TEST_DRIVERS) {
-      let driver = await User.findOne({ email: driverData.email });
+      let driver = await Driver.findOne({ email: driverData.email });
       if (!driver) {
         const hashedPassword = await bcrypt.hash(driverData.password, 10);
-        driver = await User.create({
+        driver = await Driver.create({
           email: driverData.email,
           name: driverData.name,
-          phone: driverData.phone,
+          phoneNumber: driverData.phone,
           password: hashedPassword,
-          role: 'driver',
           isEmailVerified: true
         });
       }

@@ -1,6 +1,6 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const SuperAdmin = require('../../src/models/SuperAdmin');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // Manager provisioning: the super admin invites managers (no password); each
@@ -25,9 +25,9 @@ beforeAll(async () => {
   delete process.env.RESEND_API_KEY;
   process.env.NODE_ENV = 'test';
 
-  const superAdmin = await User.create({
+  const superAdmin = await SuperAdmin.create({
     name: 'Super Admin', email: `sa-prov-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'super-admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   const res = await loginAs(superAdmin.email, 'P@ssw0rd!');
   superAdminToken = res.body.accessToken;

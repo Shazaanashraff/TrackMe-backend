@@ -14,7 +14,8 @@ jest.mock('../../src/utils/accountSetup', () => {
 
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const SuperAdmin = require('../../src/models/SuperAdmin');
+const Manager = require('../../src/models/Manager');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 async function loginAs(email, password) {
@@ -27,9 +28,9 @@ let superAdminToken;
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
-  const superAdmin = await User.create({
+  const superAdmin = await SuperAdmin.create({
     name: 'Super Admin', email: `sa-email-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'super-admin', isEmailVerified: true, isActive: true
+    isEmailVerified: true, isActive: true
   });
   superAdminToken = await loginAs(superAdmin.email, 'P@ssw0rd!');
 });
@@ -52,14 +53,14 @@ describe('Email required (no demo fallback)', () => {
     expect(res.status).toBe(502);
     expect(res.body.activationLink).toBeUndefined();
     // Rolled back — the manager was not persisted.
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const exists = await Manager.findOne({ email: email.toLowerCase() });
     expect(exists).toBeNull();
   });
 
   it('502s on reset when the email fails, and never returns a resetLink', async () => {
-    const manager = await User.create({
+    const manager = await Manager.create({
       name: 'Active Mgr', email: `rstfail-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-      role: 'admin', isEmailVerified: true, isActive: true, activatedAt: new Date()
+      isEmailVerified: true, isActive: true, activatedAt: new Date()
     });
 
     const res = await request(app)

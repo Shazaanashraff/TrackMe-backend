@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
+const Manager = require('../models/Manager');
+const { findAccountByEmail, findAccountById, isEmailRegistered, modelForRole } = require('../utils/accountRegistry');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -35,7 +37,43 @@ const sendVerificationEmail = async (to, otp) => {
     from,
     to,
     subject: 'Verify your TrackMe account',
-    html: `<p>Your verification code is <strong>${otp}</strong>. It expires in 10 minutes.</p>`
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 500px; margin: 0 auto; padding: 20px; }
+          .header { margin-bottom: 30px; }
+          .code-box { background: #f5f5f5; padding: 15px; border-left: 3px solid #333; margin: 20px 0; }
+          .code { font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace; }
+          .footer { color: #666; font-size: 12px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <p>Welcome to TrackMe! Please verify your email address to finish setting up your account.</p>
+          </div>
+
+          <p>Use this code to verify your email (valid for 10 minutes):</p>
+
+          <div class="code-box">
+            <div class="code">${otp}</div>
+          </div>
+
+          <p><strong>Or copy and paste this code in the verification screen.</strong></p>
+
+          <div class="footer">
+            <p>Did not create a TrackMe account? You can safely ignore this email.</p>
+            <p>TrackMe © 2026</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
   });
 
   if (error) {
@@ -105,12 +143,12 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
   return true;
 };
 
-const issueTokensForUser = async (user) => {
-  const accessToken = jwt.sign({ id: user._id, tokenType: 'access' }, process.env.JWT_SECRET, {
+const issueTokensForUser = async (user, role) => {
+  const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access' }, process.env.JWT_SECRET, {
     expiresIn: accessTokenExpiresIn
   });
 
-  const refreshToken = jwt.sign({ id: user._id, tokenType: 'refresh' }, process.env.JWT_SECRET, {
+  const refreshToken = jwt.sign({ id: user._id, role, tokenType: 'refresh' }, process.env.JWT_SECRET, {
     expiresIn: refreshTokenExpiresIn
   });
 
@@ -129,11 +167,13 @@ const issueTokensForUser = async (user) => {
   };
 };
 
-const userPayload = (user) => ({
+const userPayload = (user, role) => ({
   _id: user._id,
   name: user.name,
   email: user.email,
-  role: user.role,
+  phoneNumber: user.phoneNumber,
+  avatarUrl: user.avatarUrl || '',
+  role,
   isEmailVerified: user.isEmailVerified,
   // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Buses").
   // Always present for managers; harmless (PUBLIC/null) for other roles.
@@ -144,6 +184,20 @@ const userPayload = (user) => ({
       : null
 });
 
+const PHONE_NUMBER_REGEX = /^[0-9+()\-\s]{7,20}$/;
+
+// Profile pictures are stored inline as base64 data URLs. Cap the decoded size so a
+// single document can't bloat the collection; ~2 MB of image is plenty for an avatar.
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_DATA_URL_REGEX = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+
+// Returns the decoded byte length of a base64 string without allocating a Buffer copy.
+const base64ByteLength = (b64) => {
+  const len = b64.length;
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return (len * 3) / 4 - padding;
+};
+
 // @desc    Register new user
 // @route   POST /api/auth/register
 exports.register = async (req, res, next) => {
@@ -151,7 +205,7 @@ exports.register = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const userExists = await User.findOne({ email: normalizedEmail });
+    const userExists = await isEmailRegistered(normalizedEmail);
     if (userExists) {
       return res.status(400).json({
         success: false,
@@ -167,7 +221,6 @@ exports.register = async (req, res, next) => {
       name: derivedName,
       email: normalizedEmail,
       password,
-      role: 'user',
       isEmailVerified: false,
       emailVerification: {
         otpHash,
@@ -189,7 +242,7 @@ exports.register = async (req, res, next) => {
         : 'Registration successful. Email service unavailable, use development OTP.',
       requiresVerification: true,
       email: normalizedEmail,
-      user: userPayload(user)
+      user: userPayload(user, 'user')
     };
 
     if (!emailSent && process.env.NODE_ENV !== 'production') {
@@ -209,13 +262,16 @@ exports.verifyEmail = async (req, res, next) => {
     const { email, otp } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select('+emailVerification.otpHash +emailVerification.expiresAt');
-    if (!user) {
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+emailVerification.otpHash +emailVerification.expiresAt'
+    });
+    if (!account) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.isEmailVerified) {
       return res.status(400).json({
@@ -248,13 +304,13 @@ exports.verifyEmail = async (req, res, next) => {
     user.isEmailVerified = true;
     user.emailVerification = { otpHash: null, expiresAt: null };
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Email verified successfully',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -275,14 +331,15 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const user = await User.findOne({ email: normalizedEmail }).select('+password');
+    const account = await findAccountByEmail(normalizedEmail, { select: '+password' });
 
-    if (!user) {
+    if (!account) {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.isActive === false) {
       return res.status(403).json({
@@ -306,7 +363,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const canBypassVerification = ['admin', 'super-admin'].includes(user.role);
+    const canBypassVerification = ['admin', 'super-admin'].includes(role);
 
     if (!user.isEmailVerified && !canBypassVerification) {
       return res.status(403).json({
@@ -317,13 +374,13 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Login successful',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -361,11 +418,18 @@ exports.googleSignIn = async (req, res, next) => {
     let user = await User.findOne({ email });
 
     if (!user) {
+      const takenByOtherAccountType = await isEmailRegistered(email);
+      if (takenByOtherAccountType) {
+        return res.status(409).json({
+          success: false,
+          message: 'This email is already registered to a different account type.'
+        });
+      }
+
       user = await User.create({
         name: payload.name || email.split('@')[0],
         email,
         googleId: payload.sub,
-        role: 'user',
         isEmailVerified: true
       });
     } else {
@@ -388,13 +452,13 @@ exports.googleSignIn = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, 'user');
 
     res.status(200).json({
       success: true,
       message: 'Google sign-in successful',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, 'user')
     });
   } catch (error) {
     next(error);
@@ -415,13 +479,16 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(decoded.id).select('+refreshToken.tokenHash +refreshToken.expiresAt');
-    if (!user || !user.refreshToken?.tokenHash) {
+    const account = await findAccountById(decoded.id, decoded.role, {
+      select: '+refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    if (!account || !account.doc.refreshToken?.tokenHash) {
       return res.status(401).json({
         success: false,
         message: 'Invalid refresh token'
       });
     }
+    const { doc: user, role } = account;
 
     if (user.refreshToken.expiresAt && user.refreshToken.expiresAt.getTime() < Date.now()) {
       return res.status(401).json({
@@ -437,13 +504,13 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    const tokens = await issueTokensForUser(user);
+    const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Token refreshed successfully',
       ...tokens,
-      user: userPayload(user)
+      user: userPayload(user, role)
     });
   } catch (error) {
     next(error);
@@ -461,13 +528,15 @@ exports.logout = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(req.user._id).select('+refreshToken.tokenHash +refreshToken.expiresAt');
-    if (user) {
-      user.refreshToken = {
+    const account = await findAccountById(req.user._id, req.user.role, {
+      select: '+refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    if (account) {
+      account.doc.refreshToken = {
         tokenHash: null,
         expiresAt: null
       };
-      await user.save();
+      await account.doc.save();
     }
 
     res.status(200).json({
@@ -485,18 +554,19 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+    });
 
     const genericSuccess = {
       success: true,
       message: 'If this email is registered, an OTP has been sent.'
     };
 
-    if (!user || user.isActive === false) {
+    if (!account || account.doc.isActive === false) {
       return res.status(200).json(genericSuccess);
     }
+    const { doc: user } = account;
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.passwordReset = {
@@ -539,9 +609,10 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const otp = String(req.body.otp || '').trim();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || !user.passwordReset?.otpHash || !user.passwordReset?.expiresAt) {
       return res.status(400).json({
@@ -592,9 +663,10 @@ exports.resetPasswordWithToken = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const { resetToken, password } = req.body;
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt +refreshToken.tokenHash +refreshToken.expiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt +refreshToken.tokenHash +refreshToken.expiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || !user.passwordReset?.resetTokenHash || !user.passwordReset?.resetTokenExpiresAt) {
       return res.status(400).json({
@@ -647,7 +719,7 @@ const findUserBySetupToken = async (rawToken, extraSelect = '') => {
   const token = String(rawToken || '').trim();
   if (!token) return null;
 
-  const user = await User.findOne({ 'accountSetup.tokenHash': hashToken(token) }).select(
+  const user = await Manager.findOne({ 'accountSetup.tokenHash': hashToken(token) }).select(
     `+accountSetup.tokenHash +accountSetup.expiresAt${extraSelect ? ` ${extraSelect}` : ''}`
   );
 
@@ -720,7 +792,7 @@ exports.completeAccountSetup = async (req, res, next) => {
 exports.updateProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { name } = req.body;
+    const { name, phoneNumber } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -729,9 +801,23 @@ exports.updateProfile = async (req, res, next) => {
       });
     }
 
-    const user = await User.findByIdAndUpdate(
+    const update = { name: name.trim() };
+
+    if (phoneNumber !== undefined) {
+      const trimmedPhone = String(phoneNumber).trim();
+      if (trimmedPhone && !PHONE_NUMBER_REGEX.test(trimmedPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid phone number'
+        });
+      }
+      update.phoneNumber = trimmedPhone;
+    }
+
+    const model = modelForRole(req.user.role);
+    const user = await model.findByIdAndUpdate(
       userId,
-      { name: name.trim() },
+      update,
       { new: true, runValidators: true }
     );
 
@@ -745,8 +831,75 @@ exports.updateProfile = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      name: user.name,
-      email: user.email
+      user: userPayload(user, req.user.role)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update (or clear) the user's profile picture
+// @route   PUT /api/auth/avatar
+// @access  Private
+exports.updateAvatar = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { avatar } = req.body;
+    const model = modelForRole(req.user.role);
+
+    // An empty string / null clears the current avatar.
+    if (avatar === '' || avatar === null || avatar === undefined) {
+      const cleared = await model.findByIdAndUpdate(
+        userId,
+        { avatarUrl: '' },
+        { new: true }
+      );
+      if (!cleared) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Profile picture removed',
+        user: userPayload(cleared, req.user.role)
+      });
+    }
+
+    if (typeof avatar !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image format'
+      });
+    }
+
+    const match = AVATAR_DATA_URL_REGEX.exec(avatar);
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile picture must be a PNG, JPEG, or WebP image'
+      });
+    }
+
+    if (base64ByteLength(match[2]) > MAX_AVATAR_BYTES) {
+      return res.status(413).json({
+        success: false,
+        message: 'Profile picture is too large (max 2 MB)'
+      });
+    }
+
+    const user = await model.findByIdAndUpdate(
+      userId,
+      { avatarUrl: avatar },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile picture updated',
+      user: userPayload(user, req.user.role)
     });
   } catch (error) {
     next(error);
@@ -759,9 +912,10 @@ exports.resendVerificationOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+emailVerification.otpHash +emailVerification.expiresAt'
-    );
+    const account = await findAccountByEmail(normalizedEmail, {
+      select: '+emailVerification.otpHash +emailVerification.expiresAt'
+    });
+    const user = account?.doc;
 
     if (!user || user.isEmailVerified) {
       return res.status(200).json({ success: true, message: 'If unverified, a new code has been sent.' });

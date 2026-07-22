@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/server');
 const User = require('../../src/models/User');
+const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
 const Bus = require('../../src/models/Bus');
 const { connectTestDb, closeTestDb } = require('./db');
@@ -34,11 +35,10 @@ beforeAll(async () => {
   token = login.body.accessToken;
 
   // A driver is required to create a bus.
-  const driver = await User.create({
+  const driver = await Driver.create({
     name: 'Booking Driver',
     email: `bdriver-${Date.now()}@test.com`,
     password: 'Driver@123',
-    role: 'driver',
     isEmailVerified: true,
     isActive: true,
   });

@@ -26,7 +26,7 @@ const roomKeyHashExists = async (hash) => {
 exports.getOwnedRoutes = async (req, res, next) => {
   try {
     const routes = await Route.find({ managerId: req.user._id, isDeleted: false })
-      .select('routeId routeName source destination visibility isHidden joinApprovalRequired isActive status roomKey.updatedAt')
+      .select('routeId routeName source destination visibility isHidden joinApprovalRequired qrEnabled isActive status roomKey.updatedAt')
       .lean();
 
     const routeIds = routes.map((r) => r.routeId);
@@ -51,6 +51,7 @@ exports.getOwnedRoutes = async (req, res, next) => {
       visibility: route.visibility,
       isHidden: route.isHidden,
       joinApprovalRequired: route.joinApprovalRequired,
+      qrEnabled: route.qrEnabled,
       isActive: route.isActive,
       status: route.status,
       hasRoomKey: !!route.roomKey?.updatedAt,
@@ -121,6 +122,38 @@ exports.updateRoutePrivacy = async (req, res, next) => {
         joinApprovalRequired: route.joinApprovalRequired,
         hasRoomKey: !!route.roomKey?.lookupHash
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Turn QR attendance scanning on/off for an owned route.
+// @route   PATCH /api/manager/routes/:routeId/qr
+exports.updateRouteQr = async (req, res, next) => {
+  try {
+    const route = await findOwnedRoute(req.user._id, req.params.routeId);
+    if (!route) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
+    route.qrEnabled = !!(req.body || {}).qrEnabled;
+    await route.save();
+
+    await writeAuditLog({
+      managerId: req.user._id,
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'ROUTE_QR_UPDATED',
+      entityType: 'ROUTE',
+      entityId: route.routeId,
+      metadata: { qrEnabled: route.qrEnabled }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Route QR attendance updated',
+      data: { routeId: route.routeId, qrEnabled: route.qrEnabled }
     });
   } catch (error) {
     next(error);

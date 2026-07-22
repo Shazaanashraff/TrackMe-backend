@@ -39,13 +39,13 @@ beforeAll(async () => {
     role: 'user', isEmailVerified: true, isActive: true
   });
   memberId = member._id;
-  const memberToken = jwt.sign({ id: member._id }, process.env.JWT_SECRET || 'test-secret');
+  const memberToken = jwt.sign({ id: member._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
   const nonMember = await User.create({
     name: 'Non Member Rider', email: `ws-nonmember-${Date.now()}@test.com`, password: 'Test@1234',
     role: 'user', isEmailVerified: true, isActive: true
   });
-  const nonMemberToken = jwt.sign({ id: nonMember._id }, process.env.JWT_SECRET || 'test-secret');
+  const nonMemberToken = jwt.sign({ id: nonMember._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
   await Route.create({
     routeId: 'WS-PRIV-ROOMKEY-1',

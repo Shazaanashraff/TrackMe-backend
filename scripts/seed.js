@@ -1,6 +1,9 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const User = require('../src/models/User');
+const Manager = require('../src/models/Manager');
+const Driver = require('../src/models/Driver');
+const SuperAdmin = require('../src/models/SuperAdmin');
 const Bus = require('../src/models/Bus');
 const Route = require('../src/models/Route');
 
@@ -11,16 +14,18 @@ const seedData = async () => {
 
     // Clear existing data
     await User.deleteMany({});
+    await Manager.deleteMany({});
+    await Driver.deleteMany({});
+    await SuperAdmin.deleteMany({});
     await Bus.deleteMany({});
     await Route.deleteMany({});
     console.log('Cleared existing data');
 
     // Create driver
-    const driver = await User.create({
+    const driver = await Driver.create({
       name: 'Test Driver',
       email: 'driver@test.com',
       password: 'password123',
-      role: 'driver',
       isEmailVerified: true
     });
     console.log('Created driver:', driver.email);
@@ -30,27 +35,24 @@ const seedData = async () => {
       name: 'Test User',
       email: 'user@test.com',
       password: 'password123',
-      role: 'user',
       isEmailVerified: true
     });
     console.log('Created user:', user.email);
 
-    // Create admin
-    const admin = await User.create({
+    // Create manager
+    const admin = await Manager.create({
       name: 'Platform Admin',
       email: 'admin@test.com',
       password: 'password123',
-      role: 'admin',
       isEmailVerified: true
     });
-    console.log('Created admin:', admin.email);
+    console.log('Created manager:', admin.email);
 
     // Create super-admin
-    const superAdmin = await User.create({
+    const superAdmin = await SuperAdmin.create({
       name: 'Platform Super Admin',
       email: 'superadmin@test.com',
       password: 'password123',
-      role: 'super-admin',
       isEmailVerified: true
     });
     console.log('Created super-admin:', superAdmin.email);

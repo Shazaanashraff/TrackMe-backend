@@ -5,11 +5,13 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Auth
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| POST /api/auth/register | integration | tests/integration/auth/register.test.js | valid, invalid, duplicate | payload or validation changes |
-| POST /api/auth/login | integration | tests/integration/auth/login.test.js | valid, wrong password, unverified | auth flow changes |
+| POST /api/auth/register + POST /api/auth/verify-email | integration | tests/integration/auth.test.js | register → unverified user + `requiresVerification` + `developmentOtp` (Resend mocked, never hits the real API); verify-email wrong OTP → 400; correct OTP → verified + tokens | register/verify contract, OTP flow, or verification email template changes |
+| POST /api/auth/login | integration | tests/integration/auth.test.js | valid creds → 200 + tokens, invalid creds → 401, missing password → 400, unverified account → 403 with `requiresVerification` + `email` | auth flow changes |
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
 | POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |
-| PUT /api/auth/profile | integration | tests/integration/auth/profile.test.js | update profile, invalid fields | profile schema changes |
+| PUT /api/auth/profile (name + phoneNumber) | integration | tests/integration/auth.test.js | accepts + persists `phoneNumber`, returned on `user`; rejects malformed `phoneNumber`; empty string clears it; 401 when unauthenticated | profile update contract or phoneNumber validation changes |
+| accountRegistry (findAccountByEmail/findAccountById/isEmailRegistered) | integration | tests/integration/account-registry.test.js | cross-collection lookup by email (Manager/Driver/SuperAdmin/User), role-scoped lookup by id, `select` passthrough, cross-collection email uniqueness incl. `excludeId` | account-schema split changes (new account type added/removed, lookup signature changes) |
+| scripts/migrate-account-schemas.js dedup rule | unit (no DB) | tests/integration/migrate-account-schemas.test.js | `selectCanonicalSuperAdmin`: no/one/many super-admins, canonical-email preference, case-insensitive match, earliest-created fallback; `stripRole` | dedup rule or migration script logic changes |
 
 ## Routes and Buses
 | Item | Test type | Test file | Cases covered | Update when |
@@ -31,6 +33,18 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
+| pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
+
+## QR Attendance
+| Item | Test type | Test file | Cases covered | Update when |
+|---|---|---|---|---|
+| qrToken utils: signQr/verifyQr (account-scoped) | unit | tests/integration/qr-attendance.test.js | signQr payload is `{ sub: userId, ver: qrTokenVersion, jti }`; verifyQr resolves valid; rejects garbage/tampered, expired, stale version (after rotate), inactive/missing user | token payload shape or verification logic changes |
+| POST /api/qr/issue, POST /api/qr/rotate | integration | tests/integration/qr-attendance.test.js | issue returns one account-scoped token with no route gate (works even with zero route relationships); rotate bumps the caller's own qrTokenVersion, invalidating prior tokens | issue/rotate contract changes |
+| POST /api/driver/boarding/scan | integration | tests/integration/qr-attendance.test.js | 403 non-driver; 401 invalid/expired/stale token; 404 bus not assigned to driver; 403 when the bus's route has `qrEnabled:false`; auto-toggle BOARD→ALIGHT; debounces duplicate same-type scan within the window; dispatches push | scan logic, toggle/debounce, or route-gating changes |
+| PATCH /api/manager/routes/:routeId/qr | integration | tests/integration/qr-attendance.test.js | owning manager toggles `qrEnabled` on/off, scan endpoint reflects it immediately; 403 for a manager who doesn't own the route | route QR toggle endpoint or ownership scoping changes |
+| GET /api/attendance/student/:studentId, GET /api/manager/attendance | integration | tests/integration/qr-attendance.test.js | rider reads own history + summary; 403 non-manager reading another rider; manager per-student rollup scoped to owned routes; empty rollup for a manager with no routes | attendance read/authorization or rollup logic changes |
+| POST /api/notifications/device-token | integration | tests/integration/qr-attendance.test.js | registers a token idempotently (no duplicates in `pushTokens`); 400 missing token | device-token contract changes |
+| `student:<userId>` socket auto-join | ws integration | tests/integration/ws/qr-attendance-socket.test.js | every authenticated connection auto-joins its own student room with no explicit client-side join, so a server-side `attendance:event` emit is received | socket connection/room-join logic changes |
 
 ## Driver Earnings
 | Item | Test type | Test file | Cases covered | Update when |

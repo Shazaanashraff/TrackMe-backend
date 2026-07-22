@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const User = require('../src/models/User');
+const Manager = require('../src/models/Manager');
 const Route = require('../src/models/Route');
 const Bus = require('../src/models/Bus');
 const LiveLocation = require('../src/models/LiveLocation');
@@ -57,7 +57,7 @@ const startTwoBusesPerRoute = async () => {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bus-tracking');
     console.log('Connected to MongoDB');
 
-    const manager = await User.findOne({ email: MANAGER_EMAIL.toLowerCase().trim(), role: 'admin' });
+    const manager = await Manager.findOne({ email: MANAGER_EMAIL.toLowerCase().trim() });
     if (!manager) {
       console.log(`Manager ${MANAGER_EMAIL} not found. Run seed-manager-buses-per-route first.`);
       await mongoose.connection.close();

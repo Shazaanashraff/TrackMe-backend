@@ -18,7 +18,7 @@ const routeMembershipSchema = new mongoose.Schema({
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'Manager',
     required: true,
     index: true
   },
