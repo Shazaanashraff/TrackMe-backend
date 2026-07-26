@@ -6,7 +6,9 @@ const ManagerBusRequest = require('../models/ManagerBusRequest');
 const Route = require('../models/Route');
 const RouteChangeRequest = require('../models/RouteChangeRequest');
 const Driver = require('../models/Driver');
-const { isEmailRegistered } = require('../utils/accountRegistry');
+const Identity = require('../models/Identity');
+const { findIdentityByEmail, findProfilesForIdentity } = require('../utils/identityRegistry');
+const { adminSetOrMailReset } = require('../utils/passwordReset');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const BUS_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
@@ -323,13 +325,17 @@ exports.createBusAccountRequest = async (req, res, next) => {
       });
     }
 
-    const existingDriverAccount = await Driver.findOne({ email: normalizedEmail });
-    if (!existingDriverAccount) {
-      const takenByOtherAccountType = await isEmailRegistered(normalizedEmail);
-      if (takenByOtherAccountType) {
+    // A rider (or manager) email is now perfectly valid here: approving the request
+    // attaches a driver role to that person's existing login rather than creating a
+    // second account. The only email we still refuse is a super-admin's, which must
+    // stay on its own dedicated login.
+    const existingIdentity = await findIdentityByEmail(normalizedEmail);
+    if (existingIdentity) {
+      const roles = (await findProfilesForIdentity(existingIdentity._id)).map((p) => p.role);
+      if (roles.includes('super-admin')) {
         return res.status(409).json({
           success: false,
-          message: 'Email already exists on a non-driver account'
+          message: 'That email belongs to a super-admin account and cannot be used for a bus account'
         });
       }
     }
@@ -502,30 +508,51 @@ exports.resetBusAccountPassword = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
     }
 
-    const driver = await Driver.findById(bus.driverId).select('+password');
+    const driver = await Driver.findById(bus.driverId);
     if (!driver) {
       return res.status(404).json({ success: false, message: 'Driver account not found for this bus' });
     }
 
-    driver.password = password;
+    const identity = await Identity.findById(driver.identityId).select('+password');
+    if (!identity) {
+      return res.status(404).json({ success: false, message: 'Login not found for this driver' });
+    }
+
     driver.isEmailVerified = true;
     driver.isActive = true;
     await driver.save();
+
+    // A manager may only set the password while this login is still provisional — i.e.
+    // it was created for the driver and they have never used it. Once the driver has
+    // signed in the credential is theirs, and the same login may also open their
+    // passenger account, so overwriting it would be an account takeover. In that case
+    // we mail them a reset code instead of writing anything.
+    const { written, emailSent, otp } = await adminSetOrMailReset(identity, password);
 
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_ACCOUNT_PASSWORD_RESET',
+      action: written ? 'BUS_ACCOUNT_PASSWORD_RESET' : 'BUS_ACCOUNT_PASSWORD_RESET_EMAILED',
       entityType: 'BUS_ACCOUNT',
       entityId: bus.busId,
-      metadata: { driverId: driver._id }
+      metadata: { driverId: driver._id, passwordWritten: written }
     });
 
-    return res.status(200).json({
+    const response = {
       success: true,
-      message: 'Bus account password updated successfully'
-    });
+      passwordWritten: written,
+      passwordResetEmailSent: !written,
+      message: written
+        ? 'Bus account password updated successfully'
+        : 'This driver has already signed in, so their password cannot be overwritten. A reset code has been emailed to them.'
+    };
+
+    if (!written && !emailSent && process.env.NODE_ENV !== 'production') {
+      response.developmentOtp = otp;
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }

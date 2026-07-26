@@ -23,6 +23,35 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-07-26 — Register offers a sign-in shortcut for a matching duplicate email
+- **Branch:** feat/driver-on-board-roster
+- **Modules touched:** auth — [docs/modules/AUTH.md](modules/AUTH.md)
+- **What changed:**
+  - `POST /api/auth/register` now uses `findAccountByEmail` (not just `isEmailRegistered`) so it
+    knows *which* account collided. Duplicate-email response is now `409` with
+    `code: 'EMAIL_IN_USE'`; when the match is the caller's own `User` account and the submitted
+    password is correct via `comparePassword`, the response also carries `canSignIn: true`.
+  - A Manager/Driver/SuperAdmin email match, or a wrong password against an existing rider
+    account, always returns `canSignIn: false` — the sign-in shortcut never crosses account types.
+- **Why:** A user hit "email already exists" trying to create a Manager account with an email
+  already used by a rider account — that block is correct by design (see cross-collection
+  uniqueness, unchanged). But the *inverse* case (a rider re-registering with their own existing
+  email + correct password) was a dead-end error with no path forward. Now the client can offer
+  "Sign in?" instead of forcing the user to go find the Login screen themselves.
+- **Contract impact:** `POST /api/auth/register` 409 body gains a `canSignIn` boolean field
+  (additive, existing `message`/`code` shape unchanged). `user-app` updated to read it — see that
+  repo's `docs/AUTH.md` and `CHANGES.md`.
+- **Tests:** `tests/integration/auth.test.js` — three new cases (matching-password rider →
+  `canSignIn:true`, wrong-password rider → `false`, Manager-account email match → `false` even
+  with the right password). Not run against a live DB in this session — no local MongoDB /
+  `MONGODB_TEST_URI` available in this environment; syntax-checked only. Run
+  `npm run test:integration` before merging.
+- **Docs updated:** `docs/modules/AUTH.md` (API surface row, §8 gotcha, §10 test row),
+  `docs/TESTING_GUIDE.md` (register row).
+- **Migration:** none.
+- **Follow-ups / known issues:** integration tests for this change have not been executed in this
+  environment (no local Mongo) — run them before deploy.
+
 ## 2026-07-22 — Driver on-board roster endpoint
 - **Branch:** main
 - **Modules touched:** qr-attendance — [docs/modules/QR_ATTENDANCE.md](modules/QR_ATTENDANCE.md)

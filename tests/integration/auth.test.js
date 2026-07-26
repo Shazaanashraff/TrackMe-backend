@@ -13,6 +13,7 @@ jest.mock('resend', () => ({
 
 const app = require('../../src/server');
 const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
 const { connectTestDb, closeTestDb } = require('./db');
 
 // Matches the real API: POST /api/auth/login returns
@@ -153,6 +154,50 @@ describe('Auth Integration - POST /api/auth/register + POST /api/auth/verify-ema
     expect(res.body.success).toBe(true);
     expect(typeof res.body.accessToken).toBe('string');
     expect(res.body.user.isEmailVerified).toBe(true);
+  });
+});
+
+describe('Auth Integration - POST /api/auth/register with a duplicate email', () => {
+  test('registering with the correct password of an existing rider offers a sign-in shortcut', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: VALID.email, password: VALID.password })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(true);
+  });
+
+  test('registering with the wrong password of an existing rider does not offer sign-in', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: VALID.email, password: 'totally-wrong-password' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(false);
+  });
+
+  test('registering with a manager account email never offers sign-in, even with the right password', async () => {
+    const manager = await Manager.create({
+      name: 'Registry Manager',
+      email: `register-dup-manager-${Date.now()}@test.com`,
+      password: 'Manager@123',
+    });
+
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: manager.email, password: 'Manager@123' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(false);
   });
 });
 

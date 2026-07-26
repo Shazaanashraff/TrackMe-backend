@@ -1,24 +1,24 @@
 # Sri Lankan Bus System - Test Data Reference
 
+> **`npm run seed:buses` no longer exists.** The script behind it (`scripts/seed-test-buses.js`)
+> created `Driver` documents directly with no `identityId`, which the identity model (see
+> [`docs/modules/AUTH.md`](modules/AUTH.md)) requires to log in — so it was removed rather than
+> left to silently produce broken accounts. The credentials table below is what it used to
+> produce; no replacement has been written yet, so none of these accounts currently exist.
+
 ## Quick Start Commands
 
 ```bash
 # Seed routes (16 authentic SL routes with stops & fares)
 npm run seed:routes
-
-# Seed buses (22 test buses + 16 drivers)
-npm run seed:buses
-
-# Seed both
-npm run seed:routes && npm run seed:buses
 ```
 
 ---
 
-## Test Credentials
+## Test Credentials (historical — see notice above)
 
 ### Admin Test Drivers
-Each route has a dedicated driver account:
+Each route had a dedicated driver account:
 
 | Route ID | Driver Email | Password | Buses |
 |----------|--------------|----------|-------|

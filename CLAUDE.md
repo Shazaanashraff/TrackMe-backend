@@ -107,6 +107,10 @@ npm test                 # node --test smoke suite
 npm run test:integration # jest integration suite
 ```
 
-Seed/simulation helpers live in `scripts/` (`npm run seed`, `seed:routes`, `simulate`, …).
+Seed/simulation helpers live in `scripts/` (`npm run seed:routes`, `simulate`, …). The scripts
+that used to seed demo managers/drivers/buses (`seed`, `seed:buses`, `seed:manager-buses`) were
+removed — they created `Manager`/`Driver` documents directly with no `identityId`, which the
+identity model (see [`docs/modules/AUTH.md`](docs/modules/AUTH.md)) requires to log in. A
+replacement that goes through `createIdentityWithProfile` has not been written yet.
 Environment + deploy config: [`SETUP.md`](SETUP.md), `render.yaml`, and
 [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md).

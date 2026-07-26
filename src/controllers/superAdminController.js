@@ -6,8 +6,17 @@ const BusReview = require('../models/BusReview');
 const Route = require('../models/Route');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
+const Identity = require('../models/Identity');
 const { createProvisionalCustomRoute } = require('../utils/customRoute');
-const { isEmailRegistered } = require('../utils/accountRegistry');
+const {
+  findIdentityByEmail,
+  findProfilesForIdentity,
+  attachProfile,
+  createIdentityWithProfile,
+  isEmailRegistered,
+  SuperAdminIsolationError
+} = require('../utils/identityRegistry');
+const { adminSetOrMailReset } = require('../utils/passwordReset');
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
@@ -24,28 +33,61 @@ exports.createManager = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = email.toLowerCase().trim();
 
-    const existingManager = await isEmailRegistered(normalizedEmail);
-    if (existingManager) {
+    const existingIdentity = await findIdentityByEmail(normalizedEmail);
+
+    // A brand-new person: create their login and their manager profile together. The
+    // login starts provisional, so the super-admin's chosen password is allowed to
+    // stand until the manager first signs in.
+    if (!existingIdentity) {
+      const { doc: manager } = await createIdentityWithProfile({
+        email: normalizedEmail,
+        password,
+        isEmailVerified: true,
+        isProvisional: true,
+        role: 'admin',
+        fields: { name: name.trim(), isActive: true, isEmailVerified: true }
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Manager created successfully',
+        data: sanitizeManager(manager)
+      });
+    }
+
+    const profiles = await findProfilesForIdentity(existingIdentity._id);
+
+    if (profiles.some((p) => p.role === 'admin')) {
       return res.status(409).json({
         success: false,
         message: 'A manager with this email already exists'
       });
     }
 
-    const manager = await Manager.create({
-      name: name.trim(),
-      email: normalizedEmail,
-      password,
-      isActive: true,
-      isEmailVerified: true
+    // This email already belongs to somebody on TrackMe (typically a rider). Give
+    // that existing person the manager role rather than refusing the email — but
+    // deliberately IGNORE the password typed into the form: it is not the
+    // super-admin's to set. They keep signing in with the password they already have.
+    const { doc: manager } = await attachProfile({
+      identityId: existingIdentity._id,
+      role: 'admin',
+      fields: { name: name.trim(), isActive: true, isEmailVerified: true }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Manager created successfully',
+      message: 'Manager role added to the existing TrackMe account for this email',
+      attachedToExistingIdentity: true,
+      existingRoles: profiles.map((p) => p.role),
+      // Nothing to hand over: they sign in with their own password. If the account is
+      // Google-only it has no password at all and they must use Google or set one.
+      passwordSetupRequired: !existingIdentity.password && !existingIdentity.googleId,
       data: sanitizeManager(manager)
     });
   } catch (error) {
+    if (error instanceof SuperAdminIsolationError) {
+      return res.status(409).json({ success: false, code: error.code, message: error.message });
+    }
     next(error);
   }
 };
@@ -191,15 +233,36 @@ exports.updateManager = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    if (email && email.toLowerCase().trim() !== manager.email) {
-      const duplicate = await isEmailRegistered(email.toLowerCase().trim(), { excludeId: manager._id, excludeRole: 'admin' });
+    const nextEmail = email ? email.toLowerCase().trim() : null;
+
+    if (nextEmail && nextEmail !== manager.email) {
+      // Changing the email now renames the person's whole login, not just this
+      // manager record — so it is only safe when the manager role is all they have.
+      const profiles = await findProfilesForIdentity(manager.identityId);
+      if (profiles.length > 1) {
+        return res.status(409).json({
+          success: false,
+          code: 'IDENTITY_SHARED_EMAIL_IMMUTABLE',
+          message:
+            'This email is shared with other TrackMe roles for the same person. They must change it themselves.'
+        });
+      }
+
+      const duplicate = await isEmailRegistered(nextEmail, { excludeIdentityId: manager.identityId });
       if (duplicate) {
         return res.status(409).json({ success: false, message: 'Email already in use by another account' });
       }
+
+      // Update the login, then re-mirror onto the profile so the two cannot drift.
+      const identity = await Identity.findById(manager.identityId);
+      if (identity) {
+        identity.email = nextEmail;
+        await identity.save();
+      }
+      manager.email = nextEmail;
     }
 
     if (name) manager.name = name.trim();
-    if (email) manager.email = email.toLowerCase().trim();
 
     await manager.save();
 
@@ -239,18 +302,35 @@ exports.resetManagerPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
 
-    const manager = await Manager.findById(req.params.managerId).select('+password');
+    const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    manager.password = password;
-    await manager.save();
+    const identity = await Identity.findById(manager.identityId).select('+password');
+    if (!identity) {
+      return res.status(404).json({ success: false, message: 'Login not found for this manager' });
+    }
 
-    return res.status(200).json({
+    // A password may only be written while the login is still provisional (created by
+    // an admin and never used). Afterwards it is that person's own credential — and it
+    // may also unlock their rider account — so we mail them a reset code instead.
+    const { written, emailSent, otp } = await adminSetOrMailReset(identity, password);
+
+    const response = {
       success: true,
-      message: 'Manager password reset successfully'
-    });
+      passwordWritten: written,
+      passwordResetEmailSent: !written,
+      message: written
+        ? 'Manager password reset successfully'
+        : 'This manager has already signed in, so their password cannot be overwritten. A reset code has been emailed to them.'
+    };
+
+    if (!written && !emailSent && process.env.NODE_ENV !== 'production') {
+      response.developmentOtp = otp;
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -685,31 +765,61 @@ exports.reviewBusRequest = async (req, res, next) => {
       }
 
       const driverEmail = String(driverPayload.email || '').toLowerCase();
-      let driver = await Driver.findOne({ email: driverEmail }).select('+password');
-      if (!driver) {
-        const takenByOtherAccountType = await isEmailRegistered(driverEmail);
-        if (takenByOtherAccountType) {
-          return res.status(409).json({ success: false, message: 'Cannot approve request: driver email belongs to another account type' });
-        }
+      const driverFields = {
+        name: driverPayload.name,
+        phoneNumber: String(driverPayload.phoneNumber || '').trim(),
+        nicNumber: String(driverPayload.nicNumber || '').trim(),
+        licenseCardNumber: String(driverPayload.licenseCardNumber || '').trim(),
+        isActive: true,
+        isEmailVerified: true
+      };
 
-        driver = await Driver.create({
-          name: driverPayload.name,
+      const existingIdentity = await findIdentityByEmail(driverEmail);
+      let driver;
+
+      if (!existingIdentity) {
+        // Nobody owns this email yet — create the login provisionally so the password
+        // the manager supplied stands until the driver first signs in.
+        ({ doc: driver } = await createIdentityWithProfile({
           email: driverEmail,
-          phoneNumber: String(driverPayload.phoneNumber || '').trim(),
-          nicNumber: String(driverPayload.nicNumber || '').trim(),
-          licenseCardNumber: String(driverPayload.licenseCardNumber || '').trim(),
           password: driverPayload.password,
-          isActive: true,
-          isEmailVerified: true
-        });
+          isEmailVerified: true,
+          isProvisional: true,
+          role: 'driver',
+          fields: driverFields
+        }));
       } else {
-        driver.password = driverPayload.password;
-        driver.isActive = true;
-        driver.isEmailVerified = true;
-        if (driverPayload.phoneNumber) driver.phoneNumber = String(driverPayload.phoneNumber).trim();
-        if (driverPayload.nicNumber) driver.nicNumber = String(driverPayload.nicNumber).trim();
-        if (driverPayload.licenseCardNumber) driver.licenseCardNumber = String(driverPayload.licenseCardNumber).trim();
-        await driver.save();
+        try {
+          // This email already has a TrackMe login (often the person's own rider
+          // account). Attach the driver role to it. Crucially we do NOT touch the
+          // password: overwriting it here would let any manager take over the rider
+          // account behind any email they type into the bus-request form.
+          const attached = await attachProfile({
+            identityId: existingIdentity._id,
+            role: 'driver',
+            fields: driverFields
+          });
+          driver = attached.doc;
+
+          // Reusing an existing driver profile: refresh the details the manager sent,
+          // re-enable it, but never the credentials.
+          if (!attached.created) {
+            driver.isActive = true;
+            if (driverPayload.phoneNumber) driver.phoneNumber = String(driverPayload.phoneNumber).trim();
+            if (driverPayload.nicNumber) driver.nicNumber = String(driverPayload.nicNumber).trim();
+            if (driverPayload.licenseCardNumber) driver.licenseCardNumber = String(driverPayload.licenseCardNumber).trim();
+            await driver.save();
+          }
+        } catch (attachError) {
+          if (attachError instanceof SuperAdminIsolationError) {
+            return res.status(409).json({
+              success: false,
+              code: attachError.code,
+              message: 'Cannot approve request: that email belongs to a super-admin account'
+            });
+          }
+          throw attachError;
+        }
       }
 
       await Bus.create({

@@ -206,7 +206,16 @@ exports.validateLogin = [
     .notEmpty().withMessage('Email is required')
     .isEmail().withMessage('Invalid email format'),
   body('password')
-    .notEmpty().withMessage('Password is required')
+    .notEmpty().withMessage('Password is required'),
+  // Which app is signing in, so login resolves the right role profile for a person who
+  // holds several (a rider who also drives). Optional while the apps are still being
+  // released; absent means "use the legacy first-match precedence".
+  body('audience')
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(['user', 'rider', 'driver', 'admin', 'web-admin', 'manager', 'super-admin'])
+    .withMessage('Invalid audience')
 ];
 
 exports.validateVerifyEmail = [

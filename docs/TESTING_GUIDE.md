@@ -5,7 +5,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Auth
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| POST /api/auth/register + POST /api/auth/verify-email | integration | tests/integration/auth.test.js | register → unverified user + `requiresVerification` + `developmentOtp` (Resend mocked, never hits the real API); verify-email wrong OTP → 400; correct OTP → verified + tokens | register/verify contract, OTP flow, or verification email template changes |
+| POST /api/auth/register + POST /api/auth/verify-email | integration | tests/integration/auth.test.js | register → unverified user + `requiresVerification` + `developmentOtp` (Resend mocked, never hits the real API); verify-email wrong OTP → 400; correct OTP → verified + tokens; duplicate email → 409 `code: 'EMAIL_IN_USE'` with `canSignIn: true` when the submitted password matches the existing rider account, `canSignIn: false` on a wrong password or a Manager-account email match | register/verify contract, OTP flow, verification email template, or duplicate-email/`canSignIn` logic changes |
 | POST /api/auth/login | integration | tests/integration/auth.test.js | valid creds → 200 + tokens, invalid creds → 401, missing password → 400, unverified account → 403 with `requiresVerification` + `email` | auth flow changes |
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
 | POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |

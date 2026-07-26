@@ -28,9 +28,8 @@ const routeSchema = new mongoose.Schema({
     required: [true, 'Destination is required'],
     trim: true
   },
-  // Sri Lanka province this route operates in, derived from its stop coordinates
-  // (see scripts/assign-provinces-and-managers.js). Used to route ownership to the
-  // matching province manager account.
+  // Sri Lanka province this route operates in, derived from its stop coordinates.
+  // Used to route ownership to the matching province manager account.
   province: {
     type: String,
     default: ''

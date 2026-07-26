@@ -8,8 +8,8 @@
  * connects as its assigned driver and emits `driver:location`, which the server
  * persists and broadcasts to the UserApp live map.
  *
- * Requires the backend running and data seeded:
- *   BUSES_PER_ROUTE=8 npm run seed:manager-buses
+ * Requires the backend running and at least one bus already created (previously via
+ * `npm run seed:manager-buses`, which was removed — create managers/buses via WebAdmin instead).
  *
  * Run:  npm run simulate      (Ctrl+C to stop)
  *
@@ -170,7 +170,7 @@ async function main() {
   }
 
   if (routeCache.size === 0) {
-    console.error('❌ No routes with buses found. Run: BUSES_PER_ROUTE=8 npm run seed:manager-buses');
+    console.error('❌ No routes with buses found. Create a manager and buses via WebAdmin first.');
     process.exit(1);
   }
 

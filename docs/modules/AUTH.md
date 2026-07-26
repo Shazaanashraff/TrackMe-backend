@@ -24,7 +24,7 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 
 | Method | Path | Auth | Controller fn | Notes |
 |---|---|---|---|---|
-| `POST` | `/register` | public | `register` | `validateRegister`. Creates unverified account + OTP. |
+| `POST` | `/register` | public | `register` | `validateRegister`. Creates unverified account + OTP. Duplicate email ⇒ 409 `code: 'EMAIL_IN_USE'`; if the match is the caller's own `User` account and the submitted password is correct, adds `canSignIn: true` so the client can offer a sign-in shortcut instead of a dead-end error. |
 | `POST` | `/verify-email` | public | `verifyEmail` | 6-digit OTP. |
 | `POST` | `/resend-verification-otp` | public | `resendVerificationOtp` | **No validator** — see §9. |
 | `POST` | `/login` | public | `login` | Unverified ⇒ 403 `requiresVerification`, not a generic failure. |
@@ -101,6 +101,10 @@ flowchart TD
 - **Cross-collection email uniqueness is application-enforced** (`isEmailRegistered`), so a race
   between two registrations in *different* collections is not stopped by an index. Keep the check
   before every insert/update that sets an email.
+- **`register`'s `canSignIn` shortcut only ever applies to the `User` collection.** If the
+  colliding email belongs to a Manager/Driver/SuperAdmin, `canSignIn` is always `false` — never
+  compare the submitted password against a non-`user` account for this purpose, even though the
+  shared login endpoint *could* technically authenticate any role.
 - **Avatars are base64 in Mongo, not object storage** — a deliberate, documented trade-off; the
   3 MB body limit is the practical ceiling. See the user-app `AUTH.md`.
 - **Password policy** (8–64, upper/lower/digit/special) lives in `validators.js`, so a client can
@@ -124,7 +128,7 @@ flowchart TD
 | Layer | File | What it locks |
 |---|---|---|
 | Unit | `tests/…` | validators, `accountRegistry` resolution across the four models |
-| Integration | `tests/integration/…` | register→verify→login, unverified 403 `requiresVerification`, refresh rotation, forgot/reset chain, profile + avatar (incl. oversize rejection), role-guard 401/403 matrix |
+| Integration | `tests/integration/…` | register→verify→login, unverified 403 `requiresVerification`, refresh rotation, forgot/reset chain, profile + avatar (incl. oversize rejection), role-guard 401/403 matrix, duplicate-email register (`canSignIn` true for matching rider password, false for wrong password or a non-`user` account match) |
 
 Canonical matrix: [`../TEST_PLAN_INTEGRATION.md`](../TEST_PLAN_INTEGRATION.md) and
 [`../project/TEST_EDGE_CASES.md`](../project/TEST_EDGE_CASES.md).

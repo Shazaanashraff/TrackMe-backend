@@ -65,7 +65,14 @@ On first boot a super-admin is auto-created (see Test accounts below).
 ```bash
 cd TrackMe-backend
 npm run seed:wp               # 25 Western Province routes
-npm run seed:manager-buses    # manager + 3 buses/route (75 buses)
+```
+
+> `npm run seed:manager-buses` (manager + 3 buses/route) was removed — it created
+> `Manager`/`Driver` documents directly with no `identityId`, which the identity model
+> (`docs/modules/AUTH.md`) requires to log in. Create a manager + buses via WebAdmin instead;
+> `seed:start-journeys` below needs at least one bus to exist first.
+
+```bash
 npm run seed:start-journeys   # activates 2 buses/route with live positions
 ```
 
@@ -105,7 +112,7 @@ Tunables: `SIM_TICK_MS` (default 1500), `SIM_STEPS` (25), `SIM_SERVER_URL`, `SIM
 ```bash
 docker start trackme-mongo                                   # or the docker run above
 cd TrackMe-backend && npm run dev                            # 1. backend
-cd TrackMe-backend && npm run seed:wp && npm run seed:manager-buses && npm run seed:start-journeys   # 2. seed (once)
+cd TrackMe-backend && npm run seed:wp && npm run seed:start-journeys   # 2. seed (once) — see step 4
 cd TrackMe-WebAdmin && npm run dev                           # 3. webadmin
 cd TrackMe-UserApp && npx expo start --web --port 8081       # 4. userapp
 cd TrackMe-backend && npm run simulate                       # 5. moving buses

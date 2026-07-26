@@ -2,10 +2,39 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
-const User = require('../models/User');
-const { findAccountByEmail, findAccountById, isEmailRegistered, modelForRole } = require('../utils/accountRegistry');
+const { findAccountById, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
+const {
+  findIdentityByEmail,
+  findProfilesForIdentity,
+  resolveProfileForAudience,
+  hasSuperAdminProfile,
+  attachProfile,
+  createIdentityWithProfile,
+  selectRoleForAudience,
+  VALID_AUDIENCES
+} = require('../utils/identityRegistry');
+const { sendPasswordResetOtpEmail } = require('../utils/passwordReset');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// --- Identity rollout flags (see docs/modules/AUTH.md) ---
+//
+// While ALLOW_SHARED_IDENTITY is off, an email may still only hold one role: the
+// behaviour is bit-for-bit what it was before the identity model landed. Turn it on
+// only after every app has shipped its role gate, otherwise an old rider-app build
+// (which sends no `audience`) could be handed a driver session for someone who is
+// both — the legacy fallback prefers the higher-privilege role.
+const ALLOW_SHARED_IDENTITY = process.env.ALLOW_SHARED_IDENTITY === 'true';
+// Once every client sends an `audience`, flip this to stop honouring the legacy
+// first-match fallback at all.
+const AUTH_REQUIRE_AUDIENCE = process.env.AUTH_REQUIRE_AUDIENCE === 'true';
+
+// Which app is asking. Absent (old build) ⇒ null ⇒ legacy first-match precedence.
+const readAudience = (req) => {
+  const raw = String(req.body?.audience || '').trim().toLowerCase();
+  if (!raw) return null;
+  return VALID_AUDIENCES.includes(raw) ? raw : undefined; // undefined = invalid
+};
 
 const accessTokenExpiresIn = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
 const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '7d';
@@ -84,64 +113,6 @@ const sendVerificationEmail = async (to, otp) => {
   return true;
 };
 
-const sendPasswordResetOtpEmail = async (to, otp) => {
-  if (!process.env.RESEND_API_KEY) return false;
-
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const from = process.env.RESEND_FROM || 'onboarding@resend.dev';
-
-  const { data, error } = await resend.emails.send({
-    from,
-    to,
-    subject: 'Reset Your Password - TrackMe',
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-          body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 500px; margin: 0 auto; padding: 20px; }
-          .header { margin-bottom: 30px; }
-          .code-box { background: #f5f5f5; padding: 15px; border-left: 3px solid #333; margin: 20px 0; }
-          .code { font-size: 24px; font-weight: bold; letter-spacing: 2px; font-family: monospace; }
-          .footer { color: #666; font-size: 12px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <p>We received a request to reset your TrackMe password.</p>
-          </div>
-          
-          <p>Use this code to reset your password (valid for 10 minutes):</p>
-          
-          <div class="code-box">
-            <div class="code">${otp}</div>
-          </div>
-          
-          <p><strong>Or copy and paste this code in the password reset form.</strong></p>
-          
-          <div class="footer">
-            <p>Did not request this? You can safely ignore this email.</p>
-            <p>TrackMe © 2026</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `
-  });
-
-  if (error) {
-    console.error('[Resend] sendPasswordResetOtpEmail error:', JSON.stringify(error));
-    return false;
-  }
-
-  console.log('[Resend] sendPasswordResetOtpEmail sent, id:', data?.id);
-  return true;
-};
-
 const issueTokensForUser = async (user, role) => {
   const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access' }, process.env.JWT_SECRET, {
     expiresIn: accessTokenExpiresIn
@@ -166,15 +137,39 @@ const issueTokensForUser = async (user, role) => {
   };
 };
 
-const userPayload = (user, role) => ({
+// `identity` is optional so the two profile-only flows (refresh, logout) can keep
+// calling this without a second lookup. When present it is the source of truth for
+// `isEmailVerified`, which now belongs to the person rather than to one of their roles.
+const userPayload = (user, role, identity = null) => ({
   _id: user._id,
   name: user.name,
-  email: user.email,
+  email: identity?.email || user.email,
   phoneNumber: user.phoneNumber,
   avatarUrl: user.avatarUrl || '',
   role,
-  isEmailVerified: user.isEmailVerified
+  isEmailVerified: identity ? identity.isEmailVerified : user.isEmailVerified
 });
+
+// Email verification is only enforced for riders. Every other role is created by an
+// admin (a manager provisioning a driver, a super-admin adding a manager), which
+// vouches for the address. Enforcing it for them would also mean that attaching a
+// driver profile to an unverified rider identity had to silently mark that rider
+// verified — which would be a real hole.
+const requiresEmailVerification = (role) => role === 'user';
+
+// Clear the refresh token on EVERY profile this person holds. Used when the password
+// changes: the password is now identity-wide, so leaving another app's session alive
+// after a reset would defeat the point of the reset.
+const revokeAllSessions = async (identityId) => {
+  await Promise.all(
+    ACCOUNTS.map(({ model }) =>
+      model.updateMany(
+        { identityId },
+        { $set: { 'refreshToken.tokenHash': null, 'refreshToken.expiresAt': null } }
+      )
+    )
+  );
+};
 
 const PHONE_NUMBER_REGEX = /^[0-9+()\-\s]{7,20}$/;
 
@@ -197,28 +192,81 @@ exports.register = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const userExists = await isEmailRegistered(normalizedEmail);
-    if (userExists) {
-      return res.status(400).json({
+    const derivedName = (name && name.trim()) || normalizedEmail.split('@')[0];
+    const existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+
+    if (existingIdentity) {
+      const passwordMatches = await existingIdentity.comparePassword(password);
+      const profiles = await findProfilesForIdentity(existingIdentity._id);
+      const roles = profiles.map((p) => p.role);
+      const riderProfile = profiles.find((p) => p.role === 'user');
+
+      // A super-admin login never takes on another role, and never advertises that it
+      // exists by offering a sign-in shortcut.
+      if (roles.includes('super-admin')) {
+        return res.status(409).json({
+          success: false,
+          code: 'EMAIL_IN_USE',
+          canSignIn: false,
+          message: 'Email already registered'
+        });
+      }
+
+      // Already a rider — nothing to create. Offer the shortcut only when they proved
+      // they know the password, so this never confirms a password to a stranger.
+      if (riderProfile) {
+        return res.status(409).json({
+          success: false,
+          code: 'EMAIL_IN_USE',
+          canSignIn: passwordMatches,
+          message: passwordMatches ? 'Account already registered' : 'Email already registered'
+        });
+      }
+
+      // This person exists (as a driver or a manager) but has no rider profile. With
+      // the correct password they have proved the login is theirs, so give them the
+      // passenger side of the app — this is the "I drive, and I also want to ride" path.
+      if (passwordMatches && ALLOW_SHARED_IDENTITY) {
+        const { doc: newRider } = await attachProfile({
+          identityId: existingIdentity._id,
+          role: 'user',
+          fields: { name: derivedName }
+        });
+
+        const tokens = await issueTokensForUser(newRider, 'user');
+        return res.status(200).json({
+          success: true,
+          message: 'Passenger access added to your existing TrackMe account',
+          attachedToExistingIdentity: true,
+          ...tokens,
+          user: userPayload(newRider, 'user', existingIdentity)
+        });
+      }
+
+      return res.status(409).json({
         success: false,
+        code: 'EMAIL_IN_USE',
+        canSignIn: false,
         message: 'Email already registered'
       });
     }
 
-    const derivedName = (name && name.trim()) || normalizedEmail.split('@')[0];
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpHash = hashToken(otp);
 
-    const user = await User.create({
-      name: derivedName,
+    const { identity, doc: user } = await createIdentityWithProfile({
       email: normalizedEmail,
       password,
       isEmailVerified: false,
-      emailVerification: {
-        otpHash,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
-      }
+      role: 'user',
+      fields: { name: derivedName }
     });
+
+    identity.emailVerification = {
+      otpHash,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    };
+    await identity.save();
 
     let emailSent = false;
     try {
@@ -234,7 +282,7 @@ exports.register = async (req, res, next) => {
         : 'Registration successful. Email service unavailable, use development OTP.',
       requiresVerification: true,
       email: normalizedEmail,
-      user: userPayload(user, 'user')
+      user: userPayload(user, 'user', identity)
     };
 
     if (!emailSent && process.env.NODE_ENV !== 'production') {
@@ -254,55 +302,67 @@ exports.verifyEmail = async (req, res, next) => {
     const { email, otp } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const account = await findAccountByEmail(normalizedEmail, {
+    const identity = await findIdentityByEmail(normalizedEmail, {
       select: '+emailVerification.otpHash +emailVerification.expiresAt'
     });
-    if (!account) {
+    if (!identity) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
-    const { doc: user, role } = account;
 
-    if (user.isEmailVerified) {
+    if (identity.isEmailVerified) {
       return res.status(400).json({
         success: false,
         message: 'Email already verified'
       });
     }
 
-    if (!user.emailVerification?.otpHash || !user.emailVerification?.expiresAt) {
+    if (!identity.emailVerification?.otpHash || !identity.emailVerification?.expiresAt) {
       return res.status(400).json({
         success: false,
         message: 'Verification OTP is not available. Please register again.'
       });
     }
 
-    if (user.emailVerification.expiresAt.getTime() < Date.now()) {
+    if (identity.emailVerification.expiresAt.getTime() < Date.now()) {
       return res.status(400).json({
         success: false,
         message: 'OTP expired. Please register again.'
       });
     }
 
-    if (hashToken(otp) !== user.emailVerification.otpHash) {
+    if (hashToken(otp) !== identity.emailVerification.otpHash) {
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP code'
       });
     }
 
-    user.isEmailVerified = true;
-    user.emailVerification = { otpHash: null, expiresAt: null };
+    // Verification is a property of the person, so it covers every role they hold.
+    identity.isEmailVerified = true;
+    identity.emailVerification = { otpHash: null, expiresAt: null };
+    await identity.save();
 
-    const tokens = await issueTokensForUser(user, role);
+    // Only riders ever reach this endpoint (every other role is admin-provisioned and
+    // pre-verified), but resolve by audience anyway rather than assuming.
+    const profile = await resolveProfileForAudience(identity._id, readAudience(req) || 'user');
+    if (!profile) {
+      return res.status(403).json({
+        success: false,
+        code: 'NO_PROFILE_FOR_APP',
+        message: 'This login has no account for this app'
+      });
+    }
+
+    const tokens = await issueTokensForUser(profile.doc, profile.role);
 
     res.status(200).json({
       success: true,
       message: 'Email verified successfully',
       ...tokens,
-      user: userPayload(user, role)
+      user: userPayload(profile.doc, profile.role, identity)
     });
   } catch (error) {
     next(error);
@@ -323,31 +383,32 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const account = await findAccountByEmail(normalizedEmail, { select: '+password' });
+    const audience = readAudience(req);
+    if (audience === undefined) {
+      return res.status(400).json({ success: false, message: 'Unknown audience' });
+    }
+    if (AUTH_REQUIRE_AUDIENCE && !audience) {
+      return res.status(400).json({ success: false, message: 'audience is required' });
+    }
 
-    if (!account) {
+    const identity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+
+    if (!identity) {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
-    const { doc: user, role } = account;
 
-    if (user.isActive === false) {
-      return res.status(403).json({
-        success: false,
-        message: 'Account has been deactivated. Contact super admin.'
-      });
-    }
-
-    if (!user.password) {
+    if (!identity.password) {
       return res.status(400).json({
         success: false,
         message: 'This account uses Google Sign-In. Please continue with Google.'
       });
     }
 
-    const isMatch = await user.comparePassword(password);
+    // Password is checked against the Identity — once, for whichever app is asking.
+    const isMatch = await identity.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({
         success: false,
@@ -355,9 +416,29 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const canBypassVerification = ['admin', 'super-admin'].includes(role);
+    const profile = await resolveProfileForAudience(identity._id, audience);
+    if (!profile) {
+      // Deliberately distinct from a bad password: this login is valid, it just has no
+      // profile for this app ("you have no driver account"). Only reachable after the
+      // password check, so it leaks nothing to someone who is guessing.
+      return res.status(403).json({
+        success: false,
+        code: 'NO_PROFILE_FOR_APP',
+        message: 'This login has no account for this app'
+      });
+    }
+    const { doc: user, role } = profile;
 
-    if (!user.isEmailVerified && !canBypassVerification) {
+    // Per-role deactivation: switching off someone's driver profile must leave their
+    // rider login working, so this is checked on the profile, not the identity.
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Account has been deactivated. Contact super admin.'
+      });
+    }
+
+    if (!identity.isEmailVerified && requiresEmailVerification(role)) {
       return res.status(403).json({
         success: false,
         message: 'Please verify your email before logging in',
@@ -366,13 +447,20 @@ exports.login = async (req, res, next) => {
       });
     }
 
+    // The person has now used this login themselves, so it stops being an
+    // admin-provisioned placeholder and admins can no longer overwrite its password.
+    if (identity.isProvisional) {
+      identity.isProvisional = false;
+      await identity.save();
+    }
+
     const tokens = await issueTokensForUser(user, role);
 
     res.status(200).json({
       success: true,
       message: 'Login successful',
       ...tokens,
-      user: userPayload(user, role)
+      user: userPayload(user, role, identity)
     });
   } catch (error) {
     next(error);
@@ -407,50 +495,87 @@ exports.googleSignIn = async (req, res, next) => {
       });
     }
 
-    let user = await User.findOne({ email });
+    const audience = readAudience(req);
+    if (audience === undefined) {
+      return res.status(400).json({ success: false, message: 'Unknown audience' });
+    }
+    const derivedName = payload.name || email.split('@')[0];
 
-    if (!user) {
-      const takenByOtherAccountType = await isEmailRegistered(email);
-      if (takenByOtherAccountType) {
-        return res.status(409).json({
+    let identity = await findIdentityByEmail(email);
+    let profile;
+
+    if (!identity) {
+      // Google gives us a verified address, so the new identity starts verified.
+      const created = await createIdentityWithProfile({
+        email,
+        googleId: payload.sub,
+        isEmailVerified: true,
+        role: 'user',
+        fields: { name: derivedName, googleId: payload.sub }
+      });
+      identity = created.identity;
+      profile = { doc: created.doc, role: created.role };
+    } else {
+      // Never let Google sign-in reach a super-admin login.
+      if (await hasSuperAdminProfile(identity._id)) {
+        return res.status(403).json({
           success: false,
-          message: 'This email is already registered to a different account type.'
+          code: 'SUPER_ADMIN_ISOLATED',
+          message: 'This email belongs to a super-admin account. Sign in with a password.'
         });
       }
 
-      user = await User.create({
-        name: payload.name || email.split('@')[0],
-        email,
-        googleId: payload.sub,
-        isEmailVerified: true
-      });
-    } else {
-      if (!user.googleId) {
-        user.googleId = payload.sub;
+      if (!identity.googleId) identity.googleId = payload.sub;
+      if (!identity.isEmailVerified) identity.isEmailVerified = true;
+      await identity.save();
+
+      profile = await resolveProfileForAudience(identity._id, audience || 'user');
+
+      // Only the passenger app may create a profile on the fly. A driver or manager
+      // profile is always provisioned by an admin, so Google sign-in must not mint one.
+      if (!profile) {
+        const wantsRider = !audience || selectRoleForAudience(['user'], audience) === 'user';
+        if (!wantsRider || !ALLOW_SHARED_IDENTITY) {
+          return res.status(403).json({
+            success: false,
+            code: 'NO_PROFILE_FOR_APP',
+            message: 'This login has no account for this app'
+          });
+        }
+
+        const attached = await attachProfile({
+          identityId: identity._id,
+          role: 'user',
+          fields: { name: derivedName, googleId: payload.sub }
+        });
+        profile = { doc: attached.doc, role: attached.role };
       }
-      if (!user.isEmailVerified) {
-        user.isEmailVerified = true;
+
+      if (!profile.doc.name && derivedName) {
+        profile.doc.name = derivedName;
+        await profile.doc.save();
       }
-      if (!user.name && payload.name) {
-        user.name = payload.name;
-      }
-      await user.save();
     }
 
-    if (user.isActive === false) {
+    if (profile.doc.isActive === false) {
       return res.status(403).json({
         success: false,
         message: 'Account has been deactivated. Contact super admin.'
       });
     }
 
-    const tokens = await issueTokensForUser(user, 'user');
+    if (identity.isProvisional) {
+      identity.isProvisional = false;
+      await identity.save();
+    }
+
+    const tokens = await issueTokensForUser(profile.doc, profile.role);
 
     res.status(200).json({
       success: true,
       message: 'Google sign-in successful',
       ...tokens,
-      user: userPayload(user, 'user')
+      user: userPayload(profile.doc, profile.role, identity)
     });
   } catch (error) {
     next(error);
@@ -546,7 +671,7 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const account = await findAccountByEmail(normalizedEmail, {
+    const identity = await findIdentityByEmail(normalizedEmail, {
       select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
 
@@ -555,20 +680,26 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       message: 'If this email is registered, an OTP has been sent.'
     };
 
-    if (!account || account.doc.isActive === false) {
+    if (!identity) {
       return res.status(200).json(genericSuccess);
     }
-    const { doc: user } = account;
+
+    // The password is identity-wide, so a reset is only pointless if the person has no
+    // usable role left at all — one deactivated role must not block it.
+    const profiles = await findProfilesForIdentity(identity._id);
+    if (!profiles.some((p) => p.doc.isActive !== false)) {
+      return res.status(200).json(genericSuccess);
+    }
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    user.passwordReset = {
+    identity.passwordReset = {
       otpHash: hashToken(otp),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       resetTokenHash: null,
       resetTokenExpiresAt: null
     };
 
-    await user.save();
+    await identity.save();
 
     let emailSent = false;
     try {
@@ -601,26 +732,25 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const otp = String(req.body.otp || '').trim();
 
-    const account = await findAccountByEmail(normalizedEmail, {
+    const identity = await findIdentityByEmail(normalizedEmail, {
       select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
-    const user = account?.doc;
 
-    if (!user || !user.passwordReset?.otpHash || !user.passwordReset?.expiresAt) {
+    if (!identity || !identity.passwordReset?.otpHash || !identity.passwordReset?.expiresAt) {
       return res.status(400).json({
         success: false,
         message: 'OTP is invalid or not requested.'
       });
     }
 
-    if (user.passwordReset.expiresAt.getTime() < Date.now()) {
+    if (identity.passwordReset.expiresAt.getTime() < Date.now()) {
       return res.status(400).json({
         success: false,
         message: 'OTP expired. Please request a new one.'
       });
     }
 
-    if (hashToken(otp) !== user.passwordReset.otpHash) {
+    if (hashToken(otp) !== identity.passwordReset.otpHash) {
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP code'
@@ -628,14 +758,14 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     }
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    user.passwordReset = {
+    identity.passwordReset = {
       otpHash: null,
       expiresAt: null,
       resetTokenHash: hashToken(resetToken),
       resetTokenExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     };
 
-    await user.save();
+    await identity.save();
 
     return res.status(200).json({
       success: true,
@@ -655,45 +785,47 @@ exports.resetPasswordWithToken = async (req, res, next) => {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
     const { resetToken, password } = req.body;
 
-    const account = await findAccountByEmail(normalizedEmail, {
-      select: '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt +refreshToken.tokenHash +refreshToken.expiresAt'
+    const identity = await findIdentityByEmail(normalizedEmail, {
+      select: '+password +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
-    const user = account?.doc;
 
-    if (!user || !user.passwordReset?.resetTokenHash || !user.passwordReset?.resetTokenExpiresAt) {
+    if (!identity || !identity.passwordReset?.resetTokenHash || !identity.passwordReset?.resetTokenExpiresAt) {
       return res.status(400).json({
         success: false,
         message: 'Password reset session is invalid or expired.'
       });
     }
 
-    if (user.passwordReset.resetTokenExpiresAt.getTime() < Date.now()) {
+    if (identity.passwordReset.resetTokenExpiresAt.getTime() < Date.now()) {
       return res.status(400).json({
         success: false,
         message: 'Password reset session expired. Please verify OTP again.'
       });
     }
 
-    if (hashToken(String(resetToken)) !== user.passwordReset.resetTokenHash) {
+    if (hashToken(String(resetToken)) !== identity.passwordReset.resetTokenHash) {
       return res.status(400).json({
         success: false,
         message: 'Invalid password reset session.'
       });
     }
 
-    user.password = password;
-    user.passwordReset = {
+    identity.password = password;
+    identity.passwordReset = {
       otpHash: null,
       expiresAt: null,
       resetTokenHash: null,
       resetTokenExpiresAt: null
     };
-    user.refreshToken = {
-      tokenHash: null,
-      expiresAt: null
-    };
+    // Choosing their own password makes this login theirs: admins can no longer
+    // overwrite it (see the isProvisional gate on the admin reset endpoints).
+    identity.isProvisional = false;
 
-    await user.save();
+    await identity.save();
+
+    // The new password unlocks every role this person holds, so every existing session
+    // must die — not just the one whose app happened to run the reset.
+    await revokeAllSessions(identity._id);
 
     return res.status(200).json({
       success: true,
@@ -830,21 +962,20 @@ exports.resendVerificationOtp = async (req, res, next) => {
   try {
     const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
 
-    const account = await findAccountByEmail(normalizedEmail, {
+    const identity = await findIdentityByEmail(normalizedEmail, {
       select: '+emailVerification.otpHash +emailVerification.expiresAt'
     });
-    const user = account?.doc;
 
-    if (!user || user.isEmailVerified) {
+    if (!identity || identity.isEmailVerified) {
       return res.status(200).json({ success: true, message: 'If unverified, a new code has been sent.' });
     }
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    user.emailVerification = {
+    identity.emailVerification = {
       otpHash: hashToken(otp),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000)
     };
-    await user.save();
+    await identity.save();
 
     let emailSent = false;
     try {
