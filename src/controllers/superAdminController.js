@@ -75,11 +75,11 @@ exports.createManager = async (req, res, next) => {
     const { name, email, serviceType = 'PUBLIC', organizationId = null } = req.body;
     const normalizedEmail = email.toLowerCase().trim();
 
-    const existingManager = await isEmailRegistered(normalizedEmail);
-    if (existingManager) {
+    const emailTaken = await isEmailRegistered(normalizedEmail);
+    if (emailTaken) {
       return res.status(409).json({
         success: false,
-        message: 'A manager with this email already exists'
+        message: 'This email is already registered to a different account type.'
       });
     }
 
