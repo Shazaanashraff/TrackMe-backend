@@ -2,13 +2,13 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const Manager = require('../src/models/Manager');
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const LiveLocation = require('../src/models/LiveLocation');
 
 dotenv.config();
 
 const MANAGER_EMAIL = 'testadmin@mail.com';
-const ACTIVE_BUSES_PER_ROUTE = 2;
+const ACTIVE_VEHICLES_PER_ROUTE = 2;
 
 const toRad = (degrees) => (degrees * Math.PI) / 180;
 const toDeg = (radians) => (radians * 180) / Math.PI;
@@ -52,14 +52,14 @@ const getRouteStartPoint = (route) => {
   return null;
 };
 
-const startTwoBusesPerRoute = async () => {
+const startTwoVehiclesPerRoute = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bus-tracking');
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/vehicle-tracking');
     console.log('Connected to MongoDB');
 
     const manager = await Manager.findOne({ email: MANAGER_EMAIL.toLowerCase().trim() });
     if (!manager) {
-      console.log(`Manager ${MANAGER_EMAIL} not found. Run seed-manager-buses-per-route first.`);
+      console.log(`Manager ${MANAGER_EMAIL} not found. Run seed-manager-vehicles-per-route first.`);
       await mongoose.connection.close();
       return;
     }
@@ -71,62 +71,62 @@ const startTwoBusesPerRoute = async () => {
     let activatedTotal = 0;
 
     for (const route of routes) {
-      const managerBuses = await Bus.find({
+      const managerVehicles = await Vehicle.find({
         routeId: route.routeId,
         managerId: manager._id,
         isDeleted: false
       })
-        .sort({ busId: 1 })
+        .sort({ vehicleId: 1 })
         .lean();
 
-      const allRouteBuses = await Bus.find({
+      const allRouteVehicles = await Vehicle.find({
         routeId: route.routeId,
         isDeleted: false
       })
-        .sort({ busId: 1 })
+        .sort({ vehicleId: 1 })
         .lean();
 
-      if (!managerBuses.length) {
-        console.log(`Route ${route.routeId}: no manager-assigned buses found`);
+      if (!managerVehicles.length) {
+        console.log(`Route ${route.routeId}: no manager-assigned vehicles found`);
         continue;
       }
 
-      const busesToActivate = managerBuses.slice(0, ACTIVE_BUSES_PER_ROUTE);
-      const activeBusIds = busesToActivate.map((bus) => bus.busId);
+      const vehiclesToActivate = managerVehicles.slice(0, ACTIVE_VEHICLES_PER_ROUTE);
+      const activeVehicleIds = vehiclesToActivate.map((vehicle) => vehicle.vehicleId);
 
-      await Bus.updateMany(
+      await Vehicle.updateMany(
         {
           routeId: route.routeId,
           isDeleted: false,
-          busId: { $in: activeBusIds }
+          vehicleId: { $in: activeVehicleIds }
         },
         { $set: { isActive: true } }
       );
 
-      await Bus.updateMany(
+      await Vehicle.updateMany(
         {
           routeId: route.routeId,
           isDeleted: false,
-          busId: { $nin: activeBusIds }
+          vehicleId: { $nin: activeVehicleIds }
         },
         { $set: { isActive: false } }
       );
 
-      const inactiveRouteBusIds = allRouteBuses
-        .map((bus) => bus.busId)
-        .filter((busId) => !activeBusIds.includes(busId));
+      const inactiveRouteVehicleIds = allRouteVehicles
+        .map((vehicle) => vehicle.vehicleId)
+        .filter((vehicleId) => !activeVehicleIds.includes(vehicleId));
 
-      if (inactiveRouteBusIds.length > 0) {
+      if (inactiveRouteVehicleIds.length > 0) {
         await LiveLocation.deleteMany({
           routeId: route.routeId,
-          busId: { $in: inactiveRouteBusIds }
+          vehicleId: { $in: inactiveRouteVehicleIds }
         });
       }
 
       const routeStart = getRouteStartPoint(route);
       const locationDocs = [];
 
-      busesToActivate.forEach((bus, index) => {
+      vehiclesToActivate.forEach((vehicle, index) => {
         let lat = routeStart?.lat;
         let lng = routeStart?.lng;
 
@@ -140,7 +140,7 @@ const startTwoBusesPerRoute = async () => {
         }
 
         locationDocs.push({
-          busId: bus.busId,
+          vehicleId: vehicle.vehicleId,
           routeId: route.routeId,
           lat,
           lng,
@@ -154,17 +154,17 @@ const startTwoBusesPerRoute = async () => {
         await LiveLocation.insertMany(locationDocs);
       }
 
-      activatedTotal += activeBusIds.length;
-      console.log(`Route ${route.routeId}: started ${activeBusIds.length} buses (${activeBusIds.join(', ')})`);
+      activatedTotal += activeVehicleIds.length;
+      console.log(`Route ${route.routeId}: started ${activeVehicleIds.length} vehicles (${activeVehicleIds.join(', ')})`);
     }
 
-    console.log(`Completed journey start simulation for ${activatedTotal} buses.`);
+    console.log(`Completed journey start simulation for ${activatedTotal} vehicles.`);
     await mongoose.connection.close();
     console.log('Database connection closed');
   } catch (error) {
-    console.error('Error starting journey for buses:', error.message);
+    console.error('Error starting journey for vehicles:', error.message);
     process.exit(1);
   }
 };
 
-startTwoBusesPerRoute();
+startTwoVehiclesPerRoute();

@@ -377,7 +377,7 @@ describe('Revocation', () => {
   });
 });
 
-describe('Enforcement matrix — listing, detail, bus, ETA', () => {
+describe('Enforcement matrix — listing, detail, vehicle, ETA', () => {
   it('getAllRoutes includes an unhidden PRIVATE route as a locked stub with no stops', async () => {
     const route = await createOwnedRoute();
     await request(app)
@@ -416,20 +416,20 @@ describe('Enforcement matrix — listing, detail, bus, ETA', () => {
     expect(res.status).toBe(404);
   });
 
-  it('bus/route/:routeId returns empty for a non-member, populated for an ACTIVE member', async () => {
-    const Bus = require('../../src/models/Bus');
+  it('vehicle/route/:routeId returns empty for a non-member, populated for an ACTIVE member', async () => {
+    const Vehicle = require('../../src/models/Vehicle');
     const route = await createOwnedRoute();
     await request(app)
       .patch(`/api/manager/routes/${route.routeId}/privacy`)
       .set('Authorization', `Bearer ${managerToken}`)
       .send({ isPrivate: true });
-    await Bus.create({
-      busId: `BUS-${route.routeId}`, busName: 'Shuttle', numberPlate: `PLT-${route.routeId}`,
+    await Vehicle.create({
+      vehicleId: `VEHICLE-${route.routeId}`, vehicleName: 'Shuttle', numberPlate: `PLT-${route.routeId}`,
       registrationNumber: `REG-${route.routeId}`, routeId: route.routeId, seatCapacity: 20,
       driverId: managerId, managerId
     });
 
-    const nonMemberRes = await request(app).get(`/api/bus/route/${route.routeId}`);
+    const nonMemberRes = await request(app).get(`/api/vehicle/route/${route.routeId}`);
     expect(nonMemberRes.status).toBe(200);
     expect(nonMemberRes.body.data.length).toBe(0);
 
@@ -442,13 +442,13 @@ describe('Enforcement matrix — listing, detail, bus, ETA', () => {
       .send({ routeId: route.routeId, code: reveal.body.data.code });
 
     const memberRes = await request(app)
-      .get(`/api/bus/route/${route.routeId}`)
+      .get(`/api/vehicle/route/${route.routeId}`)
       .set('Authorization', `Bearer ${riderToken}`);
     expect(memberRes.status).toBe(200);
     expect(memberRes.body.data.length).toBe(1);
   });
 
-  it('eta/route/:routeId/all-buses is 403 for a non-member and 200 for an ACTIVE member', async () => {
+  it('eta/route/:routeId/all-vehicles is 403 for a non-member and 200 for an ACTIVE member', async () => {
     const route = await createOwnedRoute();
     await request(app)
       .patch(`/api/manager/routes/${route.routeId}/privacy`)
@@ -456,7 +456,7 @@ describe('Enforcement matrix — listing, detail, bus, ETA', () => {
       .send({ isPrivate: true });
 
     const forbidden = await request(app)
-      .get(`/api/eta/route/${route.routeId}/all-buses`)
+      .get(`/api/eta/route/${route.routeId}/all-vehicles`)
       .set('Authorization', `Bearer ${otherRiderToken}`);
     expect(forbidden.status).toBe(403);
 
@@ -469,7 +469,7 @@ describe('Enforcement matrix — listing, detail, bus, ETA', () => {
       .send({ routeId: route.routeId, code: reveal.body.data.code });
 
     const allowed = await request(app)
-      .get(`/api/eta/route/${route.routeId}/all-buses`)
+      .get(`/api/eta/route/${route.routeId}/all-vehicles`)
       .set('Authorization', `Bearer ${riderToken}`);
     expect(allowed.status).toBe(200);
   });

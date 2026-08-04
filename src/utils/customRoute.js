@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const Route = require('../models/Route');
 
 // Auto-provisions a private, unnamed Route for a custom-route driver so
-// Bus.routeId (required) has somewhere to point before the driver has
+// Vehicle.routeId (required) has somewhere to point before the driver has
 // recorded anything. The manager names it later via PATCH .../name, which
 // flips status to ACTIVE. Race-safe: retries on routeId collision since
 // Route.routeId is uniquely indexed.

@@ -175,7 +175,7 @@ const userPayload = (user, role) => ({
   avatarUrl: user.avatarUrl || '',
   role,
   isEmailVerified: user.isEmailVerified,
-  // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Buses").
+  // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Vehicles").
   // Always present for managers; harmless (PUBLIC/null) for other roles.
   serviceType: user.serviceType || 'PUBLIC',
   organization:

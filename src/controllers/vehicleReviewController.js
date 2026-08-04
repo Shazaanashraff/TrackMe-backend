@@ -1,18 +1,18 @@
-const BusReview = require('../models/BusReview');
-const Bus = require('../models/Bus');
+const VehicleReview = require('../models/VehicleReview');
+const Vehicle = require('../models/Vehicle');
 const mongoose = require('mongoose');
 
 exports.createReview = async (req, res, next) => {
   try {
-    const { busId, rating, title, comment } = req.body;
+    const { vehicleId, rating, title, comment } = req.body;
 
-    const bus = await Bus.findById(busId);
-    if (!bus || bus.isDeleted) {
-      return res.status(404).json({ success: false, message: 'Bus not found' });
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle || vehicle.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found' });
     }
 
-    const review = await BusReview.create({
-      busId,
+    const review = await VehicleReview.create({
+      vehicleId,
       userId: req.user._id,
       rating,
       title,
@@ -29,20 +29,20 @@ exports.createReview = async (req, res, next) => {
   }
 };
 
-exports.getReviewsByBus = async (req, res, next) => {
+exports.getReviewsByVehicle = async (req, res, next) => {
   try {
-    const { busId } = req.params;
-    const busObjectId = new mongoose.Types.ObjectId(busId);
+    const { vehicleId } = req.params;
+    const vehicleObjectId = new mongoose.Types.ObjectId(vehicleId);
 
-    const reviews = await BusReview.find({ busId, isDeleted: false })
+    const reviews = await VehicleReview.find({ vehicleId, isDeleted: false })
       .populate('userId', 'name')
       .sort({ createdAt: -1 })
       .lean();
 
-    const summary = await BusReview.aggregate([
+    const summary = await VehicleReview.aggregate([
       {
         $match: {
-          busId: busObjectId,
+          vehicleId: vehicleObjectId,
           isDeleted: false
         }
       },
@@ -73,7 +73,7 @@ exports.updateReview = async (req, res, next) => {
     const { reviewId } = req.params;
     const { rating, title, comment } = req.body;
 
-    const review = await BusReview.findOne({ _id: reviewId, isDeleted: false });
+    const review = await VehicleReview.findOne({ _id: reviewId, isDeleted: false });
     if (!review) {
       return res.status(404).json({ success: false, message: 'Review not found' });
     }
@@ -104,7 +104,7 @@ exports.deleteReview = async (req, res, next) => {
   try {
     const { reviewId } = req.params;
 
-    const review = await BusReview.findOne({ _id: reviewId, isDeleted: false });
+    const review = await VehicleReview.findOne({ _id: reviewId, isDeleted: false });
     if (!review) {
       return res.status(404).json({ success: false, message: 'Review not found' });
     }

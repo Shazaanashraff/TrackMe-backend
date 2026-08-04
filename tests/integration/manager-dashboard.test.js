@@ -2,13 +2,13 @@ const request = require('supertest');
 const app = require('../../src/server');
 const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
-const Bus = require('../../src/models/Bus');
+const Vehicle = require('../../src/models/Vehicle');
 const Organization = require('../../src/models/Organization');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // The manager dashboard is service-aware: it returns the manager's serviceType,
 // their organization name (private services), and a driverCount so the WebAdmin
-// can show a fleet/driver view for school/office managers instead of buses/bookings.
+// can show a fleet/driver view for school/office managers instead of vehicles/bookings.
 
 let managerToken;
 let manager;
@@ -26,23 +26,23 @@ beforeAll(async () => {
   const d1 = await Driver.create({ name: 'D1', email: `d1-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
   const d2 = await Driver.create({ name: 'D2', email: `d2-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
 
-  const baseBus = (n, driverId) => ({
-    busId: `SVH-${Date.now()}-${n}`,
-    busName: `Van ${n}`,
+  const baseVehicle = (n, driverId) => ({
+    vehicleId: `SVH-${Date.now()}-${n}`,
+    vehicleName: `Van ${n}`,
     registrationNumber: `REG-${Date.now()}-${n}`,
     numberPlate: `NP-${Date.now()}-${n}`,
     routeId: `R-${n}`,
     managerId: manager._id,
     driverId,
     seatCapacity: 20,
-    busType: 'NON-AC',
+    vehicleType: 'NON-AC',
     serviceType: 'SCHOOL',
     isActive: true,
     isDeleted: false
   });
   // Two active vehicles with two distinct drivers.
-  await Bus.create(baseBus(1, d1._id));
-  await Bus.create(baseBus(2, d2._id));
+  await Vehicle.create(baseVehicle(1, d1._id));
+  await Vehicle.create(baseVehicle(2, d2._id));
 });
 
 afterAll(async () => {
@@ -67,7 +67,7 @@ describe('Manager dashboard (service-aware)', () => {
     expect(res.body.data.serviceType).toBe('SCHOOL');
     expect(res.body.data.organizationName).toBe('Royal College');
     expect(res.body.data.driverCount).toBe(2);
-    expect(res.body.data.fleet.totalBuses).toBe(2);
-    expect(res.body.data.fleet.activeBuses).toBe(2);
+    expect(res.body.data.fleet.totalVehicles).toBe(2);
+    expect(res.body.data.fleet.activeVehicles).toBe(2);
   });
 });

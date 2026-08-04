@@ -10,7 +10,7 @@ const ensureSuperAdminAccount = require('./utils/ensureSuperAdminAccount');
 
 // Route imports
 const authRoutes = require('./routes/authRoutes');
-const busRoutes = require('./routes/busRoutes');
+const vehicleRoutes = require('./routes/vehicleRoutes');
 const routeRoutes = require('./routes/routeRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const etaRoutes = require('./routes/etaRoutes');
@@ -18,7 +18,7 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const driverEarningsRoutes = require('./routes/driverEarningsRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const managerRoutes = require('./routes/managerRoutes');
-const busReviewRoutes = require('./routes/busReviewRoutes');
+const vehicleReviewRoutes = require('./routes/vehicleReviewRoutes');
 const placesRoutes = require('./routes/placesRoutes');
 const transitRoutes = require('./routes/transitRoutes');
 const customRouteRoutes = require('./routes/customRouteRoutes');
@@ -77,7 +77,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/bus', busRoutes);
+app.use('/api/vehicle', vehicleRoutes);
 app.use('/api/routes', routeRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/eta', etaRoutes);
@@ -85,7 +85,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/driver-earnings', driverEarningsRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);
-app.use('/api/bus-reviews', busReviewRoutes);
+app.use('/api/vehicle-reviews', vehicleReviewRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/transit', transitRoutes);
 app.use('/api/driver/custom-routes', customRouteRoutes);

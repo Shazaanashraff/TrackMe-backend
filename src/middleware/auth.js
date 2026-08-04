@@ -36,7 +36,7 @@ const protect = async (req, res, next) => {
 
 // Attaches req.user if a valid Bearer token is present; never blocks the request.
 // Used by endpoints that stay public for PUBLIC routes but need to recognize an
-// authenticated member for PRIVATE routes (e.g. bus/ETA reads).
+// authenticated member for PRIVATE routes (e.g. vehicle/ETA reads).
 const optionalAuth = async (req, res, next) => {
   try {
     let token;

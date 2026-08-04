@@ -4,9 +4,9 @@ const mongoose = require('mongoose');
 // from their assigned custom route beyond threshold, a candidate re-recorded route
 // is snapped and offered to the manager to keep the old route or adopt the new one.
 const routeChangeRequestSchema = new mongoose.Schema({
-  busId: {
+  vehicleId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Bus',
+    ref: 'Vehicle',
     required: true,
     index: true
   },
@@ -54,7 +54,7 @@ const routeChangeRequestSchema = new mongoose.Schema({
   timestamps: true
 });
 
-routeChangeRequestSchema.index({ busId: 1, status: 1, createdAt: -1 });
+routeChangeRequestSchema.index({ vehicleId: 1, status: 1, createdAt: -1 });
 routeChangeRequestSchema.index({ managerId: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model('RouteChangeRequest', routeChangeRequestSchema);

@@ -105,16 +105,16 @@ exports.validateRouteId = [
     .notEmpty().withMessage('Route ID is required')
 ];
 
-// Bus Validation Rules
-exports.validateCreateBus = [
-  body('busId')
+// Vehicle Validation Rules
+exports.validateCreateVehicle = [
+  body('vehicleId')
     .trim()
-    .notEmpty().withMessage('Bus ID is required')
-    .matches(/^[A-Z0-9\-_]+$/).withMessage('Bus ID must contain only alphanumeric characters, hyphens, and underscores'),
-  body('busName')
+    .notEmpty().withMessage('Vehicle ID is required')
+    .matches(/^[A-Z0-9\-_]+$/).withMessage('Vehicle ID must contain only alphanumeric characters, hyphens, and underscores'),
+  body('vehicleName')
     .trim()
-    .notEmpty().withMessage('Bus name is required')
-    .isLength({ min: 2, max: 50 }).withMessage('Bus name must be between 2 and 50 characters'),
+    .notEmpty().withMessage('Vehicle name is required')
+    .isLength({ min: 2, max: 50 }).withMessage('Vehicle name must be between 2 and 50 characters'),
   body('registrationNumber')
     .trim()
     .notEmpty().withMessage('Registration number is required')
@@ -124,9 +124,9 @@ exports.validateCreateBus = [
     .notEmpty().withMessage('Route ID is required'),
   body('seatCapacity')
     .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
-  body('busType')
+  body('vehicleType')
     .optional()
-    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid bus type'),
+    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid vehicle type'),
   body('serviceType')
     .optional()
     .isIn(SERVICE_TYPES).withMessage('Invalid service type'),
@@ -144,17 +144,17 @@ exports.validateCreateBus = [
     .isISO8601().withMessage('Invalid date format')
 ];
 
-exports.validateUpdateBus = [
-  body('busName')
+exports.validateUpdateVehicle = [
+  body('vehicleName')
     .optional()
     .trim()
-    .isLength({ min: 2, max: 50 }).withMessage('Bus name must be between 2 and 50 characters'),
+    .isLength({ min: 2, max: 50 }).withMessage('Vehicle name must be between 2 and 50 characters'),
   body('seatCapacity')
     .optional()
     .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
-  body('busType')
+  body('vehicleType')
     .optional()
-    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid bus type'),
+    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid vehicle type'),
   body('serviceType')
     .optional()
     .isIn(SERVICE_TYPES).withMessage('Invalid service type'),
@@ -175,10 +175,10 @@ exports.validateUpdateBus = [
     .isISO8601().withMessage('Invalid date format')
 ];
 
-exports.validateBusId = [
-  param('busId')
+exports.validateVehicleId = [
+  param('vehicleId')
     .trim()
-    .notEmpty().withMessage('Bus ID is required')
+    .notEmpty().withMessage('Vehicle ID is required')
 ];
 
 // Auth Validation Rules
@@ -359,16 +359,16 @@ exports.validateAccountSetupComplete = [
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
 ];
 
-exports.validateAssignBuses = [
-  body('busIds')
-    .isArray({ min: 1 }).withMessage('busIds must be a non-empty array'),
-  body('busIds.*')
-    .isMongoId().withMessage('Each busId must be a valid Mongo ID')
+exports.validateAssignVehicles = [
+  body('vehicleIds')
+    .isArray({ min: 1 }).withMessage('vehicleIds must be a non-empty array'),
+  body('vehicleIds.*')
+    .isMongoId().withMessage('Each vehicleId must be a valid Mongo ID')
 ];
 
-exports.validateCreateBusReview = [
-  body('busId')
-    .isMongoId().withMessage('Valid busId is required'),
+exports.validateCreateVehicleReview = [
+  body('vehicleId')
+    .isMongoId().withMessage('Valid vehicleId is required'),
   body('rating')
     .isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
   body('title')
@@ -381,7 +381,7 @@ exports.validateCreateBusReview = [
     .isLength({ max: 1200 }).withMessage('Comment cannot exceed 1200 characters')
 ];
 
-exports.validateUpdateBusReview = [
+exports.validateUpdateVehicleReview = [
   body('rating')
     .optional()
     .isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
@@ -400,7 +400,7 @@ exports.validateReviewId = [
     .isMongoId().withMessage('Invalid review id')
 ];
 
-exports.validateBusObjectId = [
-  param('busId')
-    .isMongoId().withMessage('Invalid bus id')
+exports.validateVehicleObjectId = [
+  param('vehicleId')
+    .isMongoId().withMessage('Invalid vehicle id')
 ];

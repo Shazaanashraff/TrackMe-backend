@@ -3,11 +3,11 @@ const app = require('../../src/server');
 const SuperAdmin = require('../../src/models/SuperAdmin');
 const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
-const Bus = require('../../src/models/Bus');
+const Vehicle = require('../../src/models/Vehicle');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // Deleting a manager is irreversible, so the endpoint is gated on the manager
-// already being deactivated — the reversible step always comes first. Buses the
+// already being deactivated — the reversible step always comes first. Vehicles the
 // manager owned are unassigned rather than deleted, so the fleet survives.
 
 let superAdminToken;
@@ -46,17 +46,17 @@ const makeManager = (isActive) =>
     isActive,
   });
 
-// A Bus needs a real driver, and busId/registrationNumber/numberPlate are unique.
-const makeBusFor = async (managerId) => {
+// A Vehicle needs a real driver, and vehicleId/registrationNumber/numberPlate are unique.
+const makeVehicleFor = async (managerId) => {
   const n = seq++;
   const driver = await Driver.create({
     name: `Driver ${n}`,
     email: `del-drv-${Date.now()}-${n}@t.com`,
     password: 'P@ssw0rd!',
   });
-  return Bus.create({
-    busId: `DEL-BUS-${Date.now()}-${n}`,
-    busName: `Deletable Bus ${n}`,
+  return Vehicle.create({
+    vehicleId: `DEL-VEHICLE-${Date.now()}-${n}`,
+    vehicleName: `Deletable Vehicle ${n}`,
     registrationNumber: `DELREG-${Date.now()}-${n}`,
     numberPlate: `DEL-${Date.now()}-${n}`,
     routeId: 'DEL-ROUTE-1',
@@ -93,22 +93,22 @@ describe('DELETE /api/super-admin/managers/:managerId', () => {
     expect(await Manager.findById(manager._id)).toBeNull();
   });
 
-  it('unassigns the deleted manager\'s buses instead of deleting them', async () => {
+  it('unassigns the deleted manager\'s vehicles instead of deleting them', async () => {
     const manager = await makeManager(false);
-    const busA = await makeBusFor(manager._id);
-    const busB = await makeBusFor(manager._id);
+    const vehicleA = await makeVehicleFor(manager._id);
+    const vehicleB = await makeVehicleFor(manager._id);
 
     const res = await request(app)
       .delete(`/api/super-admin/managers/${manager._id}`)
       .set(...auth());
 
     expect(res.status).toBe(200);
-    expect(res.body.data.unassignedBuses).toBe(2);
+    expect(res.body.data.unassignedVehicles).toBe(2);
 
-    // Buses survive, just detached from the deleted manager.
+    // Vehicles survive, just detached from the deleted manager.
     const [afterA, afterB] = await Promise.all([
-      Bus.findById(busA._id),
-      Bus.findById(busB._id),
+      Vehicle.findById(vehicleA._id),
+      Vehicle.findById(vehicleB._id),
     ]);
     expect(afterA).not.toBeNull();
     expect(afterB).not.toBeNull();
@@ -116,26 +116,26 @@ describe('DELETE /api/super-admin/managers/:managerId', () => {
     expect(afterB.managerId).toBeNull();
   });
 
-  it('leaves other managers and their buses untouched', async () => {
+  it('leaves other managers and their vehicles untouched', async () => {
     const doomed = await makeManager(false);
     const bystander = await makeManager(false);
-    const doomedBus = await makeBusFor(doomed._id);
-    const bystanderBus = await makeBusFor(bystander._id);
+    const doomedVehicle = await makeVehicleFor(doomed._id);
+    const bystanderVehicle = await makeVehicleFor(bystander._id);
 
     const res = await request(app)
       .delete(`/api/super-admin/managers/${doomed._id}`)
       .set(...auth());
 
     expect(res.status).toBe(200);
-    expect(res.body.data.unassignedBuses).toBe(1);
+    expect(res.body.data.unassignedVehicles).toBe(1);
 
-    // The bystander must keep both their account and their bus assignment.
+    // The bystander must keep both their account and their vehicle assignment.
     expect(await Manager.findById(bystander._id)).not.toBeNull();
-    const bystanderBusAfter = await Bus.findById(bystanderBus._id);
-    expect(String(bystanderBusAfter.managerId)).toBe(String(bystander._id));
+    const bystanderVehicleAfter = await Vehicle.findById(bystanderVehicle._id);
+    expect(String(bystanderVehicleAfter.managerId)).toBe(String(bystander._id));
 
-    const doomedBusAfter = await Bus.findById(doomedBus._id);
-    expect(doomedBusAfter.managerId).toBeNull();
+    const doomedVehicleAfter = await Vehicle.findById(doomedVehicle._id);
+    expect(doomedVehicleAfter.managerId).toBeNull();
   });
 
   it('returns 404 for a manager that does not exist', async () => {

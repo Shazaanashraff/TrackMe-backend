@@ -2,16 +2,16 @@ const mongoose = require('mongoose');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
-const busSchema = new mongoose.Schema({
-  busId: {
+const vehicleSchema = new mongoose.Schema({
+  vehicleId: {
     type: String,
-    required: [true, 'Bus ID is required'],
+    required: [true, 'Vehicle ID is required'],
     unique: true,
     trim: true
   },
-  busName: {
+  vehicleName: {
     type: String,
-    required: [true, 'Bus name is required'],
+    required: [true, 'Vehicle name is required'],
     trim: true
   },
   registrationNumber: {
@@ -48,7 +48,7 @@ const busSchema = new mongoose.Schema({
     min: [1, 'Seat capacity must be at least 1'],
     max: [100, 'Seat capacity cannot exceed 100']
   },
-  busType: {
+  vehicleType: {
     type: String,
     enum: ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'],
     default: 'AC'
@@ -86,10 +86,10 @@ const busSchema = new mongoose.Schema({
 
 // Index for faster queries
 // Note: numberPlate already has a unique index from `unique: true` on the field.
-busSchema.index({ routeId: 1, isDeleted: 1 });
-busSchema.index({ driverId: 1 });
-busSchema.index({ managerId: 1 });
-busSchema.index({ isActive: 1, maintenanceStatus: 1 });
-busSchema.index({ serviceType: 1, bookingEnabled: 1, isDeleted: 1 });
+vehicleSchema.index({ routeId: 1, isDeleted: 1 });
+vehicleSchema.index({ driverId: 1 });
+vehicleSchema.index({ managerId: 1 });
+vehicleSchema.index({ isActive: 1, maintenanceStatus: 1 });
+vehicleSchema.index({ serviceType: 1, bookingEnabled: 1, isDeleted: 1 });
 
-module.exports = mongoose.model('Bus', busSchema);
+module.exports = mongoose.model('Vehicle', vehicleSchema);

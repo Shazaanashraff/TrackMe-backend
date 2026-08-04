@@ -1,14 +1,14 @@
 const request = require('supertest');
 const app = require('../src/server');
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const Booking = require('../src/models/Booking');
 const User = require('../src/models/User');
 const jwt = require('jsonwebtoken');
 
 // Service type test suite
 describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
-  let driverToken, adminToken, driverId, adminId, routeId, busId;
+  let driverToken, adminToken, driverId, adminId, routeId, vehicleId;
 
   beforeAll(async () => {
     // Create driver user
@@ -48,8 +48,8 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
     // Cleanup
     await User.deleteMany({ email: /^(driver|admin)-/ });
     await Route.deleteMany({ routeId });
-    await Bus.deleteMany({ routeId });
-    await Booking.deleteMany({ busId });
+    await Vehicle.deleteMany({ routeId });
+    await Booking.deleteMany({ vehicleId });
   });
 
   describe('Route Service Type Filtering', () => {
@@ -127,12 +127,12 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
     });
   });
 
-  describe('Bus Service Type and Booking Control', () => {
+  describe('Vehicle Service Type and Booking Control', () => {
     let schoolRouteId;
 
     beforeAll(async () => {
       const route = await Route.create({
-        routeName: 'School Bus Route',
+        routeName: 'School Vehicle Route',
         startPoint: 'School A',
         endPoint: 'School B',
         distance: 25,
@@ -143,12 +143,12 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       schoolRouteId = route.routeId;
     });
 
-    test('should create bus with default bookingEnabled=true', async () => {
+    test('should create vehicle with default bookingEnabled=true', async () => {
       const res = await request(app)
-        .post('/api/bus')
+        .post('/api/vehicle')
         .set('Authorization', `Bearer ${driverToken}`)
         .send({
-          busName: 'School Bus 1',
+          vehicleName: 'School Vehicle 1',
           routeId: schoolRouteId,
           totalSeats: 50,
           serviceType: 'SCHOOL'
@@ -157,12 +157,12 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       expect(res.status).toBe(201);
       expect(res.body.data.bookingEnabled).toBe(true);
       expect(res.body.data.serviceType).toBe('SCHOOL');
-      busId = res.body.data._id;
+      vehicleId = res.body.data._id;
     });
 
-    test('should update bus bookingEnabled status', async () => {
+    test('should update vehicle bookingEnabled status', async () => {
       const res = await request(app)
-        .put(`/api/bus/${busId}`)
+        .put(`/api/vehicle/${vehicleId}`)
         .set('Authorization', `Bearer ${driverToken}`)
         .send({ bookingEnabled: false });
 
@@ -170,7 +170,7 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       expect(res.body.data.bookingEnabled).toBe(false);
     });
 
-    test('should reject booking when bus.bookingEnabled=false', async () => {
+    test('should reject booking when vehicle.bookingEnabled=false', async () => {
       // Create user
       const passenger = await User.create({
         name: 'Test Passenger',
@@ -180,13 +180,13 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       });
       const passengerToken = jwt.sign({ _id: passenger._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
-      // Attempt booking on disabled bus
+      // Attempt booking on disabled vehicle
       const res = await request(app)
         .post('/api/booking')
         .set('Authorization', `Bearer ${passengerToken}`)
         .send({
           userId: passenger._id,
-          busId: busId,
+          vehicleId: vehicleId,
           selectedSeats: [1, 2],
           totalPrice: 200
         });
@@ -198,9 +198,9 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       await User.deleteOne({ _id: passenger._id });
     });
 
-    test('should allow booking when bus.bookingEnabled=true', async () => {
+    test('should allow booking when vehicle.bookingEnabled=true', async () => {
       // Re-enable bookings
-      await Bus.findByIdAndUpdate(busId, { bookingEnabled: true });
+      await Vehicle.findByIdAndUpdate(vehicleId, { bookingEnabled: true });
 
       // Create user
       const passenger = await User.create({
@@ -211,13 +211,13 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       });
       const passengerToken = jwt.sign({ _id: passenger._id, role: 'user' }, process.env.JWT_SECRET || 'test-secret');
 
-      // Attempt booking on enabled bus
+      // Attempt booking on enabled vehicle
       const res = await request(app)
         .post('/api/booking')
         .set('Authorization', `Bearer ${passengerToken}`)
         .send({
           userId: passenger._id,
-          busId: busId,
+          vehicleId: vehicleId,
           selectedSeats: [1, 2],
           totalPrice: 200
         });
@@ -229,12 +229,12 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       await User.deleteOne({ _id: passenger._id });
     });
 
-    test('should enforce route-bus serviceType consistency', async () => {
+    test('should enforce route-vehicle serviceType consistency', async () => {
       const res = await request(app)
-        .post('/api/bus')
+        .post('/api/vehicle')
         .set('Authorization', `Bearer ${driverToken}`)
         .send({
-          busName: 'Mismatched Bus',
+          vehicleName: 'Mismatched Vehicle',
           routeId: schoolRouteId, // SCHOOL route
           totalSeats: 50,
           serviceType: 'OFFICE' // OFFICE service type - mismatch
@@ -247,7 +247,7 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
 
   describe('Booking Service Type Recording', () => {
     test('should include serviceType in booking record', async () => {
-      // This test assumes a bus with bookingEnabled=true and specific serviceType exists
+      // This test assumes a vehicle with bookingEnabled=true and specific serviceType exists
       // Query existing bookings or create a new one
       const bookings = await Booking.find({ serviceType: { $exists: true } }).limit(1);
       expect(bookings.length).toBeGreaterThan(0);
@@ -256,10 +256,10 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
     });
   });
 
-  describe('Admin Bus Update (Service Type & Booking Toggle)', () => {
-    test('admin should update bus serviceType and bookingEnabled', async () => {
+  describe('Admin Vehicle Update (Service Type & Booking Toggle)', () => {
+    test('admin should update vehicle serviceType and bookingEnabled', async () => {
       const res = await request(app)
-        .put(`/api/bus/${busId}`)
+        .put(`/api/vehicle/${vehicleId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           serviceType: 'UNIVERSITY',
@@ -271,7 +271,7 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       expect(res.body.data.bookingEnabled).toBe(false);
     });
 
-    test('driver should not be able to update bus of another driver', async () => {
+    test('driver should not be able to update vehicle of another driver', async () => {
       // This assumes the framework validates ownership - test may vary based on implementation
       const secondDriver = await User.create({
         name: 'Second Driver',
@@ -282,7 +282,7 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
       const secondDriverToken = jwt.sign({ _id: secondDriver._id, role: 'driver' }, process.env.JWT_SECRET || 'test-secret');
 
       const res = await request(app)
-        .put(`/api/bus/${busId}`)
+        .put(`/api/vehicle/${vehicleId}`)
         .set('Authorization', `Bearer ${secondDriverToken}`)
         .send({ serviceType: 'PUBLIC' });
 
@@ -293,16 +293,16 @@ describe('Service Type Extensions (PUBLIC/SCHOOL/UNIVERSITY/OFFICE)', () => {
   });
 
   describe('Backward Compatibility', () => {
-    test('routes/buses without serviceType should default to PUBLIC', async () => {
+    test('routes/vehicles without serviceType should default to PUBLIC', async () => {
       // Query existing data
       const routes = await Route.find({ serviceType: 'PUBLIC' }).limit(1);
-      const buses = await Bus.find({ serviceType: 'PUBLIC' }).limit(1);
+      const vehicles = await Vehicle.find({ serviceType: 'PUBLIC' }).limit(1);
 
       if (routes.length > 0) {
         expect(routes[0].serviceType).toBe('PUBLIC');
       }
-      if (buses.length > 0) {
-        expect(buses[0].serviceType).toBe('PUBLIC');
+      if (vehicles.length > 0) {
+        expect(vehicles[0].serviceType).toBe('PUBLIC');
       }
     });
 

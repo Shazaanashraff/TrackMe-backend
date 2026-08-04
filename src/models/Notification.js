@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: [
-      'BUS_ARRIVAL', 'BUS_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
+      'VEHICLE_ARRIVAL', 'VEHICLE_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
       'ROUTE_ACCESS_REQUEST', 'ROUTE_ACCESS_APPROVED', 'ROUTE_ACCESS_REJECTED', 'ROUTE_ACCESS_REVOKED'
     ],
     required: [true, 'Notification type is required']
@@ -23,7 +23,7 @@ const notificationSchema = new mongoose.Schema({
     required: [true, 'Notification message is required']
   },
   data: {
-    busId: String,
+    vehicleId: String,
     routeId: String,
     bookingId: String,
     relatedId: String

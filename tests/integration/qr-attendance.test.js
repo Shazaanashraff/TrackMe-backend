@@ -5,7 +5,7 @@ const User = require('../../src/models/User');
 const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
-const Bus = require('../../src/models/Bus');
+const Vehicle = require('../../src/models/Vehicle');
 const BoardingEvent = require('../../src/models/BoardingEvent');
 const { signQr, verifyQr } = require('../../src/utils/qrToken');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
@@ -37,7 +37,7 @@ let otherManagerToken;
 let riderToken, riderId;
 let driverToken, driverId;
 let otherDriverToken;
-let route, bus;
+let route, vehicle;
 
 beforeAll(async () => {
   await connectTestDb();
@@ -85,9 +85,9 @@ beforeAll(async () => {
     stops: [{ stopName: 'Stop A', order: 1, lat: 1, lng: 1 }], pathPolyline: 'abc'
   });
 
-  bus = await Bus.create({
-    busId: `QR-BUS-${Date.now()}`,
-    busName: 'QR Shuttle',
+  vehicle = await Vehicle.create({
+    vehicleId: `QR-VEHICLE-${Date.now()}`,
+    vehicleName: 'QR Shuttle',
     registrationNumber: `REG-${Date.now()}`,
     numberPlate: `PLT-${Date.now()}`,
     routeId: route.routeId,
@@ -217,7 +217,7 @@ describe('POST /api/driver/boarding/scan', () => {
     const res = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${riderToken}`)
-      .send({ token: 'x', busId: bus.busId });
+      .send({ token: 'x', vehicleId: vehicle.vehicleId });
     expect(res.status).toBe(403);
   });
 
@@ -225,28 +225,28 @@ describe('POST /api/driver/boarding/scan', () => {
     const res = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: 'garbage', busId: bus.busId });
+      .send({ token: 'garbage', vehicleId: vehicle.vehicleId });
     expect(res.status).toBe(401);
   });
 
-  it('404s when the bus is not assigned to the scanning driver', async () => {
+  it('404s when the vehicle is not assigned to the scanning driver', async () => {
     const token = await freshTokenForRider();
     const res = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${otherDriverToken}`)
-      .send({ token, busId: bus.busId });
+      .send({ token, vehicleId: vehicle.vehicleId });
     expect(res.status).toBe(404);
   });
 
-  it('403s when the bus\'s route does not have QR attendance enabled', async () => {
+  it('403s when the vehicle\'s route does not have QR attendance enabled', async () => {
     const disabledRoute = await Route.create({
       routeId: `QR-DISABLED-${Date.now()}`.toUpperCase(),
       routeName: 'QR Disabled Route', source: 'A', destination: 'B', distance: 5, fare: 50,
       managerId, qrEnabled: false, stops: [{ stopName: 'S', order: 1, lat: 1, lng: 1 }], pathPolyline: 'xyz'
     });
-    const busOnDisabledRoute = await Bus.create({
-      busId: `QR-DIS-BUS-${Date.now()}`,
-      busName: 'Disabled Route Bus',
+    const vehicleOnDisabledRoute = await Vehicle.create({
+      vehicleId: `QR-DIS-VEHICLE-${Date.now()}`,
+      vehicleName: 'Disabled Route Vehicle',
       registrationNumber: `REG-D-${Date.now()}`,
       numberPlate: `PLT-D-${Date.now()}`,
       routeId: disabledRoute.routeId,
@@ -259,11 +259,11 @@ describe('POST /api/driver/boarding/scan', () => {
     const res = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token, busId: busOnDisabledRoute.busId });
+      .send({ token, vehicleId: vehicleOnDisabledRoute.vehicleId });
     expect(res.status).toBe(403);
     expect(res.body.message).toMatch(/not enabled/i);
 
-    await Bus.deleteOne({ _id: busOnDisabledRoute._id });
+    await Vehicle.deleteOne({ _id: vehicleOnDisabledRoute._id });
     await Route.deleteOne({ _id: disabledRoute._id });
   });
 
@@ -275,7 +275,7 @@ describe('POST /api/driver/boarding/scan', () => {
     const boardRes = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: token1, busId: bus.busId });
+      .send({ token: token1, vehicleId: vehicle.vehicleId });
 
     expect(boardRes.status).toBe(201);
     expect(boardRes.body.debounced).toBe(false);
@@ -295,7 +295,7 @@ describe('POST /api/driver/boarding/scan', () => {
     const alightRes = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: token2, busId: bus.busId });
+      .send({ token: token2, vehicleId: vehicle.vehicleId });
 
     expect(alightRes.status).toBe(201);
     expect(alightRes.body.data.type).toBe('ALIGHT');
@@ -306,7 +306,7 @@ describe('POST /api/driver/boarding/scan', () => {
     const first = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: token1, busId: bus.busId, type: 'BOARD' });
+      .send({ token: token1, vehicleId: vehicle.vehicleId, type: 'BOARD' });
     expect(first.status).toBe(201);
     expect(first.body.debounced).toBe(false);
 
@@ -314,13 +314,13 @@ describe('POST /api/driver/boarding/scan', () => {
     const second = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: token2, busId: bus.busId, type: 'BOARD' });
+      .send({ token: token2, vehicleId: vehicle.vehicleId, type: 'BOARD' });
 
     expect(second.status).toBe(200);
     expect(second.body.debounced).toBe(true);
     expect(second.body.data.eventId).toBe(first.body.data.eventId);
 
-    const count = await BoardingEvent.countDocuments({ studentId: riderId, busId: bus.busId, type: 'BOARD' });
+    const count = await BoardingEvent.countDocuments({ studentId: riderId, vehicleId: vehicle.vehicleId, type: 'BOARD' });
     expect(count).toBe(1);
   });
 });
@@ -338,7 +338,7 @@ describe('PATCH /api/manager/routes/:routeId/qr', () => {
     const scanWhileOff = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: tokenWhileOff, busId: bus.busId });
+      .send({ token: tokenWhileOff, vehicleId: vehicle.vehicleId });
     expect(scanWhileOff.status).toBe(403);
 
     const on = await request(app)
@@ -352,7 +352,7 @@ describe('PATCH /api/manager/routes/:routeId/qr', () => {
     const scanWhileOn = await request(app)
       .post('/api/driver/boarding/scan')
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ token: tokenWhileOn, busId: bus.busId });
+      .send({ token: tokenWhileOn, vehicleId: vehicle.vehicleId });
     expect(scanWhileOn.status).toBe(201);
   });
 
@@ -368,7 +368,7 @@ describe('PATCH /api/manager/routes/:routeId/qr', () => {
 describe('GET /api/attendance/student/:studentId', () => {
   beforeEach(async () => {
     await BoardingEvent.create({
-      studentId: riderId, busId: bus.busId, routeId: route.routeId,
+      studentId: riderId, vehicleId: vehicle.vehicleId, routeId: route.routeId,
       driverId, type: 'BOARD', tripId: 'trip-1'
     });
   });
@@ -393,7 +393,7 @@ describe('GET /api/attendance/student/:studentId', () => {
 describe('GET /api/manager/attendance', () => {
   beforeEach(async () => {
     await BoardingEvent.create({
-      studentId: riderId, busId: bus.busId, routeId: route.routeId,
+      studentId: riderId, vehicleId: vehicle.vehicleId, routeId: route.routeId,
       driverId, type: 'BOARD', tripId: 'trip-2'
     });
   });

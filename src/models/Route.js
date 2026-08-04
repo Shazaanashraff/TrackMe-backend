@@ -85,13 +85,13 @@ const routeSchema = new mongoose.Schema({
     default: ''
   },
   // Approximate size of the real-world fleet operating this route (both directions
-  // combined). Drives the client-side deterministic bus simulation on the live map
-  // (see UserApp useSimulatedBuses). 0 = no simulation for this route. Set for the
-  // curated demo routes by scripts/set-sim-bus-counts.js.
-  simBusCount: {
+  // combined). Drives the client-side deterministic vehicle simulation on the live map
+  // (see UserApp useSimulatedVehicles). 0 = no simulation for this route. Set for the
+  // curated demo routes by scripts/set-sim-vehicle-counts.js.
+  simVehicleCount: {
     type: Number,
     default: 0,
-    min: [0, 'Simulated bus count cannot be negative']
+    min: [0, 'Simulated vehicle count cannot be negative']
   },
   isActive: {
     type: Boolean,
@@ -132,13 +132,13 @@ const routeSchema = new mongoose.Schema({
   },
   recordedMeta: {
     recordedByDriverId: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', default: null },
-    recordedByBusId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bus', default: null },
+    recordedByVehicleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle', default: null },
     recordedAt: { type: Date, default: null },
     rawPointCount: { type: Number, default: 0 },
     snapped: { type: Boolean, default: false }
   },
   // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md). Manager-owned toggle —
-  // when true, a driver's bus on this route may record BOARD/ALIGHT scans. Independent
+  // when true, a driver's vehicle on this route may record BOARD/ALIGHT scans. Independent
   // of visibility/privacy; works on PUBLIC routes on purpose (most riders use those).
   qrEnabled: { type: Boolean, default: false },
   // Privacy / room-key (Private Routes feature). visibility:'PRIVATE' => requires a room key to join.

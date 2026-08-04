@@ -37,15 +37,15 @@ describe('decodePolyline', () => {
   });
 });
 
-describe('GET /api/bus/routes/:routeId/path', () => {
+describe('GET /api/vehicle/routes/:routeId/path', () => {
   it('404s for an unknown route (no upstream call)', async () => {
-    const res = await request(app).get('/api/bus/routes/DOES-NOT-EXIST/path');
+    const res = await request(app).get('/api/vehicle/routes/DOES-NOT-EXIST/path');
     expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
   });
 
   it('returns the stop coords for a single-stop route without routing', async () => {
-    const res = await request(app).get('/api/bus/routes/PATH-1/path');
+    const res = await request(app).get('/api/vehicle/routes/PATH-1/path');
     expect(res.status).toBe(200);
     expect(res.body.data.coords).toEqual([{ lat: 6.9, lng: 79.86 }]);
   });

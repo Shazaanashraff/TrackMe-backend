@@ -7,9 +7,9 @@ const DriverEarningsSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  busId: {
+  vehicleId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Bus',
+    ref: 'Vehicle',
     required: true,
     index: true
   },

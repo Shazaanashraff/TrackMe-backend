@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const RouteMembership = require('../models/RouteMembership');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
@@ -12,19 +12,19 @@ const parseBooleanQuery = (value) => {
   return undefined;
 };
 
-// @desc    Register a new bus (driver only)
-// @route   POST /api/bus/register
-exports.registerBus = async (req, res, next) => {
+// @desc    Register a new vehicle (driver only)
+// @route   POST /api/vehicle/register
+exports.registerVehicle = async (req, res, next) => {
   try {
-    const { busId, busName, registrationNumber, numberPlate, routeId, seatCapacity, busType, serviceType, bookingEnabled } = req.body;
+    const { vehicleId, vehicleName, registrationNumber, numberPlate, routeId, seatCapacity, vehicleType, serviceType, bookingEnabled } = req.body;
     const normalizedNumberPlate = String(numberPlate || registrationNumber || '').trim().toUpperCase();
 
-    // Check if bus exists
-    const busExists = await Bus.findOne({ $or: [{ busId }, { registrationNumber }, { numberPlate: normalizedNumberPlate }], isDeleted: false });
-    if (busExists) {
+    // Check if vehicle exists
+    const vehicleExists = await Vehicle.findOne({ $or: [{ vehicleId }, { registrationNumber }, { numberPlate: normalizedNumberPlate }], isDeleted: false });
+    if (vehicleExists) {
       return res.status(400).json({ 
         success: false, 
-        message: busExists.busId === busId ? 'Bus ID already registered' : 'Bus registration details already exist' 
+        message: vehicleExists.vehicleId === vehicleId ? 'Vehicle ID already registered' : 'Vehicle registration details already exist' 
       });
     }
 
@@ -49,19 +49,19 @@ exports.registerBus = async (req, res, next) => {
     if (routeExists.serviceType && routeExists.serviceType !== normalizedServiceType) {
       return res.status(400).json({
         success: false,
-        message: 'Bus service type must match route service type'
+        message: 'Vehicle service type must match route service type'
       });
     }
 
-    // Create bus with driver's ID
-    const bus = await Bus.create({
-      busId,
-      busName,
+    // Create vehicle with driver's ID
+    const vehicle = await Vehicle.create({
+      vehicleId,
+      vehicleName,
       registrationNumber,
       numberPlate: normalizedNumberPlate,
       routeId,
       seatCapacity,
-      busType: busType || 'AC',
+      vehicleType: vehicleType || 'AC',
       serviceType: normalizedServiceType,
       bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true,
       driverId: req.user._id
@@ -69,17 +69,17 @@ exports.registerBus = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Bus registered successfully',
-      data: bus
+      message: 'Vehicle registered successfully',
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get buses by route
-// @route   GET /api/bus/route/:routeId
-exports.getBusesByRoute = async (req, res, next) => {
+// @desc    Get vehicles by route
+// @route   GET /api/vehicle/route/:routeId
+exports.getVehiclesByRoute = async (req, res, next) => {
   try {
     const { routeId } = req.params;
     const { serviceType, bookingEnabled } = req.query;
@@ -97,7 +97,7 @@ exports.getBusesByRoute = async (req, res, next) => {
     });
 
     // A manager's PRIVATE route (custom shuttle, or a Private Routes feature route)
-    // only surfaces its buses to an authenticated user with an ACTIVE membership;
+    // only surfaces its vehicles to an authenticated user with an ACTIVE membership;
     // everyone else (including unauthenticated custom-route callers) gets an empty
     // list rather than a 403, preserving existing custom-route behavior.
     if (route && route.visibility === 'PRIVATE') {
@@ -107,7 +107,7 @@ exports.getBusesByRoute = async (req, res, next) => {
       }
     }
 
-    // Filter buses by effective route lookup
+    // Filter vehicles by effective route lookup
     if (route) {
       filter.routeId = route.routeId;
     } else {
@@ -124,14 +124,14 @@ exports.getBusesByRoute = async (req, res, next) => {
       filter.bookingEnabled = parsedBookingEnabled;
     }
 
-    const buses = await Bus.find(filter)
+    const vehicles = await Vehicle.find(filter)
       .populate('driverId', 'name email')
-      .select('busId busName seatCapacity busType serviceType bookingEnabled isActive maintenanceStatus');
+      .select('vehicleId vehicleName seatCapacity vehicleType serviceType bookingEnabled isActive maintenanceStatus');
 
     res.status(200).json({
       success: true,
-      count: buses.length,
-      data: buses
+      count: vehicles.length,
+      data: vehicles
     });
   } catch (error) {
     next(error);
@@ -139,7 +139,7 @@ exports.getBusesByRoute = async (req, res, next) => {
 };
 
 // @desc    Get all routes (distinct routeIds)
-// @route   GET /api/bus/routes
+// @route   GET /api/vehicle/routes
 exports.getAllRoutes = async (req, res, next) => {
   try {
     const { serviceType } = req.query;
@@ -151,7 +151,7 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops simBusCount');
+      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops simVehicleCount');
 
     res.status(200).json({
       success: true,
@@ -164,7 +164,7 @@ exports.getAllRoutes = async (req, res, next) => {
 };
 
 // @desc    Flat list of every unique stop (for From/To autocomplete + snapping)
-// @route   GET /api/bus/stops
+// @route   GET /api/vehicle/stops
 exports.getStops = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route stops.
@@ -190,7 +190,7 @@ exports.getStops = async (req, res, next) => {
 };
 
 // @desc    Plan a trip: which direct routes carry a rider from -> to
-// @route   GET /api/bus/routes/plan?fromLat&fromLng&toLat&toLng[&maxWalkKm&serviceType]
+// @route   GET /api/vehicle/routes/plan?fromLat&fromLng&toLat&toLng[&maxWalkKm&serviceType]
 exports.planJourney = async (req, res, next) => {
   try {
     const fromLat = Number(req.query.fromLat);
@@ -255,7 +255,7 @@ exports.planJourney = async (req, res, next) => {
       });
     }
 
-    // Best first: least total walking, then fewest stops on the bus.
+    // Best first: least total walking, then fewest stops on the vehicle.
     matches.sort((a, b) => {
       const walkA = a.walkToBoardKm + a.walkFromAlightKm;
       const walkB = b.walkToBoardKm + b.walkFromAlightKm;
@@ -269,78 +269,78 @@ exports.planJourney = async (req, res, next) => {
   }
 };
 
-// @desc    Get driver's bus
-// @route   GET /api/bus/my-bus
-exports.getMyBus = async (req, res, next) => {
+// @desc    Get driver's vehicle
+// @route   GET /api/vehicle/my-vehicle
+exports.getMyVehicle = async (req, res, next) => {
   try {
-    const bus = await Bus.findOne({ driverId: req.user._id, isDeleted: false })
+    const vehicle = await Vehicle.findOne({ driverId: req.user._id, isDeleted: false })
       .populate('driverId', 'name email');
 
-    if (!bus) {
+    if (!vehicle) {
       return res.status(404).json({ 
         success: false, 
-        message: 'No bus assigned to this driver' 
+        message: 'No vehicle assigned to this driver' 
       });
     }
 
     res.status(200).json({
       success: true,
-      data: bus
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get single bus by ID
-// @route   GET /api/bus/:busId
-exports.getBusById = async (req, res, next) => {
+// @desc    Get single vehicle by ID
+// @route   GET /api/vehicle/:vehicleId
+exports.getVehicleById = async (req, res, next) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
 
-    const bus = await Bus.findOne({ busId, isDeleted: false })
+    const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false })
       .populate('driverId', 'name email');
 
-    if (!bus) {
+    if (!vehicle) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Bus not found' 
+        message: 'Vehicle not found' 
       });
     }
 
     res.status(200).json({
       success: true,
-      data: bus
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Update bus details (admin/driver only)
-// @route   PUT /api/bus/:busId
-exports.updateBus = async (req, res, next) => {
+// @desc    Update vehicle details (admin/driver only)
+// @route   PUT /api/vehicle/:vehicleId
+exports.updateVehicle = async (req, res, next) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
     const updateData = { ...req.body };
 
-    const bus = await Bus.findOne({ busId, isDeleted: false });
-    if (!bus) {
+    const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false });
+    if (!vehicle) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Bus not found' 
+        message: 'Vehicle not found' 
       });
     }
 
-    // Driver can update own bus, manager can update assigned buses, super-admin can update all.
+    // Driver can update own vehicle, manager can update assigned vehicles, super-admin can update all.
     if (
-      bus.driverId.toString() !== req.user._id.toString() &&
-      !(req.user.role === 'admin' && bus.managerId && bus.managerId.toString() === req.user._id.toString()) &&
+      vehicle.driverId.toString() !== req.user._id.toString() &&
+      !(req.user.role === 'admin' && vehicle.managerId && vehicle.managerId.toString() === req.user._id.toString()) &&
       req.user.role !== 'super-admin'
     ) {
       return res.status(403).json({ 
         success: false, 
-        message: 'Not authorized to update this bus' 
+        message: 'Not authorized to update this vehicle' 
       });
     }
 
@@ -372,69 +372,69 @@ exports.updateBus = async (req, res, next) => {
         });
       }
 
-      const incomingServiceType = updateData.serviceType || bus.serviceType;
+      const incomingServiceType = updateData.serviceType || vehicle.serviceType;
       if (route.serviceType && route.serviceType !== incomingServiceType) {
         return res.status(400).json({
           success: false,
-          message: 'Bus service type must match route service type'
+          message: 'Vehicle service type must match route service type'
         });
       }
     }
 
-    Object.assign(bus, updateData);
-    await bus.save();
+    Object.assign(vehicle, updateData);
+    await vehicle.save();
 
     res.status(200).json({
       success: true,
-      message: 'Bus updated successfully',
-      data: bus
+      message: 'Vehicle updated successfully',
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Delete bus (soft delete)
-// @route   DELETE /api/bus/:busId
-exports.deleteBus = async (req, res, next) => {
+// @desc    Delete vehicle (soft delete)
+// @route   DELETE /api/vehicle/:vehicleId
+exports.deleteVehicle = async (req, res, next) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
 
-    const bus = await Bus.findOne({ busId, isDeleted: false });
-    if (!bus) {
+    const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false });
+    if (!vehicle) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Bus not found' 
+        message: 'Vehicle not found' 
       });
     }
 
-    const isOwnerDriver = bus.driverId.toString() === req.user._id.toString();
-    const isAssignedManager = req.user.role === 'admin' && bus.managerId && bus.managerId.toString() === req.user._id.toString();
+    const isOwnerDriver = vehicle.driverId.toString() === req.user._id.toString();
+    const isAssignedManager = req.user.role === 'admin' && vehicle.managerId && vehicle.managerId.toString() === req.user._id.toString();
     const isSuperAdmin = req.user.role === 'super-admin';
 
     if (!isOwnerDriver && !isAssignedManager && !isSuperAdmin) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to delete this bus'
+        message: 'Not authorized to delete this vehicle'
       });
     }
 
-    bus.isDeleted = true;
-    bus.isActive = false;
-    await bus.save();
+    vehicle.isDeleted = true;
+    vehicle.isActive = false;
+    await vehicle.save();
 
     res.status(200).json({
       success: true,
-      message: 'Bus deleted successfully'
+      message: 'Vehicle deleted successfully'
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all buses with pagination
-// @route   GET /api/bus/list/all
-exports.getAllBuses = async (req, res, next) => {
+// @desc    Get all vehicles with pagination
+// @route   GET /api/vehicle/list/all
+exports.getAllVehicles = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -452,17 +452,17 @@ exports.getAllBuses = async (req, res, next) => {
       filter.bookingEnabled = parsedBookingEnabled;
     }
 
-    const buses = await Bus.find(filter)
+    const vehicles = await Vehicle.find(filter)
       .populate('driverId', 'name email')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
 
-    const total = await Bus.countDocuments(filter);
+    const total = await Vehicle.countDocuments(filter);
 
     res.status(200).json({
       success: true,
-      data: buses,
+      data: vehicles,
       pagination: {
         page,
         limit,
@@ -475,50 +475,50 @@ exports.getAllBuses = async (req, res, next) => {
   }
 };
 
-// @desc    Update bus maintenance status
-// @route   PATCH /api/bus/:busId/maintenance
+// @desc    Update vehicle maintenance status
+// @route   PATCH /api/vehicle/:vehicleId/maintenance
 exports.updateMaintenanceStatus = async (req, res, next) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
     const { maintenanceStatus, nextServiceDate } = req.body;
 
-    const bus = await Bus.findOne({ busId, isDeleted: false });
-    if (!bus) {
+    const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false });
+    if (!vehicle) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Bus not found' 
+        message: 'Vehicle not found' 
       });
     }
 
-    bus.maintenanceStatus = maintenanceStatus;
-    if (maintenanceStatus === 'MAINTENANCE' && !bus.lastServiceDate) {
-      bus.lastServiceDate = new Date();
+    vehicle.maintenanceStatus = maintenanceStatus;
+    if (maintenanceStatus === 'MAINTENANCE' && !vehicle.lastServiceDate) {
+      vehicle.lastServiceDate = new Date();
     }
     if (nextServiceDate) {
-      bus.nextServiceDate = nextServiceDate;
+      vehicle.nextServiceDate = nextServiceDate;
     }
 
-    await bus.save();
+    await vehicle.save();
 
     res.status(200).json({
       success: true,
       message: 'Maintenance status updated',
-      data: bus
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get buses statistics
-// @route   GET /api/bus/stats/overview
-exports.getBusesStats = async (req, res, next) => {
+// @desc    Get vehicles statistics
+// @route   GET /api/vehicle/stats/overview
+exports.getVehiclesStats = async (req, res, next) => {
   try {
-    const totalBuses = await Bus.countDocuments({ isDeleted: false });
-    const activeBuses = await Bus.countDocuments({ isDeleted: false, isActive: true });
-    const maintenanceBuses = await Bus.countDocuments({ isDeleted: false, maintenanceStatus: 'MAINTENANCE' });
+    const totalVehicles = await Vehicle.countDocuments({ isDeleted: false });
+    const activeVehicles = await Vehicle.countDocuments({ isDeleted: false, isActive: true });
+    const maintenanceVehicles = await Vehicle.countDocuments({ isDeleted: false, maintenanceStatus: 'MAINTENANCE' });
 
-    const totalCapacity = await Bus.aggregate([
+    const totalCapacity = await Vehicle.aggregate([
       { $match: { isDeleted: false } },
       { $group: { _id: null, total: { $sum: '$seatCapacity' } } }
     ]);
@@ -526,9 +526,9 @@ exports.getBusesStats = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        totalBuses,
-        activeBuses,
-        maintenanceBuses,
+        totalVehicles,
+        activeVehicles,
+        maintenanceVehicles,
         totalCapacity: totalCapacity[0]?.total || 0
       }
     });

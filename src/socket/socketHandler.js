@@ -1,5 +1,5 @@
 const LiveLocation = require('../models/LiveLocation');
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const RouteMembership = require('../models/RouteMembership');
 const { createNotification } = require('../utils/notificationHelper');
@@ -50,7 +50,7 @@ const rateLimit = (() => {
 setInterval(() => rateLimit.cleanup(), 60000);
 
 // High-frequency socket logging is gated behind SOCKET_DEBUG to avoid flooding
-// stdout (and stalling the event loop) when many buses stream locations.
+// stdout (and stalling the event loop) when many vehicles stream locations.
 const debugLog = (...args) => { if (process.env.SOCKET_DEBUG) console.log(...args); };
 
 const setupSocket = (io) => {
@@ -88,7 +88,7 @@ const setupSocket = (io) => {
         userRole: socket.userRole,
         connectedAt: new Date(),
         activeRoute: null,
-        activeBus: null
+        activeVehicle: null
       };
 
       // Every authenticated rider auto-joins their own notification room so
@@ -98,7 +98,7 @@ const setupSocket = (io) => {
 
       socket.emit('connection-success', {
         socketId: socket.id,
-        message: 'Connected to bus tracking server',
+        message: 'Connected to vehicle tracking server',
         role: socket.userRole
       });
     } catch (error) {
@@ -116,64 +116,64 @@ const setupSocket = (io) => {
           return callback?.({ success: false, error: err.message });
         }
 
-        const { busId } = data;
+        const { vehicleId } = data;
 
-        if (!busId || typeof busId !== 'string') {
+        if (!vehicleId || typeof vehicleId !== 'string') {
           return callback?.({ 
             success: false, 
-            error: 'Valid Bus ID is required' 
+            error: 'Valid Vehicle ID is required' 
           });
         }
 
-        // Verify bus exists and belongs to this driver
-        const bus = await Bus.findOne({ busId, driverId: socket.userId, isDeleted: false });
-        if (!bus) {
+        // Verify vehicle exists and belongs to this driver
+        const vehicle = await Vehicle.findOne({ vehicleId, driverId: socket.userId, isDeleted: false });
+        if (!vehicle) {
           return callback?.({ 
             success: false, 
-            error: 'Bus not found or not assigned to you' 
+            error: 'Vehicle not found or not assigned to you' 
           });
         }
 
-        // Update bus status
-        const updatedBus = await Bus.findOneAndUpdate(
-          { busId },
+        // Update vehicle status
+        const updatedVehicle = await Vehicle.findOneAndUpdate(
+          { vehicleId },
           { isActive: true },
           { new: true }
         );
 
         // Store active session
-        activeSessions.set(busId, {
+        activeSessions.set(vehicleId, {
           socketId: socket.id,
           userId: socket.userId,
           startTime: new Date(),
-          route: bus.routeId
+          route: vehicle.routeId
         });
 
-        socket.data.activeBus = busId;
-        socket.data.activeRoute = bus.routeId;
+        socket.data.activeVehicle = vehicleId;
+        socket.data.activeRoute = vehicle.routeId;
 
         // Join route room for broadcasting
-        socket.join(`route:${bus.routeId}`);
-        socket.join(`bus:${busId}`);
-        socket.join(`driver:${busId}`);
+        socket.join(`route:${vehicle.routeId}`);
+        socket.join(`vehicle:${vehicleId}`);
+        socket.join(`driver:${vehicleId}`);
 
-        console.log(`✅ Driver started tracking: Bus ${busId}`);
+        console.log(`✅ Driver started tracking: Vehicle ${vehicleId}`);
 
         callback?.({ 
           success: true, 
           message: 'Tracking started',
-          bus: {
-            busId: updatedBus.busId,
-            busName: updatedBus.busName,
-            routeId: updatedBus.routeId,
-            serviceType: updatedBus.serviceType,
-            bookingEnabled: updatedBus.bookingEnabled
+          vehicle: {
+            vehicleId: updatedVehicle.vehicleId,
+            vehicleName: updatedVehicle.vehicleName,
+            routeId: updatedVehicle.routeId,
+            serviceType: updatedVehicle.serviceType,
+            bookingEnabled: updatedVehicle.bookingEnabled
           }
         });
 
         // Notify users on the route
-        io.to(`route:${bus.routeId}`).emit('bus:status-update', {
-          busId,
+        io.to(`route:${vehicle.routeId}`).emit('vehicle:status-update', {
+          vehicleId,
           status: 'TRACKING_STARTED',
           timestamp: new Date().toISOString()
         });
@@ -197,18 +197,18 @@ const setupSocket = (io) => {
           });
         }
 
-        const { busId, routeId, lat, lng, accuracy, speed } = data;
-        debugLog(`📍 driver:location received: bus=${busId}, lat=${lat}, lng=${lng}`);
+        const { vehicleId, routeId, lat, lng, accuracy, speed } = data;
+        debugLog(`📍 driver:location received: vehicle=${vehicleId}, lat=${lat}, lng=${lng}`);
         
         const parsedLat = Number(lat);
         const parsedLng = Number(lng);
 
         // Validate input data
-        if (!busId || lat === undefined || lng === undefined) {
+        if (!vehicleId || lat === undefined || lng === undefined) {
           console.log('❌ Missing required fields');
           return callback?.({ 
             success: false,
-            error: 'Missing required fields: busId, lat, lng'
+            error: 'Missing required fields: vehicleId, lat, lng'
           });
         }
 
@@ -221,22 +221,22 @@ const setupSocket = (io) => {
           });
         }
 
-        // Verify bus exists and is owned by this driver
-        const bus = await Bus.findOne({ 
-          busId, 
+        // Verify vehicle exists and is owned by this driver
+        const vehicle = await Vehicle.findOne({ 
+          vehicleId, 
           driverId: socket.userId, 
           isDeleted: false 
         });
 
-        if (!bus) {
-          console.log(`❌ Bus not found or not owned by driver: ${busId}`);
+        if (!vehicle) {
+          console.log(`❌ Vehicle not found or not owned by driver: ${vehicleId}`);
           return callback?.({ 
             success: false,
-            error: 'Bus not found or unauthorized' 
+            error: 'Vehicle not found or unauthorized' 
           });
         }
 
-        const effectiveRouteInput = String(routeId || bus.routeId || '').trim();
+        const effectiveRouteInput = String(routeId || vehicle.routeId || '').trim();
         const routeLookup = [{ routeId: effectiveRouteInput }];
         if (mongoose.Types.ObjectId.isValid(effectiveRouteInput)) {
           routeLookup.push({ _id: effectiveRouteInput });
@@ -258,7 +258,7 @@ const setupSocket = (io) => {
 
         // Save location to database
         const liveLocation = await LiveLocation.create({
-          busId,
+          vehicleId,
           routeId: route.routeId,
           lat: parsedLat,
           lng: parsedLng,
@@ -267,24 +267,24 @@ const setupSocket = (io) => {
           timestamp: new Date()
         });
         
-        debugLog(`✅ Location saved for bus ${busId}`);
+        debugLog(`✅ Location saved for vehicle ${vehicleId}`);
 
-        // Ensure bus is marked as active
-        if (!bus.isActive) {
-          await Bus.findOneAndUpdate(
-            { busId },
+        // Ensure vehicle is marked as active
+        if (!vehicle.isActive) {
+          await Vehicle.findOneAndUpdate(
+            { vehicleId },
             { isActive: true }
           );
-          debugLog(`✅ Marked bus ${busId} as active`);
+          debugLog(`✅ Marked vehicle ${vehicleId} as active`);
         }
 
         // Prepare broadcast payload
         const updatePayload = {
-          busId,
-          busName: bus.busName,
+          vehicleId,
+          vehicleName: vehicle.vehicleName,
           routeId: route.routeId,
-          serviceType: bus.serviceType || 'PUBLIC',
-          bookingEnabled: bus.bookingEnabled,
+          serviceType: vehicle.serviceType || 'PUBLIC',
+          bookingEnabled: vehicle.bookingEnabled,
           lat: parsedLat,
           lng: parsedLng,
           accuracy: accuracy || null,
@@ -293,9 +293,9 @@ const setupSocket = (io) => {
           driverId: socket.userId
         };
 
-        // Broadcast to all users watching this route and bus-specific subscribers.
-        io.to(`route:${route.routeId}`).emit('bus:update', updatePayload);
-        io.to(`bus:${busId}`).emit('bus:update', updatePayload);
+        // Broadcast to all users watching this route and vehicle-specific subscribers.
+        io.to(`route:${route.routeId}`).emit('vehicle:update', updatePayload);
+        io.to(`vehicle:${vehicleId}`).emit('vehicle:update', updatePayload);
 
         callback?.({ 
           success: true, 
@@ -315,53 +315,53 @@ const setupSocket = (io) => {
     // Driver stops tracking
     socket.on('driver:stop-tracking', async (data, callback) => {
       try {
-        const { busId } = data;
+        const { vehicleId } = data;
 
-        if (!busId || typeof busId !== 'string') {
+        if (!vehicleId || typeof vehicleId !== 'string') {
           return callback?.({ 
             success: false,
-            error: 'Valid Bus ID is required' 
+            error: 'Valid Vehicle ID is required' 
           });
         }
 
-        // Verify bus ownership
-        const bus = await Bus.findOne({ 
-          busId, 
+        // Verify vehicle ownership
+        const vehicle = await Vehicle.findOne({ 
+          vehicleId, 
           driverId: socket.userId, 
           isDeleted: false 
         });
 
-        if (!bus) {
+        if (!vehicle) {
           return callback?.({ 
             success: false,
-            error: 'Bus not found or unauthorized' 
+            error: 'Vehicle not found or unauthorized' 
           });
         }
 
-        // Update bus status
-        const updatedBus = await Bus.findOneAndUpdate(
-          { busId },
+        // Update vehicle status
+        const updatedVehicle = await Vehicle.findOneAndUpdate(
+          { vehicleId },
           { isActive: false },
           { new: true }
         );
 
         // Remove from active sessions
-        if (activeSessions.has(busId)) {
-          const session = activeSessions.get(busId);
+        if (activeSessions.has(vehicleId)) {
+          const session = activeSessions.get(vehicleId);
           const duration = Date.now() - session.startTime.getTime();
-          console.log(`✅ Driver completed session for Bus ${busId} (Duration: ${duration}ms)`);
-          activeSessions.delete(busId);
+          console.log(`✅ Driver completed session for Vehicle ${vehicleId} (Duration: ${duration}ms)`);
+          activeSessions.delete(vehicleId);
         }
 
-        socket.data.activeBus = null;
+        socket.data.activeVehicle = null;
 
         // Leave rooms
-        socket.leave(`driver:${busId}`);
-        if (bus.routeId) {
-          socket.leave(`route:${bus.routeId}`);
+        socket.leave(`driver:${vehicleId}`);
+        if (vehicle.routeId) {
+          socket.leave(`route:${vehicle.routeId}`);
         }
 
-        console.log(`❌ Driver stopped tracking: Bus ${busId}`);
+        console.log(`❌ Driver stopped tracking: Vehicle ${vehicleId}`);
 
         callback?.({ 
           success: true,
@@ -369,9 +369,9 @@ const setupSocket = (io) => {
         });
 
         // Notify users on the route
-        if (bus.routeId) {
-          io.to(`route:${bus.routeId}`).emit('bus:status-update', {
-            busId,
+        if (vehicle.routeId) {
+          io.to(`route:${vehicle.routeId}`).emit('vehicle:status-update', {
+            vehicleId,
             status: 'TRACKING_STOPPED',
             timestamp: new Date().toISOString()
           });
@@ -387,61 +387,61 @@ const setupSocket = (io) => {
 
     // ==================== USER/PASSENGER EVENTS ====================
 
-    // Manager or super-admin joins a specific bus room for scoped live tracking.
-    socket.on('manager:join-bus', async (data, callback) => {
+    // Manager or super-admin joins a specific vehicle room for scoped live tracking.
+    socket.on('manager:join-vehicle', async (data, callback) => {
       try {
-        const { busId } = data || {};
-        if (!busId || typeof busId !== 'string') {
-          return callback?.({ success: false, error: 'Valid Bus ID is required' });
+        const { vehicleId } = data || {};
+        if (!vehicleId || typeof vehicleId !== 'string') {
+          return callback?.({ success: false, error: 'Valid Vehicle ID is required' });
         }
 
         if (!['admin', 'super-admin'].includes(socket.userRole)) {
           return callback?.({ success: false, error: 'Manager role required' });
         }
 
-        const query = { busId, isDeleted: false };
+        const query = { vehicleId, isDeleted: false };
         if (socket.userRole === 'admin') {
           query.managerId = socket.userId;
         }
 
-        const bus = await Bus.findOne(query).select('busId routeId busName');
-        if (!bus) {
-          return callback?.({ success: false, error: 'Bus not found for this manager' });
+        const vehicle = await Vehicle.findOne(query).select('vehicleId routeId vehicleName');
+        if (!vehicle) {
+          return callback?.({ success: false, error: 'Vehicle not found for this manager' });
         }
 
-        socket.join(`bus:${bus.busId}`);
-        socket.data.activeBus = bus.busId;
+        socket.join(`vehicle:${vehicle.vehicleId}`);
+        socket.data.activeVehicle = vehicle.vehicleId;
 
         return callback?.({
           success: true,
-          message: `Joined bus room ${bus.busId}`,
+          message: `Joined vehicle room ${vehicle.vehicleId}`,
           data: {
-            busId: bus.busId,
-            busName: bus.busName,
-            routeId: bus.routeId
+            vehicleId: vehicle.vehicleId,
+            vehicleName: vehicle.vehicleName,
+            routeId: vehicle.routeId
           }
         });
       } catch (error) {
-        console.error('Error in manager:join-bus:', error);
+        console.error('Error in manager:join-vehicle:', error);
         return callback?.({ success: false, error: error.message });
       }
     });
 
-    socket.on('manager:leave-bus', (data, callback) => {
+    socket.on('manager:leave-vehicle', (data, callback) => {
       try {
-        const { busId } = data || {};
-        if (!busId || typeof busId !== 'string') {
-          return callback?.({ success: false, error: 'Valid Bus ID is required' });
+        const { vehicleId } = data || {};
+        if (!vehicleId || typeof vehicleId !== 'string') {
+          return callback?.({ success: false, error: 'Valid Vehicle ID is required' });
         }
 
-        socket.leave(`bus:${busId}`);
-        if (socket.data.activeBus === busId) {
-          socket.data.activeBus = null;
+        socket.leave(`vehicle:${vehicleId}`);
+        if (socket.data.activeVehicle === vehicleId) {
+          socket.data.activeVehicle = null;
         }
 
-        return callback?.({ success: true, message: `Left bus room ${busId}` });
+        return callback?.({ success: true, message: `Left vehicle room ${vehicleId}` });
       } catch (error) {
-        console.error('Error in manager:leave-bus:', error);
+        console.error('Error in manager:leave-vehicle:', error);
         return callback?.({ success: false, error: error.message });
       }
     });
@@ -551,25 +551,25 @@ const setupSocket = (io) => {
           }
         }
 
-        // Get the most recent location for each active bus on the route
-        const activeBusesOnRoute = await Bus.find({
+        // Get the most recent location for each active vehicle on the route
+        const activeVehiclesOnRoute = await Vehicle.find({
           routeId,
           isActive: true,
           isDeleted: false
-        }).select('busId busName serviceType bookingEnabled');
+        }).select('vehicleId vehicleName serviceType bookingEnabled');
         
-        console.log(`📍 Found ${activeBusesOnRoute.length} active buses on route ${routeId}`);
+        console.log(`📍 Found ${activeVehiclesOnRoute.length} active vehicles on route ${routeId}`);
 
         const locations = await Promise.all(
-          activeBusesOnRoute.map(async (bus) => {
-            const loc = await LiveLocation.findOne({ busId: bus.busId })
+          activeVehiclesOnRoute.map(async (vehicle) => {
+            const loc = await LiveLocation.findOne({ vehicleId: vehicle.vehicleId })
               .sort({ timestamp: -1 });
-            debugLog(`📍 Bus ${bus.busId}: location = ${loc ? 'found' : 'NOT found'}`);
+            debugLog(`📍 Vehicle ${vehicle.vehicleId}: location = ${loc ? 'found' : 'NOT found'}`);
             return {
-              busId: bus.busId,
-              busName: bus.busName,
-              serviceType: bus.serviceType || 'PUBLIC',
-              bookingEnabled: bus.bookingEnabled,
+              vehicleId: vehicle.vehicleId,
+              vehicleName: vehicle.vehicleName,
+              serviceType: vehicle.serviceType || 'PUBLIC',
+              bookingEnabled: vehicle.bookingEnabled,
               location: loc ? { lat: loc.lat, lng: loc.lng } : null,
               lastUpdate: loc?.timestamp
             };
@@ -596,24 +596,24 @@ const setupSocket = (io) => {
       console.log(`👋 Client disconnected: ${socket.id}`);
 
       // Clean up active sessions if this was a driver
-      for (const [busId, session] of activeSessions.entries()) {
+      for (const [vehicleId, session] of activeSessions.entries()) {
         if (session.socketId === socket.id) {
-          await Bus.findOneAndUpdate(
-            { busId, isDeleted: false },
+          await Vehicle.findOneAndUpdate(
+            { vehicleId, isDeleted: false },
             { isActive: false }
           );
 
           if (session.route) {
-            io.to(`route:${session.route}`).emit('bus:status-update', {
-              busId,
+            io.to(`route:${session.route}`).emit('vehicle:status-update', {
+              vehicleId,
               status: 'TRACKING_STOPPED',
               timestamp: new Date().toISOString(),
               reason: 'DRIVER_DISCONNECTED'
             });
           }
 
-          activeSessions.delete(busId);
-          console.log(`Cleaned up session for bus: ${busId}`);
+          activeSessions.delete(vehicleId);
+          console.log(`Cleaned up session for vehicle: ${vehicleId}`);
         }
       }
     });
@@ -630,8 +630,8 @@ const setupSocket = (io) => {
 };
 
 // Export for monitoring
-setupSocket.getActiveSessions = () => Array.from(activeSessions.entries()).map(([busId, session]) => ({
-  busId,
+setupSocket.getActiveSessions = () => Array.from(activeSessions.entries()).map(([vehicleId, session]) => ({
+  vehicleId,
   ...session
 }));
 

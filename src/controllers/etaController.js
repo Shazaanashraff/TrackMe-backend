@@ -1,4 +1,4 @@
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const LiveLocation = require('../models/LiveLocation');
 const Route = require('../models/Route');
 const RouteMembership = require('../models/RouteMembership');
@@ -48,7 +48,7 @@ const calculateAverageSpeed = (locations) => {
   if (totalTime === 0) return 30;
   const avgSpeed = totalDistance / totalTime;
   
-  // Sanity check: speed should be between 10-100 km/h for a bus
+  // Sanity check: speed should be between 10-100 km/h for a vehicle
   return Math.max(10, Math.min(avgSpeed, 100));
 };
 
@@ -66,11 +66,11 @@ const getNextStop = (currentLat, currentLon, route, completedStops = []) => {
   return null; // All stops completed
 };
 
-const getBusLocationCandidates = (bus, fallbackBusId) => {
+const getVehicleLocationCandidates = (vehicle, fallbackVehicleId) => {
   const candidates = [
-    fallbackBusId,
-    bus?._id?.toString?.(),
-    bus?.busId
+    fallbackVehicleId,
+    vehicle?._id?.toString?.(),
+    vehicle?.vehicleId
   ].filter(Boolean);
 
   return [...new Set(candidates)];
@@ -95,26 +95,26 @@ const findRouteByIdentifier = async (routeIdentifier, userId) => {
 
 /**
  * POST /api/eta/calculate
- * Calculate ETA for a specific bus
+ * Calculate ETA for a specific vehicle
  */
-const calculateBusETA = async (req, res) => {
+const calculateVehicleETA = async (req, res) => {
   try {
-    const { busId, routeId } = req.body;
+    const { vehicleId, routeId } = req.body;
     
-    if (!busId || !routeId) {
-      return res.status(400).json({ message: 'busId and routeId required' });
+    if (!vehicleId || !routeId) {
+      return res.status(400).json({ message: 'vehicleId and routeId required' });
     }
     
-    const bus = (await Bus.findById(busId).lean()) || (await Bus.findOne({ busId }).lean());
-    const locationCandidates = getBusLocationCandidates(bus, busId);
+    const vehicle = (await Vehicle.findById(vehicleId).lean()) || (await Vehicle.findOne({ vehicleId }).lean());
+    const locationCandidates = getVehicleLocationCandidates(vehicle, vehicleId);
 
-    // Get current bus location
-    const currentLocation = await LiveLocation.findOne({ busId: { $in: locationCandidates } })
+    // Get current vehicle location
+    const currentLocation = await LiveLocation.findOne({ vehicleId: { $in: locationCandidates } })
       .sort({ timestamp: -1 })
       .lean();
     
     if (!currentLocation) {
-      return res.status(404).json({ message: 'Bus location not found' });
+      return res.status(404).json({ message: 'Vehicle location not found' });
     }
     
     // Get route details
@@ -126,13 +126,13 @@ const calculateBusETA = async (req, res) => {
       return res.status(404).json({ message: 'Route not found' });
     }
 
-    // Get bus details to check completed stops
-    const completedStops = bus?.completedStops || [];
+    // Get vehicle details to check completed stops
+    const completedStops = vehicle?.completedStops || [];
     
     // Get recent location history (last 30 minutes)
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
     const recentLocations = await LiveLocation.find({
-      busId: { $in: locationCandidates },
+      vehicleId: { $in: locationCandidates },
       timestamp: { $gte: thirtyMinutesAgo }
     })
       .sort({ timestamp: 1 })
@@ -151,11 +151,11 @@ const calculateBusETA = async (req, res) => {
     
     if (!nextStop) {
       return res.json({
-        busId,
+        vehicleId,
         routeId,
         eta: null,
         status: 'completed',
-        message: 'Bus has completed all stops on this route'
+        message: 'Vehicle has completed all stops on this route'
       });
     }
     
@@ -175,7 +175,7 @@ const calculateBusETA = async (req, res) => {
     const etaTime = new Date(Date.now() + timeToNextStopMinutes * 60 * 1000);
     
     return res.json({
-      busId,
+      vehicleId,
       routeId,
       currentLocation: {
         latitude: getLat(currentLocation),
@@ -204,20 +204,20 @@ const calculateBusETA = async (req, res) => {
 };
 
 /**
- * GET /api/eta/bus/:busId/route/:routeId
- * Get ETA for a bus on a specific route
+ * GET /api/eta/vehicle/:vehicleId/route/:routeId
+ * Get ETA for a vehicle on a specific route
  */
-const getBusETAByRoute = async (req, res) => {
+const getVehicleETAByRoute = async (req, res) => {
   try {
-    const { busId, routeId } = req.params;
+    const { vehicleId, routeId } = req.params;
     
-    if (!busId || !routeId) {
-      return res.status(400).json({ message: 'busId and routeId required' });
+    if (!vehicleId || !routeId) {
+      return res.status(400).json({ message: 'vehicleId and routeId required' });
     }
     
     // Call the calculate function with these parameters
-    req.body = { busId, routeId };
-    return calculateBusETA(req, res);
+    req.body = { vehicleId, routeId };
+    return calculateVehicleETA(req, res);
   } catch (error) {
     console.error('Get ETA error:', error);
     res.status(500).json({ message: 'Failed to get ETA', error: error.message });
@@ -225,8 +225,8 @@ const getBusETAByRoute = async (req, res) => {
 };
 
 /**
- * GET /api/eta/route/:routeId/all-buses
- * Get ETAs for all active buses on a route
+ * GET /api/eta/route/:routeId/all-vehicles
+ * Get ETAs for all active vehicles on a route
  */
 const getRouteETAs = async (req, res) => {
   try {
@@ -240,21 +240,21 @@ const getRouteETAs = async (req, res) => {
       return res.status(404).json({ message: 'Route not found' });
     }
 
-    // Get all active buses on this route
-    const buses = await Bus.find({
+    // Get all active vehicles on this route
+    const vehicles = await Vehicle.find({
       $or: [{ routeId }, { assignedRoute: routeId }],
       'isActive': true
     }).lean();
     
-    if (buses.length === 0) {
-      return res.json({ routeId, buses: [] });
+    if (vehicles.length === 0) {
+      return res.json({ routeId, vehicles: [] });
     }
     
-    // Calculate ETA for each bus
-    const etasPromises = buses.map(async (bus) => {
-      const locationCandidates = getBusLocationCandidates(bus, bus?._id?.toString?.());
+    // Calculate ETA for each vehicle
+    const etasPromises = vehicles.map(async (vehicle) => {
+      const locationCandidates = getVehicleLocationCandidates(vehicle, vehicle?._id?.toString?.());
 
-      const currentLocation = await LiveLocation.findOne({ busId: { $in: locationCandidates } })
+      const currentLocation = await LiveLocation.findOne({ vehicleId: { $in: locationCandidates } })
         .sort({ timestamp: -1 })
         .lean();
         
@@ -262,7 +262,7 @@ const getRouteETAs = async (req, res) => {
       
       const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
       const recentLocations = await LiveLocation.find({
-        busId: { $in: locationCandidates },
+        vehicleId: { $in: locationCandidates },
         timestamp: { $gte: thirtyMinutesAgo }
       })
         .sort({ timestamp: 1 })
@@ -273,7 +273,7 @@ const getRouteETAs = async (req, res) => {
         getLat(currentLocation),
         getLng(currentLocation),
         route,
-        bus.completedStops || []
+        vehicle.completedStops || []
       );
       
       if (!nextStop) return null;
@@ -288,8 +288,8 @@ const getRouteETAs = async (req, res) => {
       const timeToNextStopMinutes = (remainingDistance / avgSpeed) * 60;
       
       return {
-        busId: bus.busId || bus._id,
-        busName: bus.busName,
+        vehicleId: vehicle.vehicleId || vehicle._id,
+        vehicleName: vehicle.vehicleName,
         eta: {
           time: new Date(Date.now() + timeToNextStopMinutes * 60 * 1000),
           minutesRemaining: Math.round(timeToNextStopMinutes)
@@ -305,7 +305,7 @@ const getRouteETAs = async (req, res) => {
     
     return res.json({
       routeId,
-      buses: etas,
+      vehicles: etas,
       timestamp: new Date()
     });
   } catch (error) {
@@ -315,8 +315,8 @@ const getRouteETAs = async (req, res) => {
 };
 
 module.exports = {
-  calculateBusETA,
-  getBusETAByRoute,
+  calculateVehicleETA,
+  getVehicleETAByRoute,
   getRouteETAs,
   calculateDistance,
   calculateAverageSpeed

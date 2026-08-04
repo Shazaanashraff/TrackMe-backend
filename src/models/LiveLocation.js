@@ -1,9 +1,9 @@
 const mongoose = require('mongoose');
 
 const liveLocationSchema = new mongoose.Schema({
-  busId: {
+  vehicleId: {
     type: String,
-    required: [true, 'Bus ID is required'],
+    required: [true, 'Vehicle ID is required'],
     index: true
   },
   routeId: {
@@ -36,6 +36,6 @@ const liveLocationSchema = new mongoose.Schema({
 });
 
 // Index for efficient queries
-liveLocationSchema.index({ busId: 1, timestamp: -1 });
+liveLocationSchema.index({ vehicleId: 1, timestamp: -1 });
 
 module.exports = mongoose.model('LiveLocation', liveLocationSchema);

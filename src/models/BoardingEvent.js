@@ -12,7 +12,7 @@ const boardingEventSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  busId: {
+  vehicleId: {
     type: String,
     required: true,
     trim: true
@@ -45,8 +45,8 @@ const boardingEventSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
-  // No formal "trip" entity exists yet. Defaults to a per-bus, per-calendar-day
-  // window (`${busId}#YYYY-MM-DD`) so BOARD/ALIGHT toggling has a stable scope;
+  // No formal "trip" entity exists yet. Defaults to a per-vehicle, per-calendar-day
+  // window (`${vehicleId}#YYYY-MM-DD`) so BOARD/ALIGHT toggling has a stable scope;
   // callers may pass an explicit tripId to override once a real trip concept lands.
   tripId: {
     type: String,
@@ -63,8 +63,8 @@ const boardingEventSchema = new mongoose.Schema({
 
 boardingEventSchema.index({ studentId: 1, timestamp: -1 });
 boardingEventSchema.index({ routeId: 1, timestamp: -1 });
-// Debounce lookups: most-recent event for a given student on a given bus/type.
-boardingEventSchema.index({ studentId: 1, busId: 1, type: 1, timestamp: -1 });
+// Debounce lookups: most-recent event for a given student on a given vehicle/type.
+boardingEventSchema.index({ studentId: 1, vehicleId: 1, type: 1, timestamp: -1 });
 // Toggle resolution: most-recent event for a student within a trip.
 boardingEventSchema.index({ studentId: 1, tripId: 1, timestamp: -1 });
 

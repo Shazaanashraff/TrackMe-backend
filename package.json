@@ -1,7 +1,7 @@
 {
-  "name": "bus-tracking-backend",
+  "name": "vehicle-tracking-backend",
   "version": "1.0.0",
-  "description": "Real-time bus tracking system backend with Socket.IO",
+  "description": "Real-time vehicle tracking system backend with Socket.IO",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -9,10 +9,10 @@
     "seed": "node scripts/seed.js",
     "seed:routes": "node scripts/seed-sri-lankan-routes.js",
     "seed:wp": "node scripts/seed-wp-routes.js",
-    "seed:buses": "node scripts/seed-test-buses.js",
-    "seed:manager-buses": "node scripts/seed-manager-buses-per-route.js",
-    "seed:start-journeys": "node scripts/start-two-buses-per-route.js",
-    "snap:stops": "node scripts/snap-stops-to-busstops.js",
+    "seed:vehicles": "node scripts/seed-test-vehicles.js",
+    "seed:manager-vehicles": "node scripts/seed-manager-vehicles-per-route.js",
+    "seed:start-journeys": "node scripts/start-two-vehicles-per-route.js",
+    "snap:stops": "node scripts/snap-stops-to-vehiclestops.js",
     "simulate": "node scripts/simulate-journeys.js",
     "test": "node --test tests/manager-workflow.smoke.test.js",
     "test:integration": "jest"

@@ -1,20 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const {
-  createBusAccountRequest,
+  createVehicleAccountRequest,
   getManagerAssignableRoutes,
-  getManagerBusById,
-  getManagerBuses,
-  getManagerBusLocation,
+  getManagerVehicleById,
+  getManagerVehicles,
+  getManagerVehicleLocation,
   getManagerCustomRoutes,
   getManagerDashboard,
   getManagerRouteChangeRequests,
   getMyRequests,
   nameCustomRoute,
-  requestBusDelete,
-  resetBusAccountPassword,
+  requestVehicleDelete,
+  resetVehicleAccountPassword,
   resolveRouteChangeRequest,
-  updateManagerBus
+  updateManagerVehicle
 } = require('../controllers/managerController');
 const {
   getOwnedRoutes,
@@ -33,15 +33,15 @@ const { protect, requireManager } = require('../middleware/auth');
 router.use(protect, requireManager);
 
 router.get('/dashboard', getManagerDashboard);
-router.get('/buses', getManagerBuses);
+router.get('/vehicles', getManagerVehicles);
 router.get('/routes', getManagerAssignableRoutes);
 router.get('/requests', getMyRequests);
-router.post('/bus-accounts', createBusAccountRequest);
-router.patch('/bus-accounts/:busId/reset-password', resetBusAccountPassword);
-router.get('/buses/:busId', getManagerBusById);
-router.put('/buses/:busId', updateManagerBus);
-router.post('/buses/:busId/delete-request', requestBusDelete);
-router.get('/buses/:busId/location', getManagerBusLocation);
+router.post('/vehicle-accounts', createVehicleAccountRequest);
+router.patch('/vehicle-accounts/:vehicleId/reset-password', resetVehicleAccountPassword);
+router.get('/vehicles/:vehicleId', getManagerVehicleById);
+router.put('/vehicles/:vehicleId', updateManagerVehicle);
+router.post('/vehicles/:vehicleId/delete-request', requestVehicleDelete);
+router.get('/vehicles/:vehicleId/location', getManagerVehicleLocation);
 router.get('/custom-routes', getManagerCustomRoutes);
 router.patch('/custom-routes/:routeId/name', nameCustomRoute);
 router.get('/route-change-requests', getManagerRouteChangeRequests);

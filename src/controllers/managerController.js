@@ -1,8 +1,8 @@
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Booking = require('../models/Booking');
 const LiveLocation = require('../models/LiveLocation');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
-const ManagerBusRequest = require('../models/ManagerBusRequest');
+const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const Route = require('../models/Route');
 const RouteChangeRequest = require('../models/RouteChangeRequest');
 const Organization = require('../models/Organization');
@@ -10,14 +10,14 @@ const Driver = require('../models/Driver');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
-const BUS_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
+const VEHICLE_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
 
 const MANAGER_EDITABLE_FIELDS = [
-  'busName',
+  'vehicleName',
   'numberPlate',
   'registrationNumber',
   'seatCapacity',
-  'busType',
+  'vehicleType',
   'serviceType',
   'bookingEnabled',
   'routeId',
@@ -37,9 +37,9 @@ const writeAuditLog = async ({ managerId, actorId, actorRole, action, entityType
   });
 };
 
-const getManagedBusByBusId = async (managerId, busId) => {
-  return Bus.findOne({
-    busId,
+const getManagedVehicleByVehicleId = async (managerId, vehicleId) => {
+  return Vehicle.findOne({
+    vehicleId,
     managerId,
     isDeleted: false
   });
@@ -50,32 +50,32 @@ exports.getManagerDashboard = async (req, res, next) => {
     const managerId = req.user._id;
 
     const [fleetStats, bookingStats, pendingRequests, driverIds] = await Promise.all([
-      Bus.aggregate([
+      Vehicle.aggregate([
         { $match: { managerId, isDeleted: false } },
         {
           $group: {
             _id: null,
-            totalBuses: { $sum: 1 },
-            activeBuses: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
-            inactiveBuses: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
-            bookingEnabledBuses: { $sum: { $cond: [{ $eq: ['$bookingEnabled', true] }, 1, 0] } }
+            totalVehicles: { $sum: 1 },
+            activeVehicles: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+            inactiveVehicles: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
+            bookingEnabledVehicles: { $sum: { $cond: [{ $eq: ['$bookingEnabled', true] }, 1, 0] } }
           }
         }
       ]),
       Booking.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': managerId
+            'vehicleInfo.managerId': managerId
           }
         },
         {
@@ -92,10 +92,10 @@ exports.getManagerDashboard = async (req, res, next) => {
           }
         }
       ]),
-      ManagerBusRequest.countDocuments({ managerId, status: 'PENDING' }),
+      ManagerVehicleRequest.countDocuments({ managerId, status: 'PENDING' }),
       // Distinct drivers assigned across this manager's fleet — the headline metric
       // for private (school/office) managers who run many vehicles + drivers.
-      Bus.distinct('driverId', { managerId, isDeleted: false, driverId: { $ne: null } })
+      Vehicle.distinct('driverId', { managerId, isDeleted: false, driverId: { $ne: null } })
     ]);
 
     const serviceType = req.user.serviceType || 'PUBLIC';
@@ -112,10 +112,10 @@ exports.getManagerDashboard = async (req, res, next) => {
         organizationName,
         driverCount: driverIds.length,
         fleet: fleetStats[0] || {
-          totalBuses: 0,
-          activeBuses: 0,
-          inactiveBuses: 0,
-          bookingEnabledBuses: 0
+          totalVehicles: 0,
+          activeVehicles: 0,
+          inactiveVehicles: 0,
+          bookingEnabledVehicles: 0
         },
         bookings: bookingStats[0] || {
           totalBookings: 0,
@@ -131,32 +131,32 @@ exports.getManagerDashboard = async (req, res, next) => {
   }
 };
 
-exports.getManagerBuses = async (req, res, next) => {
+exports.getManagerVehicles = async (req, res, next) => {
   try {
-    const buses = await Bus.find({ managerId: req.user._id, isDeleted: false })
+    const vehicles = await Vehicle.find({ managerId: req.user._id, isDeleted: false })
       .populate('driverId', 'name email')
       .sort({ createdAt: -1 })
       .lean();
 
     return res.status(200).json({
       success: true,
-      count: buses.length,
-      data: buses
+      count: vehicles.length,
+      data: vehicles
     });
   } catch (error) {
     next(error);
   }
 };
 
-exports.getManagerBusById = async (req, res, next) => {
+exports.getManagerVehicleById = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
 
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const populated = await Bus.findById(bus._id).populate('driverId', 'name email').lean();
+    const populated = await Vehicle.findById(vehicle._id).populate('driverId', 'name email').lean();
 
     return res.status(200).json({
       success: true,
@@ -167,12 +167,12 @@ exports.getManagerBusById = async (req, res, next) => {
   }
 };
 
-exports.updateManagerBus = async (req, res, next) => {
+exports.updateManagerVehicle = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
 
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
     const incomingKeys = Object.keys(req.body || {});
@@ -198,18 +198,18 @@ exports.updateManagerBus = async (req, res, next) => {
       }
     }
 
-    if (updateData.busType) {
-      updateData.busType = String(updateData.busType).toUpperCase();
-      if (!BUS_TYPES.includes(updateData.busType)) {
-        return res.status(400).json({ success: false, message: 'Invalid bus type' });
+    if (updateData.vehicleType) {
+      updateData.vehicleType = String(updateData.vehicleType).toUpperCase();
+      if (!VEHICLE_TYPES.includes(updateData.vehicleType)) {
+        return res.status(400).json({ success: false, message: 'Invalid vehicle type' });
       }
     }
 
     if (updateData.numberPlate) {
       updateData.numberPlate = String(updateData.numberPlate).trim().toUpperCase();
-      const duplicate = await Bus.findOne({
+      const duplicate = await Vehicle.findOne({
         numberPlate: updateData.numberPlate,
-        _id: { $ne: bus._id },
+        _id: { $ne: vehicle._id },
         isDeleted: false
       });
       if (duplicate) {
@@ -232,61 +232,61 @@ exports.updateManagerBus = async (req, res, next) => {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
       }
 
-      const effectiveServiceType = updateData.serviceType || bus.serviceType;
+      const effectiveServiceType = updateData.serviceType || vehicle.serviceType;
       if (route.serviceType && route.serviceType !== effectiveServiceType) {
         return res.status(400).json({
           success: false,
-          message: 'Bus service type must match route service type'
+          message: 'Vehicle service type must match route service type'
         });
       }
     }
 
     const before = {
-      busName: bus.busName,
-      numberPlate: bus.numberPlate,
-      registrationNumber: bus.registrationNumber,
-      seatCapacity: bus.seatCapacity,
-      busType: bus.busType,
-      serviceType: bus.serviceType,
-      bookingEnabled: bus.bookingEnabled,
-      routeId: bus.routeId,
-      isActive: bus.isActive,
-      maintenanceStatus: bus.maintenanceStatus
+      vehicleName: vehicle.vehicleName,
+      numberPlate: vehicle.numberPlate,
+      registrationNumber: vehicle.registrationNumber,
+      seatCapacity: vehicle.seatCapacity,
+      vehicleType: vehicle.vehicleType,
+      serviceType: vehicle.serviceType,
+      bookingEnabled: vehicle.bookingEnabled,
+      routeId: vehicle.routeId,
+      isActive: vehicle.isActive,
+      maintenanceStatus: vehicle.maintenanceStatus
     };
 
-    Object.assign(bus, updateData);
-    await bus.save();
+    Object.assign(vehicle, updateData);
+    await vehicle.save();
 
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_EDITED',
-      entityType: 'BUS',
-      entityId: bus.busId,
+      action: 'VEHICLE_EDITED',
+      entityType: 'VEHICLE',
+      entityId: vehicle.vehicleId,
       metadata: { before, after: updateData }
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Bus updated successfully',
-      data: bus
+      message: 'Vehicle updated successfully',
+      data: vehicle
     });
   } catch (error) {
     next(error);
   }
 };
 
-exports.createBusAccountRequest = async (req, res, next) => {
+exports.createVehicleAccountRequest = async (req, res, next) => {
   try {
     const {
-      busId,
-      busName,
+      vehicleId,
+      vehicleName,
       numberPlate,
       routeId,
       routeMode,
       seatCapacity,
-      busType,
+      vehicleType,
       serviceType,
       bookingEnabled,
       driverName,
@@ -300,25 +300,25 @@ exports.createBusAccountRequest = async (req, res, next) => {
 
     // CUSTOM = school/work shuttle whose driver records the route by driving it
     // (no existing route to pick). The backend provisions a private, unnamed
-    // route for the bus at approval time instead of requiring a routeId here.
+    // route for the vehicle at approval time instead of requiring a routeId here.
     const normalizedRouteMode = String(routeMode || 'EXISTING').toUpperCase();
     if (!['EXISTING', 'CUSTOM'].includes(normalizedRouteMode)) {
       return res.status(400).json({ success: false, message: 'routeMode must be EXISTING or CUSTOM' });
     }
     const isCustomRoute = normalizedRouteMode === 'CUSTOM';
 
-    const normalizedBusId = String(busId || '').trim();
+    const normalizedVehicleId = String(vehicleId || '').trim();
     const normalizedNumberPlate = String(numberPlate || '').trim().toUpperCase();
-    const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedBusId}`).trim();
+    const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedVehicleId}`).trim();
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
 
-    if (!normalizedBusId || !normalizedNumberPlate || (!isCustomRoute && !normalizedRouteId) || !driverName || !normalizedEmail || !password) {
+    if (!normalizedVehicleId || !normalizedNumberPlate || (!isCustomRoute && !normalizedRouteId) || !driverName || !normalizedEmail || !password) {
       return res.status(400).json({
         success: false,
         message: isCustomRoute
-          ? 'busId, numberPlate, driverName, driverEmail, and password are required'
-          : 'busId, numberPlate, routeId, driverName, driverEmail, and password are required'
+          ? 'vehicleId, numberPlate, driverName, driverEmail, and password are required'
+          : 'vehicleId, numberPlate, routeId, driverName, driverEmail, and password are required'
       });
     }
 
@@ -326,14 +326,14 @@ exports.createBusAccountRequest = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
-    const existingBus = await Bus.findOne({
-      $or: [{ busId: normalizedBusId }, { registrationNumber: normalizedReg }, { numberPlate: normalizedNumberPlate }],
+    const existingVehicle = await Vehicle.findOne({
+      $or: [{ vehicleId: normalizedVehicleId }, { registrationNumber: normalizedReg }, { numberPlate: normalizedNumberPlate }],
       isDeleted: false
     });
-    if (existingBus) {
+    if (existingVehicle) {
       return res.status(409).json({
         success: false,
-        message: 'Bus ID, number plate, or registration number already exists'
+        message: 'Vehicle ID, number plate, or registration number already exists'
       });
     }
 
@@ -364,41 +364,41 @@ exports.createBusAccountRequest = async (req, res, next) => {
     if (route?.serviceType && route.serviceType !== normalizedServiceType) {
       return res.status(400).json({
         success: false,
-        message: 'Bus service type must match route service type'
+        message: 'Vehicle service type must match route service type'
       });
     }
 
-    const pendingForBus = await ManagerBusRequest.findOne({
+    const pendingForVehicle = await ManagerVehicleRequest.findOne({
       managerId: req.user._id,
-      busId: normalizedBusId,
+      vehicleId: normalizedVehicleId,
       status: 'PENDING',
-      type: 'CREATE_BUS_ACCOUNT'
+      type: 'CREATE_VEHICLE_ACCOUNT'
     });
 
-    if (pendingForBus) {
+    if (pendingForVehicle) {
       return res.status(409).json({
         success: false,
-        message: 'A pending create request already exists for this bus ID'
+        message: 'A pending create request already exists for this vehicle ID'
       });
     }
 
-    const requestDoc = await ManagerBusRequest.create({
-      type: 'CREATE_BUS_ACCOUNT',
+    const requestDoc = await ManagerVehicleRequest.create({
+      type: 'CREATE_VEHICLE_ACCOUNT',
       managerId: req.user._id,
-      busId: normalizedBusId,
+      vehicleId: normalizedVehicleId,
       reason: String(reason || '').trim(),
       payload: {
         routeMode: normalizedRouteMode,
-        bus: {
-          busId: normalizedBusId,
-          busName,
+        vehicle: {
+          vehicleId: normalizedVehicleId,
+          vehicleName,
           numberPlate: normalizedNumberPlate,
           registrationNumber: normalizedReg,
           // routeId is left unset for CUSTOM; the super admin approval step
-          // provisions a private route and fills this in before Bus.create.
+          // provisions a private route and fills this in before Vehicle.create.
           routeId: isCustomRoute ? undefined : normalizedRouteId,
           seatCapacity,
-          busType: busType || 'AC',
+          vehicleType: vehicleType || 'AC',
           serviceType: normalizedServiceType,
           bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true
         },
@@ -417,18 +417,18 @@ exports.createBusAccountRequest = async (req, res, next) => {
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_CREATE_REQUESTED',
-      entityType: 'BUS_REQUEST',
+      action: 'VEHICLE_CREATE_REQUESTED',
+      entityType: 'VEHICLE_REQUEST',
       entityId: requestDoc._id.toString(),
       metadata: {
-        busId: normalizedBusId,
+        vehicleId: normalizedVehicleId,
         routeId: normalizedRouteId
       }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Bus creation request submitted for super admin approval',
+      message: 'Vehicle creation request submitted for super admin approval',
       data: requestDoc
     });
   } catch (error) {
@@ -436,34 +436,34 @@ exports.createBusAccountRequest = async (req, res, next) => {
   }
 };
 
-exports.requestBusDelete = async (req, res, next) => {
+exports.requestVehicleDelete = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const existingPendingDelete = await ManagerBusRequest.findOne({
+    const existingPendingDelete = await ManagerVehicleRequest.findOne({
       managerId: req.user._id,
-      busId: bus.busId,
-      type: 'DELETE_BUS',
+      vehicleId: vehicle.vehicleId,
+      type: 'DELETE_VEHICLE',
       status: 'PENDING'
     });
     if (existingPendingDelete) {
-      return res.status(409).json({ success: false, message: 'A pending delete request already exists for this bus' });
+      return res.status(409).json({ success: false, message: 'A pending delete request already exists for this vehicle' });
     }
 
-    const requestDoc = await ManagerBusRequest.create({
-      type: 'DELETE_BUS',
+    const requestDoc = await ManagerVehicleRequest.create({
+      type: 'DELETE_VEHICLE',
       managerId: req.user._id,
-      busId: bus.busId,
+      vehicleId: vehicle.vehicleId,
       reason: String(req.body?.reason || '').trim(),
       payload: {
-        busSnapshot: {
-          busId: bus.busId,
-          busName: bus.busName,
-          registrationNumber: bus.registrationNumber,
-          routeId: bus.routeId
+        vehicleSnapshot: {
+          vehicleId: vehicle.vehicleId,
+          vehicleName: vehicle.vehicleName,
+          registrationNumber: vehicle.registrationNumber,
+          routeId: vehicle.routeId
         }
       }
     });
@@ -472,15 +472,15 @@ exports.requestBusDelete = async (req, res, next) => {
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_DELETE_REQUESTED',
-      entityType: 'BUS_REQUEST',
+      action: 'VEHICLE_DELETE_REQUESTED',
+      entityType: 'VEHICLE_REQUEST',
       entityId: requestDoc._id.toString(),
-      metadata: { busId: bus.busId }
+      metadata: { vehicleId: vehicle.vehicleId }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Bus deletion request submitted for super admin approval',
+      message: 'Vehicle deletion request submitted for super admin approval',
       data: requestDoc
     });
   } catch (error) {
@@ -490,7 +490,7 @@ exports.requestBusDelete = async (req, res, next) => {
 
 exports.getMyRequests = async (req, res, next) => {
   try {
-    const requests = await ManagerBusRequest.find({ managerId: req.user._id })
+    const requests = await ManagerVehicleRequest.find({ managerId: req.user._id })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -504,21 +504,21 @@ exports.getMyRequests = async (req, res, next) => {
   }
 };
 
-exports.resetBusAccountPassword = async (req, res, next) => {
+exports.resetVehicleAccountPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
     if (!password || String(password).length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const driver = await Driver.findById(bus.driverId).select('+password');
+    const driver = await Driver.findById(vehicle.driverId).select('+password');
     if (!driver) {
-      return res.status(404).json({ success: false, message: 'Driver account not found for this bus' });
+      return res.status(404).json({ success: false, message: 'Driver account not found for this vehicle' });
     }
 
     driver.password = password;
@@ -530,26 +530,26 @@ exports.resetBusAccountPassword = async (req, res, next) => {
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_ACCOUNT_PASSWORD_RESET',
-      entityType: 'BUS_ACCOUNT',
-      entityId: bus.busId,
+      action: 'VEHICLE_ACCOUNT_PASSWORD_RESET',
+      entityType: 'VEHICLE_ACCOUNT',
+      entityId: vehicle.vehicleId,
       metadata: { driverId: driver._id }
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Bus account password updated successfully'
+      message: 'Vehicle account password updated successfully'
     });
   } catch (error) {
     next(error);
   }
 };
 
-exports.getManagerBusLocation = async (req, res, next) => {
+exports.getManagerVehicleLocation = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
     const minutes = Number(req.query.minutes) || 15;
@@ -558,8 +558,8 @@ exports.getManagerBusLocation = async (req, res, next) => {
     const startTime = new Date(Date.now() - windowMinutes * 60 * 1000);
 
     const [latest, history] = await Promise.all([
-      LiveLocation.findOne({ busId: bus.busId }).sort({ timestamp: -1 }).lean(),
-      LiveLocation.find({ busId: bus.busId, timestamp: { $gte: startTime } })
+      LiveLocation.findOne({ vehicleId: vehicle.vehicleId }).sort({ timestamp: -1 }).lean(),
+      LiveLocation.find({ vehicleId: vehicle.vehicleId, timestamp: { $gte: startTime } })
         .sort({ timestamp: 1 })
         .lean()
     ]);
@@ -567,10 +567,10 @@ exports.getManagerBusLocation = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       data: {
-        bus: {
-          busId: bus.busId,
-          busName: bus.busName,
-          routeId: bus.routeId
+        vehicle: {
+          vehicleId: vehicle.vehicleId,
+          vehicleName: vehicle.vehicleName,
+          routeId: vehicle.routeId
         },
         latest,
         history,
@@ -644,7 +644,7 @@ exports.nameCustomRoute = async (req, res, next) => {
   }
 };
 
-// @desc    Routes available for this manager to assign to a bus: public routes
+// @desc    Routes available for this manager to assign to a vehicle: public routes
 //          plus this manager's own named (ACTIVE) private custom routes.
 // @route   GET /api/manager/routes
 exports.getManagerAssignableRoutes = async (req, res, next) => {

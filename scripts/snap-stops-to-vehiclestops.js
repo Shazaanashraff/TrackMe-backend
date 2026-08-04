@@ -1,8 +1,8 @@
 /**
- * Snap every route stop to the nearest REAL bus stop (Google Places Nearby).
+ * Snap every route stop to the nearest REAL vehicle stop (Google Places Nearby).
  *
  * The seeded stop coordinates were town centroids, so route terminals floated in
- * the middle of a block instead of sitting on a bus stand. This moves each unique
+ * the middle of a block instead of sitting on a vehicle stand. This moves each unique
  * stop onto the closest bus_station / bus_stop / transit_station, then rewrites
  * every route's stops by name. Run once; re-runnable (idempotent-ish).
  *
@@ -29,8 +29,8 @@ function haversineM(a, b, x, y) {
   ));
 }
 
-// Nearest bus-type place to (lat,lng); prefers bus_station > bus_stop > transit_station.
-async function nearestBusStop(lat, lng) {
+// Nearest vehicle-type place to (lat,lng); prefers bus_station > bus_stop > transit_station.
+async function nearestVehicleStop(lat, lng) {
   const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
     method: 'POST',
     headers: {
@@ -81,7 +81,7 @@ async function nearestBusStop(lat, lng) {
   const snapped = new Map(); // name -> {lat,lng}
   let moved = 0, kept = 0;
   for (const [name, { lat, lng }] of uniq) {
-    const best = await nearestBusStop(lat, lng);
+    const best = await nearestVehicleStop(lat, lng);
     if (best) {
       snapped.set(name, { lat: best.lat, lng: best.lng });
       moved++;
@@ -89,7 +89,7 @@ async function nearestBusStop(lat, lng) {
     } else {
       snapped.set(name, { lat, lng });
       kept++;
-      console.log(`  · ${name.padEnd(22)} -> no bus stop within ${SEARCH_RADIUS_M}m, kept original`);
+      console.log(`  · ${name.padEnd(22)} -> no vehicle stop within ${SEARCH_RADIUS_M}m, kept original`);
     }
     await sleep(120);
   }

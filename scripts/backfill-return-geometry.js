@@ -30,7 +30,7 @@ async function transitLegs(from, to, key) {
     destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
     travelMode: 'TRANSIT',
     computeAlternativeRoutes: true,
-    transitPreferences: { allowedTravelModes: ['BUS'], ...extra },
+    transitPreferences: { allowedTravelModes: ['VEHICLE'], ...extra },
   });
   const variants = [bodyFor({}), bodyFor({ routingPreference: 'LESS_WALKING' })];
   const legs = [];

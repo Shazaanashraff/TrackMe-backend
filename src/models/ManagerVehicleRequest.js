@@ -1,9 +1,9 @@
 const mongoose = require('mongoose');
 
-const managerBusRequestSchema = new mongoose.Schema({
+const managerVehicleRequestSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['CREATE_BUS_ACCOUNT', 'DELETE_BUS'],
+    enum: ['CREATE_VEHICLE_ACCOUNT', 'DELETE_VEHICLE'],
     required: true,
     index: true
   },
@@ -19,7 +19,7 @@ const managerBusRequestSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  busId: {
+  vehicleId: {
     type: String,
     required: true,
     trim: true,
@@ -52,6 +52,6 @@ const managerBusRequestSchema = new mongoose.Schema({
   timestamps: true
 });
 
-managerBusRequestSchema.index({ managerId: 1, status: 1, createdAt: -1 });
+managerVehicleRequestSchema.index({ managerId: 1, status: 1, createdAt: -1 });
 
-module.exports = mongoose.model('ManagerBusRequest', managerBusRequestSchema);
+module.exports = mongoose.model('ManagerVehicleRequest', managerVehicleRequestSchema);

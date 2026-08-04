@@ -1,21 +1,21 @@
 /**
- * Data-driven live bus journey simulator.
+ * Data-driven live vehicle journey simulator.
  *
  * Uses the real Western Province fleet figures (scripts/wp-fleet-data.js,
- * transcribed from the 2020 WP route dataset) to decide HOW MANY buses run on
+ * transcribed from the 2020 WP route dataset) to decide HOW MANY vehicles run on
  * each route, scaled by TIME OF DAY (operating hours + morning/evening peaks),
- * and spreads them WHERE they should be along the route. Each simulated bus
+ * and spreads them WHERE they should be along the route. Each simulated vehicle
  * connects as its assigned driver and emits `driver:location`, which the server
  * persists and broadcasts to the UserApp live map.
  *
  * Requires the backend running and data seeded:
- *   BUSES_PER_ROUTE=8 npm run seed:manager-buses
+ *   VEHICLES_PER_ROUTE=8 npm run seed:manager-vehicles
  *
  * Run:  npm run simulate      (Ctrl+C to stop)
  *
  * Tunables (env):
- *   SIM_MAX_PER_ROUTE  cap on concurrently simulated buses per route (default 8)
- *   SIM_TICK_MS        ms between position updates per bus (default 2000)
+ *   SIM_MAX_PER_ROUTE  cap on concurrently simulated vehicles per route (default 8)
+ *   SIM_TICK_MS        ms between position updates per vehicle (default 2000)
  *   SIM_STEPS          interpolation points between two stops (default 25)
  *   SIM_REFRESH_MIN    minutes between re-evaluating time-of-day fleet (default 5)
  *   SIM_FORCE_HOUR     pin the time-of-day hour 0-23 (for testing peak/night)
@@ -26,7 +26,7 @@ const jwt = require('jsonwebtoken');
 const { io } = require('socket.io-client');
 
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const FLEET = require('./wp-fleet-data');
 
 dotenv.config();
@@ -56,7 +56,7 @@ function currentHour() {
   return new Date().getHours();
 }
 
-// How many buses should currently be running on a route.
+// How many vehicles should currently be running on a route.
 function concurrentCount(routeId, seededCount) {
   const fleet = FLEET[routeId]?.fleet ?? 2;
   const factor = timeOfDayFactor(currentHour());
@@ -88,9 +88,9 @@ function signDriverToken(driverId) {
   return jwt.sign({ id: String(driverId), tokenType: 'access' }, process.env.JWT_SECRET, { expiresIn: '12h' });
 }
 
-// One driven bus: owns a socket, walks the route, bounces at the ends.
-function startBus(bus, waypoints, startIndex, direction) {
-  const token = signDriverToken(bus.driverId);
+// One driven vehicle: owns a socket, walks the route, bounces at the ends.
+function startVehicle(vehicle, waypoints, startIndex, direction) {
+  const token = signDriverToken(vehicle.driverId);
   const socket = io(SERVER_URL, { auth: { token }, transports: ['websocket'], reconnection: true });
   let cursor = startIndex;
   let dir = direction;
@@ -98,13 +98,13 @@ function startBus(bus, waypoints, startIndex, direction) {
 
   socket.on('connect', () => {
     if (timer) clearInterval(timer);
-    socket.emit('driver:start-tracking', { busId: bus.busId }, () => {});
+    socket.emit('driver:start-tracking', { vehicleId: vehicle.vehicleId }, () => {});
     timer = setInterval(() => {
       const p = waypoints[cursor];
       if (!p) return;
       socket.emit('driver:location', {
-        busId: bus.busId,
-        routeId: bus.routeId,
+        vehicleId: vehicle.vehicleId,
+        routeId: vehicle.routeId,
         lat: Number(p.lat.toFixed(6)),
         lng: Number(p.lng.toFixed(6)),
         accuracy: 8,
@@ -116,41 +116,41 @@ function startBus(bus, waypoints, startIndex, direction) {
     }, TICK_MS);
   });
 
-  socket.on('connect_error', (err) => console.error(`⚠️  ${bus.busId}: ${err.message}`));
+  socket.on('connect_error', (err) => console.error(`⚠️  ${vehicle.vehicleId}: ${err.message}`));
 
   return {
-    busId: bus.busId,
-    stop: () => { if (timer) clearInterval(timer); socket.emit('driver:stop-tracking', { busId: bus.busId }, () => {}); socket.close(); },
+    vehicleId: vehicle.vehicleId,
+    stop: () => { if (timer) clearInterval(timer); socket.emit('driver:stop-tracking', { vehicleId: vehicle.vehicleId }, () => {}); socket.close(); },
   };
 }
 
-const running = new Map(); // routeId -> [ { busId, stop } ]
-const routeCache = new Map(); // routeId -> { waypoints, buses[] }
+const running = new Map(); // routeId -> [ { vehicleId, stop } ]
+const routeCache = new Map(); // routeId -> { waypoints, vehicles[] }
 
 async function reconcile() {
   const hour = currentHour();
   let total = 0;
   const summary = [];
 
-  for (const [routeId, { waypoints, buses }] of routeCache.entries()) {
-    const want = concurrentCount(routeId, buses.length);
+  for (const [routeId, { waypoints, vehicles }] of routeCache.entries()) {
+    const want = concurrentCount(routeId, vehicles.length);
     const active = running.get(routeId) || [];
 
     // Scale down
     while (active.length > want) active.pop().stop();
-    // Scale up — spread new buses evenly along the path, alternating direction.
+    // Scale up — spread new vehicles evenly along the path, alternating direction.
     while (active.length < want) {
       const i = active.length;
       const startIndex = Math.floor((i / Math.max(want, 1)) * (waypoints.length - 1));
-      const bus = buses[i];
-      active.push(startBus(bus, waypoints, startIndex, i % 2 === 0 ? 1 : -1));
+      const vehicle = vehicles[i];
+      active.push(startVehicle(vehicle, waypoints, startIndex, i % 2 === 0 ? 1 : -1));
     }
     running.set(routeId, active);
     total += active.length;
     if (active.length > 0) summary.push(`${routeId}:${active.length}`);
   }
 
-  console.log(`\n🕒 ${String(hour).padStart(2, '0')}:00 (factor ${timeOfDayFactor(hour)}) — ${total} buses running across ${summary.length} routes`);
+  console.log(`\n🕒 ${String(hour).padStart(2, '0')}:00 (factor ${timeOfDayFactor(hour)}) — ${total} vehicles running across ${summary.length} routes`);
   console.log('   ' + summary.join('  '));
 }
 
@@ -163,14 +163,14 @@ async function main() {
   for (const route of routes) {
     const waypoints = buildWaypoints(route.stops || []);
     if (waypoints.length < 2) continue;
-    const buses = await Bus.find({ routeId: route.routeId, isDeleted: false })
-      .select('busId routeId driverId').sort({ busId: 1 }).lean();
-    if (!buses.length) continue;
-    routeCache.set(route.routeId, { waypoints, buses });
+    const vehicles = await Vehicle.find({ routeId: route.routeId, isDeleted: false })
+      .select('vehicleId routeId driverId').sort({ vehicleId: 1 }).lean();
+    if (!vehicles.length) continue;
+    routeCache.set(route.routeId, { waypoints, vehicles });
   }
 
   if (routeCache.size === 0) {
-    console.error('❌ No routes with buses found. Run: BUSES_PER_ROUTE=8 npm run seed:manager-buses');
+    console.error('❌ No routes with vehicles found. Run: VEHICLES_PER_ROUTE=8 npm run seed:manager-vehicles');
     process.exit(1);
   }
 
@@ -180,7 +180,7 @@ async function main() {
   await reconcile();
   setInterval(reconcile, REFRESH_MIN * 60 * 1000);
 
-  console.log('\nℹ️  Buses are moving (counts scale with time of day). Ctrl+C to stop.');
+  console.log('\nℹ️  Vehicles are moving (counts scale with time of day). Ctrl+C to stop.');
 }
 
 function shutdown() {

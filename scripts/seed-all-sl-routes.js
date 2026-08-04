@@ -6,7 +6,7 @@
  *   Central Province (CPTSA) + Southern Province (SPRPTA) + Western Province (RPTA-WP).
  * De-duplicated on (route number, origin, destination); route numbers normalised.
  *
- * This DELETES all existing routes and inserts the catalog. Buses/live-tracking are
+ * This DELETES all existing routes and inserts the catalog. Vehicles/live-tracking are
  * handled separately (the live-tracking feature is being re-implemented).
  *
  * Run:  node scripts/seed-all-sl-routes.js

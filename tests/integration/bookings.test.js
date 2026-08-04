@@ -3,18 +3,18 @@ const app = require('../../src/server');
 const User = require('../../src/models/User');
 const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
-const Bus = require('../../src/models/Bus');
+const Vehicle = require('../../src/models/Vehicle');
 const { connectTestDb, closeTestDb } = require('./db');
 
 // Matches the real API: POST /api/bookings expects
-// { busId, routeId, seatNumbers[], journeyDate, pricePerSeat, totalPrice, ... }
+// { vehicleId, routeId, seatNumbers[], journeyDate, pricePerSeat, totalPrice, ... }
 // and returns 201 { message: 'Booking created successfully', booking, ... }.
 
 const JOURNEY_DATE = '2030-01-15T08:00:00.000Z';
 const PASSENGER = { email: `booker-${Date.now()}@test.com`, password: 'P@ssw0rd!' };
 
 let token;
-let bus;
+let vehicle;
 let route;
 
 beforeAll(async () => {
@@ -34,7 +34,7 @@ beforeAll(async () => {
     .send({ email: PASSENGER.email, password: PASSENGER.password });
   token = login.body.accessToken;
 
-  // A driver is required to create a bus.
+  // A driver is required to create a vehicle.
   const driver = await Driver.create({
     name: 'Booking Driver',
     email: `bdriver-${Date.now()}@test.com`,
@@ -57,15 +57,15 @@ beforeAll(async () => {
     ],
   });
 
-  bus = await Bus.create({
-    busId: `BT-${Date.now()}`,
-    busName: 'Booking Test Bus',
+  vehicle = await Vehicle.create({
+    vehicleId: `BT-${Date.now()}`,
+    vehicleName: 'Booking Test Vehicle',
     registrationNumber: `REG-${Date.now()}`,
     numberPlate: `NP-${Date.now()}`,
     routeId: route.routeId,
     driverId: driver._id,
     seatCapacity: 45,
-    busType: 'NON-AC',
+    vehicleType: 'NON-AC',
     serviceType: 'PUBLIC',
     bookingEnabled: true,
   });
@@ -77,7 +77,7 @@ afterAll(async () => {
 
 function bookingPayload(seatNumbers) {
   return {
-    busId: bus._id.toString(),
+    vehicleId: vehicle._id.toString(),
     routeId: route._id.toString(),
     seatNumbers,
     journeyDate: JOURNEY_DATE,
@@ -105,7 +105,7 @@ describe('Bookings Integration - POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', `Bearer ${token}`)
-      .send({ busId: bus._id.toString() }); // missing routeId, seatNumbers, etc.
+      .send({ vehicleId: vehicle._id.toString() }); // missing routeId, seatNumbers, etc.
 
     expect(res.status).toBe(400);
     expect(Array.isArray(res.body.errors)).toBe(true);

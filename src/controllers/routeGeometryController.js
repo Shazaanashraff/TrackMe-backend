@@ -39,18 +39,18 @@ const normLine = (s) => String(s || '').replace(/\s+/g, '').toUpperCase();
 // Base number (drop #-disambiguator and any sub-route suffix): "138#2" -> "138".
 const baseNum = (s) => normLine(s).split('#')[0];
 
-// Ask Google TRANSIT for the buses that serve origin->destination, and return each
-// bus leg's { line, polyline }. This is the REAL bus geometry (not driving directions
+// Ask Google TRANSIT for the vehicles that serve origin->destination, and return each
+// vehicle leg's { line, polyline }. This is the REAL vehicle geometry (not driving directions
 // between town centres), so a route drawn from it follows the actual service.
-async function transitBusLegs(from, to, key) {
+async function transitVehicleLegs(from, to, key) {
   const bodyFor = (extra) => ({
     origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
     destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
     travelMode: 'TRANSIT',
     computeAlternativeRoutes: true,
-    transitPreferences: { allowedTravelModes: ['BUS'], ...extra },
+    transitPreferences: { allowedTravelModes: ['VEHICLE'], ...extra },
   });
-  // Two routing variants (default + LESS_WALKING) surface far more distinct bus
+  // Two routing variants (default + LESS_WALKING) surface far more distinct vehicle
   // lines than a single call — critical for matching a specific route number.
   const variants = [bodyFor({}), bodyFor({ routingPreference: 'LESS_WALKING' })];
 
@@ -97,8 +97,8 @@ async function transitBusLegs(from, to, key) {
   return legs;
 }
 
-// GET /api/bus/routes/:routeId/path  -> { success, data: { coords: [{lat,lng}], cached, matched } }
-// Accurate route geometry: the real polyline of the matching bus line from Google
+// GET /api/vehicle/routes/:routeId/path  -> { success, data: { coords: [{lat,lng}], cached, matched } }
+// Accurate route geometry: the real polyline of the matching vehicle line from Google
 // Transit (origin -> destination). No match => no line (we do not invent geometry).
 exports.getRoutePath = async (req, res) => {
   const routeId = String(req.params.routeId);
@@ -138,7 +138,7 @@ exports.getRoutePath = async (req, res) => {
     const to = stops[stops.length - 1];
     const want = baseNum(routeId);
 
-    const legs = await transitBusLegs(from, to, key);
+    const legs = await transitVehicleLegs(from, to, key);
     // Prefer an exact line match; fall back to a base-number match (ignoring suffixes).
     let hit = legs.find((l) => normLine(l.line) === normLine(routeId));
     if (!hit) hit = legs.find((l) => baseNum(l.line) === want);

@@ -9,9 +9,9 @@ const BookingSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  busId: {
+  vehicleId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Bus',
+    ref: 'Vehicle',
     required: true,
     index: true
   },
@@ -130,6 +130,6 @@ BookingSchema.virtual('daysUntilJourney').get(function() {
 BookingSchema.index({ userId: 1, journeyDate: 1 });
 
 // Index for finding available seats
-BookingSchema.index({ busId: 1, journeyDate: 1, status: 1 });
+BookingSchema.index({ vehicleId: 1, journeyDate: 1, status: 1 });
 
 module.exports = mongoose.model('Booking', BookingSchema);

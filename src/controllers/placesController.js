@@ -125,8 +125,8 @@ exports.placeDetails = async (req, res) => {
 
 // Picks an accurate human-readable label from Google Geocoding results. Reverse
 // geocoding returns POIs/establishments within a radius, so preferring those (an
-// earlier version did) mislabels a point with a nearby bus stop or building —
-// e.g. a pin in Kolonnawa reading "Gothatuwa Bus Stop". Instead we build the real
+// earlier version did) mislabels a point with a nearby vehicle stop or building —
+// e.g. a pin in Kolonnawa reading "Gothatuwa Vehicle Stop". Instead we build the real
 // "Road, Suburb" the point sits on, which is what's actually accurate, and only
 // fall back to the town or a cleaned address segment (never a Plus Code).
 function googleShortName(results) {
@@ -219,7 +219,7 @@ async function osmReverse(lat, lng) {
   url.searchParams.set('lon', String(lng));
   url.searchParams.set('zoom', '18');
   url.searchParams.set('addressdetails', '1');
-  const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (bus-tracking app)' } });
+  const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (vehicle-tracking app)' } });
   if (!gRes.ok) return null;
   const json = await gRes.json();
   if (!json.display_name) return null;

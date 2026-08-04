@@ -2,7 +2,7 @@ const request = require('supertest');
 const app = require('../../src/server');
 const Manager = require('../../src/models/Manager');
 const SuperAdmin = require('../../src/models/SuperAdmin');
-const Bus = require('../../src/models/Bus');
+const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
 const RouteChangeRequest = require('../../src/models/RouteChangeRequest');
 const Notification = require('../../src/models/Notification');
@@ -66,11 +66,11 @@ afterAll(async () => {
 async function createActiveCustomRoute() {
   const suffix = Math.random().toString(36).slice(2, 8);
   const createRes = await request(app)
-    .post('/api/manager/bus-accounts')
+    .post('/api/manager/vehicle-accounts')
     .set('Authorization', `Bearer ${managerToken}`)
     .send({
-      busId: `RCR-BUS-${suffix}`,
-      busName: 'Shuttle',
+      vehicleId: `RCR-VEHICLE-${suffix}`,
+      vehicleName: 'Shuttle',
       numberPlate: `RCR-${suffix}`,
       routeMode: 'CUSTOM',
       seatCapacity: 20,
@@ -81,125 +81,125 @@ async function createActiveCustomRoute() {
   expect(createRes.status).toBe(201);
 
   const approveRes = await request(app)
-    .patch(`/api/super-admin/bus-requests/${createRes.body.data._id}/review`)
+    .patch(`/api/super-admin/vehicle-requests/${createRes.body.data._id}/review`)
     .set('Authorization', `Bearer ${superAdminToken}`)
     .send({ decision: 'APPROVE' });
   expect(approveRes.status).toBe(200);
 
-  const bus = await Bus.findOne({ busId: `RCR-BUS-${suffix}` });
+  const vehicle = await Vehicle.findOne({ vehicleId: `RCR-VEHICLE-${suffix}` });
   const driverToken = await loginAs(`rcr-driver-${suffix}@test.com`, 'Driver@123');
 
   const recordRes = await request(app)
     .post('/api/driver/custom-routes/record')
     .set('Authorization', `Bearer ${driverToken}`)
     .send({
-      busId: bus.busId,
+      vehicleId: vehicle.vehicleId,
       breadcrumb: ON_ROUTE_BREADCRUMB,
       stops: [{ lat: ROUTE_START.lat, lng: ROUTE_START.lng, stopName: 'Start' }]
     });
   expect(recordRes.status).toBe(200);
 
   const nameRes = await request(app)
-    .patch(`/api/manager/custom-routes/${bus.routeId}/name`)
+    .patch(`/api/manager/custom-routes/${vehicle.routeId}/name`)
     .set('Authorization', `Bearer ${managerToken}`)
     .send({ routeName: 'Deviation Test Route' });
   expect(nameRes.status).toBe(200);
 
-  return { bus, driverToken, routeId: bus.routeId };
+  return { vehicle, driverToken, routeId: vehicle.routeId };
 }
 
 describe('POST /api/driver/custom-routes/:routeId/report-journey', () => {
   it('does not flag a journey that tracks the saved route', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const res = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: ON_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: ON_ROUTE_BREADCRUMB });
 
     expect(res.status).toBe(200);
     expect(res.body.data.flagged).toBe(false);
 
-    const requests = await RouteChangeRequest.find({ busId: bus._id });
+    const requests = await RouteChangeRequest.find({ vehicleId: vehicle._id });
     expect(requests).toHaveLength(0);
   });
 
   it('flags a sustained off-route journey and creates exactly one RouteChangeRequest + notification', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const res = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB });
 
     expect(res.status).toBe(200);
     expect(res.body.data.flagged).toBe(true);
     expect(res.body.data.changeRequestId).toBeTruthy();
 
-    const requests = await RouteChangeRequest.find({ busId: bus._id });
+    const requests = await RouteChangeRequest.find({ vehicleId: vehicle._id });
     expect(requests).toHaveLength(1);
     expect(requests[0].status).toBe('PENDING');
     expect(requests[0].deviation.maxMeters).toBeGreaterThan(150);
 
-    const notifications = await Notification.find({ userId: bus.managerId, type: 'ROUTE_UPDATE' });
+    const notifications = await Notification.find({ userId: vehicle.managerId, type: 'ROUTE_UPDATE' });
     expect(notifications.length).toBeGreaterThanOrEqual(1);
   });
 
   it('does not create a second PENDING request while one already exists (dedupe)', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const first = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB });
     const second = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB });
 
     expect(String(first.body.data.changeRequestId)).toBe(String(second.body.data.changeRequestId));
-    const requests = await RouteChangeRequest.find({ busId: bus._id });
+    const requests = await RouteChangeRequest.find({ vehicleId: vehicle._id });
     expect(requests).toHaveLength(1);
   });
 
   it('rejects a too-short breadcrumb', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const res = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: [ROUTE_START] });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: [ROUTE_START] });
     expect(res.status).toBe(400);
   });
 
   it('rejects reporting on a route that is not yet named (PENDING_NAMING)', async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const createRes = await request(app)
-      .post('/api/manager/bus-accounts')
+      .post('/api/manager/vehicle-accounts')
       .set('Authorization', `Bearer ${managerToken}`)
       .send({
-        busId: `RCR-PN-${suffix}`, busName: 'Shuttle', numberPlate: `RCRPN-${suffix}`,
+        vehicleId: `RCR-PN-${suffix}`, vehicleName: 'Shuttle', numberPlate: `RCRPN-${suffix}`,
         routeMode: 'CUSTOM', seatCapacity: 20, driverName: 'D', driverEmail: `rcr-pn-${suffix}@test.com`, password: 'Driver@123'
       });
     await request(app)
-      .patch(`/api/super-admin/bus-requests/${createRes.body.data._id}/review`)
+      .patch(`/api/super-admin/vehicle-requests/${createRes.body.data._id}/review`)
       .set('Authorization', `Bearer ${superAdminToken}`)
       .send({ decision: 'APPROVE' });
-    const bus = await Bus.findOne({ busId: `RCR-PN-${suffix}` });
+    const vehicle = await Vehicle.findOne({ vehicleId: `RCR-PN-${suffix}` });
     const driverToken = await loginAs(`rcr-pn-${suffix}@test.com`, 'Driver@123');
 
     const res = await request(app)
-      .post(`/api/driver/custom-routes/${bus.routeId}/report-journey`)
+      .post(`/api/driver/custom-routes/${vehicle.routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: ON_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: ON_ROUTE_BREADCRUMB });
     expect(res.status).toBe(409);
   });
 });
 
 describe('POST /api/driver/custom-routes/:routeId/record-update', () => {
   it('creates a candidate with stops for manager review', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const res = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/record-update`)
       .set('Authorization', `Bearer ${driverToken}`)
       .send({
-        busId: bus.busId,
+        vehicleId: vehicle.vehicleId,
         breadcrumb: OFF_ROUTE_BREADCRUMB,
         stops: [{ lat: OFF_ROUTE_BREADCRUMB[0].lat, lng: OFF_ROUTE_BREADCRUMB[0].lng, stopName: 'New Start' }]
       });
@@ -211,30 +211,30 @@ describe('POST /api/driver/custom-routes/:routeId/record-update', () => {
   });
 
   it('updates the existing PENDING request instead of creating a duplicate', async () => {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB });
 
     await request(app)
       .post(`/api/driver/custom-routes/${routeId}/record-update`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB, stops: [] });
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB, stops: [] });
 
-    const requests = await RouteChangeRequest.find({ busId: bus._id });
+    const requests = await RouteChangeRequest.find({ vehicleId: vehicle._id });
     expect(requests).toHaveLength(1);
   });
 });
 
 describe('PATCH /api/manager/route-change-requests/:id/resolve', () => {
   async function flaggedRequest() {
-    const { bus, driverToken, routeId } = await createActiveCustomRoute();
+    const { vehicle, driverToken, routeId } = await createActiveCustomRoute();
     const res = await request(app)
       .post(`/api/driver/custom-routes/${routeId}/report-journey`)
       .set('Authorization', `Bearer ${driverToken}`)
-      .send({ busId: bus.busId, breadcrumb: OFF_ROUTE_BREADCRUMB });
-    return { bus, routeId, changeRequestId: res.body.data.changeRequestId };
+      .send({ vehicleId: vehicle.vehicleId, breadcrumb: OFF_ROUTE_BREADCRUMB });
+    return { vehicle, routeId, changeRequestId: res.body.data.changeRequestId };
   }
 
   it('lists PENDING requests for the owning manager', async () => {

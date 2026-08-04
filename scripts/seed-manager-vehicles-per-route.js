@@ -3,16 +3,16 @@ const dotenv = require('dotenv');
 const Manager = require('../src/models/Manager');
 const Driver = require('../src/models/Driver');
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 
 dotenv.config();
 
 const MANAGER_EMAIL = 'testadmin@mail.com';
 const MANAGER_DEFAULT_NAME = 'Test Admin Manager';
 const MANAGER_DEFAULT_PASSWORD = 'TestAdmin@123';
-// Buses created per route. Should be >= the simulator's per-route cap
-// (SIM_MAX_PER_ROUTE) so there are enough bus records to drive.
-const BUSES_PER_ROUTE = Number(process.env.BUSES_PER_ROUTE || 8);
+// Vehicles created per route. Should be >= the simulator's per-route cap
+// (SIM_MAX_PER_ROUTE) so there are enough vehicle records to drive.
+const VEHICLES_PER_ROUTE = Number(process.env.VEHICLES_PER_ROUTE || 8);
 
 const ensureManager = async () => {
   const normalizedEmail = MANAGER_EMAIL.toLowerCase().trim();
@@ -46,7 +46,7 @@ const ensureDrivers = async (requiredCount) => {
 
   for (let index = 1; index <= requiredCount; index += 1) {
     const suffix = String(index).padStart(3, '0');
-    const email = `route.driver.${suffix}@bus.com`;
+    const email = `route.driver.${suffix}@vehicle.com`;
 
     let driver = await Driver.findOne({ email });
     if (!driver) {
@@ -65,23 +65,23 @@ const ensureDrivers = async (requiredCount) => {
   return drivers;
 };
 
-const getRouteBusDefinition = (route, busSlot, driverId, managerId) => {
+const getRouteVehicleDefinition = (route, vehicleSlot, driverId, managerId) => {
   const routeCode = String(route.routeId).toUpperCase();
-  const slotCode = String(busSlot + 1);
-  const busId = `SL-${routeCode}-${slotCode}`;
+  const slotCode = String(vehicleSlot + 1);
+  const vehicleId = `SL-${routeCode}-${slotCode}`;
   const registrationNumber = `REG-SL-${routeCode}-${slotCode}-2026`;
   const numberPlate = `SL${routeCode}${slotCode}`;
 
   return {
-    busId,
-    busName: `${route.routeName} Bus ${slotCode}`,
+    vehicleId,
+    vehicleName: `${route.routeName} Vehicle ${slotCode}`,
     registrationNumber,
     numberPlate,
     routeId: route.routeId,
     driverId,
     managerId,
     seatCapacity: 45,
-    busType: route.serviceType === 'OFFICE' ? 'DELUXE' : 'NON-AC',
+    vehicleType: route.serviceType === 'OFFICE' ? 'DELUXE' : 'NON-AC',
     serviceType: route.serviceType || 'PUBLIC',
     bookingEnabled: true,
     isActive: false,
@@ -90,9 +90,9 @@ const getRouteBusDefinition = (route, busSlot, driverId, managerId) => {
   };
 };
 
-const seedManagerBusesPerRoute = async () => {
+const seedManagerVehiclesPerRoute = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bus-tracking');
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/vehicle-tracking');
     console.log('Connected to MongoDB');
 
     const manager = await ensureManager();
@@ -107,15 +107,15 @@ const seedManagerBusesPerRoute = async () => {
       return;
     }
 
-    const requiredDrivers = routes.length * BUSES_PER_ROUTE;
+    const requiredDrivers = routes.length * VEHICLES_PER_ROUTE;
     const drivers = await ensureDrivers(requiredDrivers);
 
-    const desiredBuses = [];
+    const desiredVehicles = [];
     routes.forEach((route, routeIndex) => {
-      for (let busSlot = 0; busSlot < BUSES_PER_ROUTE; busSlot += 1) {
-        const driver = drivers[routeIndex * BUSES_PER_ROUTE + busSlot];
-        desiredBuses.push(
-          getRouteBusDefinition(route, busSlot, driver._id, manager._id)
+      for (let vehicleSlot = 0; vehicleSlot < VEHICLES_PER_ROUTE; vehicleSlot += 1) {
+        const driver = drivers[routeIndex * VEHICLES_PER_ROUTE + vehicleSlot];
+        desiredVehicles.push(
+          getRouteVehicleDefinition(route, vehicleSlot, driver._id, manager._id)
         );
       }
     });
@@ -123,28 +123,28 @@ const seedManagerBusesPerRoute = async () => {
     const usedRegistrations = new Set();
     const usedNumberPlates = new Set();
 
-    for (const busDef of desiredBuses) {
+    for (const vehicleDef of desiredVehicles) {
       let counter = 0;
-      let registrationNumber = busDef.registrationNumber;
-      let numberPlate = busDef.numberPlate;
+      let registrationNumber = vehicleDef.registrationNumber;
+      let numberPlate = vehicleDef.numberPlate;
 
       while (
         usedRegistrations.has(registrationNumber) ||
         usedNumberPlates.has(numberPlate)
       ) {
         counter += 1;
-        registrationNumber = `${busDef.registrationNumber}-${counter}`;
-        numberPlate = `${busDef.numberPlate}${counter}`;
+        registrationNumber = `${vehicleDef.registrationNumber}-${counter}`;
+        numberPlate = `${vehicleDef.numberPlate}${counter}`;
       }
 
       usedRegistrations.add(registrationNumber);
       usedNumberPlates.add(numberPlate);
 
-      await Bus.findOneAndUpdate(
-        { busId: busDef.busId },
+      await Vehicle.findOneAndUpdate(
+        { vehicleId: vehicleDef.vehicleId },
         {
           $set: {
-            ...busDef,
+            ...vehicleDef,
             registrationNumber,
             numberPlate
           }
@@ -153,20 +153,20 @@ const seedManagerBusesPerRoute = async () => {
       );
     }
 
-    const managedBusCount = await Bus.countDocuments({
+    const managedVehicleCount = await Vehicle.countDocuments({
       managerId: manager._id,
       isDeleted: false
     });
 
-    console.log(`Seeded/updated ${desiredBuses.length} buses (${BUSES_PER_ROUTE} per route).`);
-    console.log(`Manager ${MANAGER_EMAIL} now manages ${managedBusCount} buses.`);
+    console.log(`Seeded/updated ${desiredVehicles.length} vehicles (${VEHICLES_PER_ROUTE} per route).`);
+    console.log(`Manager ${MANAGER_EMAIL} now manages ${managedVehicleCount} vehicles.`);
 
     await mongoose.connection.close();
     console.log('Database connection closed');
   } catch (error) {
-    console.error('Error seeding manager buses per route:', error.message);
+    console.error('Error seeding manager vehicles per route:', error.message);
     process.exit(1);
   }
 };
 
-seedManagerBusesPerRoute();
+seedManagerVehiclesPerRoute();

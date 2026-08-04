@@ -1,8 +1,8 @@
 /**
  * Accurate Western Province per-route fleet data, transcribed from
- * "Information of Bus Routes in Western Province - Year 2020".
+ * "Information of Vehicle Routes in Western Province - Year 2020".
  *
- *   fleet   = "Daily Operation" column (buses operating on the route per day;
+ *   fleet   = "Daily Operation" column (vehicles operating on the route per day;
  *             used as the approximate peak concurrent fleet).
  *   permits = total route permits issued (full fleet incl. spares).
  *

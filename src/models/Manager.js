@@ -7,7 +7,7 @@ const managerSchema = applyAccountFields(new mongoose.Schema({
     trim: true,
     default: ''
   },
-  // Scopes which province's routes/buses this manager manages.
+  // Scopes which province's routes/vehicles this manager manages.
   // See scripts/assign-provinces-and-managers.js.
   province: {
     type: String,

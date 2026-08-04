@@ -26,16 +26,16 @@ exports.createNotification = async (userId, type, title, message, data = {}) => 
 };
 
 /**
- * Create notification for bus arrival
+ * Create notification for vehicle arrival
  */
-exports.notifyBusArrival = async (userId, bus, route) => {
+exports.notifyVehicleArrival = async (userId, vehicle, route) => {
   return exports.createNotification(
     userId,
-    'BUS_ARRIVAL',
-    `${bus.busName} Arriving`,
-    `Your bus to ${route.destination} is arriving soon. ETA: ${route.estimatedTime} minutes`,
+    'VEHICLE_ARRIVAL',
+    `${vehicle.vehicleName} Arriving`,
+    `Your vehicle to ${route.destination} is arriving soon. ETA: ${route.estimatedTime} minutes`,
     {
-      busId: bus._id,
+      vehicleId: vehicle._id,
       routeId: route._id,
       priority: 'HIGH'
     }
@@ -43,16 +43,16 @@ exports.notifyBusArrival = async (userId, bus, route) => {
 };
 
 /**
- * Create notification for bus departure
+ * Create notification for vehicle departure
  */
-exports.notifyBusDeparture = async (userId, bus, route) => {
+exports.notifyVehicleDeparture = async (userId, vehicle, route) => {
   return exports.createNotification(
     userId,
-    'BUS_DEPARTURE',
-    `${bus.busName} Departed`,
-    `Your bus to ${route.destination} has departed. Safe journey!`,
+    'VEHICLE_DEPARTURE',
+    `${vehicle.vehicleName} Departed`,
+    `Your vehicle to ${route.destination} has departed. Safe journey!`,
     {
-      busId: bus._id,
+      vehicleId: vehicle._id,
       routeId: route._id,
       priority: 'MEDIUM'
     }

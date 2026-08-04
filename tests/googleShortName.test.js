@@ -29,7 +29,7 @@ test('uses the road-segment result, not the nearest address on an adjacent road'
 test('prefers "Road, Suburb" over a nearby POI/establishment', () => {
   const results = [
     result([
-      ['Gothatuwa Bus Stop', ['point_of_interest', 'establishment']],
+      ['Gothatuwa Vehicle Stop', ['point_of_interest', 'establishment']],
       ['Bopatta Road', ['route']],
       ['Kolonnawa', ['locality']],
     ], '300/B Bopatta Rd, Kolonnawa, Sri Lanka'),

@@ -1,5 +1,5 @@
 const DriverEarnings = require('../models/DriverEarnings');
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const Booking = require('../models/Booking');
 
@@ -122,7 +122,7 @@ const getEarningsHistory = async (req, res) => {
     }
 
     const earnings = await DriverEarnings.find(query)
-      .populate('busId', 'busName registrationNumber')
+      .populate('vehicleId', 'vehicleName registrationNumber')
       .populate('routeId', 'source destination')
       .sort({ journeyDate: -1 })
       .limit(limit * 1)
@@ -155,7 +155,7 @@ const getEarningDetails = async (req, res) => {
     const driverId = req.user.id;
 
     const earning = await DriverEarnings.findOne({ _id: earningId, driverId })
-      .populate('busId')
+      .populate('vehicleId')
       .populate('routeId')
       .lean();
 
@@ -178,7 +178,7 @@ const logTrip = async (req, res) => {
   try {
     const {
       driverId,
-      busId,
+      vehicleId,
       routeId,
       journeyDate,
       startTime,
@@ -193,11 +193,11 @@ const logTrip = async (req, res) => {
     const commission = grossEarnings * commissionRate;
     const netEarnings = grossEarnings - commission;
 
-    const tripId = `TRIP-${new Date().getTime()}-${busId.slice(-4)}`;
+    const tripId = `TRIP-${new Date().getTime()}-${vehicleId.slice(-4)}`;
 
     const earning = new DriverEarnings({
       driverId,
-      busId,
+      vehicleId,
       tripId,
       routeId,
       journeyDate: new Date(journeyDate),
@@ -212,7 +212,7 @@ const logTrip = async (req, res) => {
     });
 
     await earning.save();
-    await earning.populate(['busId', 'routeId']);
+    await earning.populate(['vehicleId', 'routeId']);
 
     return res.status(201).json({
       message: 'Trip logged successfully',

@@ -2,9 +2,9 @@
 // shuttle routes for the ShuttleGo (Explore) build.
 //
 // What it does, in order:
-//   1. Backs up every PUBLIC city-bus route + all buses to scripts/data/ as JSON
+//   1. Backs up every PUBLIC city-vehicle route + all vehicles to scripts/data/ as JSON
 //      (kept separately for future use — the public-transport / journey-planner build).
-//   2. Removes those PUBLIC routes and buses from the DB (they are not part of the
+//   2. Removes those PUBLIC routes and vehicles from the DB (they are not part of the
 //      shuttle build).
 //   3. Clears any existing SCHOOL/UNIVERSITY/OFFICE routes, the Organizations, and the
 //      manager accounts this script owns (so a re-run is a clean replace).
@@ -20,7 +20,7 @@
 // Idempotent: safe to re-run. Usage:
 //   node scripts/seed-shuttle-orgs.js            # full run
 //   node scripts/seed-shuttle-orgs.js --dry      # report only, no writes
-//   node scripts/seed-shuttle-orgs.js --keep-public   # don't touch public routes/buses
+//   node scripts/seed-shuttle-orgs.js --keep-public   # don't touch public routes/vehicles
 
 require('dotenv').config();
 const fs = require('fs');
@@ -28,7 +28,7 @@ const path = require('path');
 const mongoose = require('mongoose');
 
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const User = require('../src/models/User');
 const Organization = require('../src/models/Organization');
 const { generateUniqueRoomKey } = require('../src/utils/roomKey');
@@ -234,24 +234,24 @@ async function run() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log(`Connected to ${process.env.MONGODB_URI}\n`);
 
-  // ── 1 + 2. Back up and remove PUBLIC city routes + buses ──────────────────
+  // ── 1 + 2. Back up and remove PUBLIC city routes + vehicles ──────────────────
   if (!KEEP_PUBLIC) {
     const publicRoutes = await Route.find({ serviceType: 'PUBLIC' }).lean();
-    const buses = await Bus.find({}).lean();
-    console.log(`Public city routes: ${publicRoutes.length}   Buses: ${buses.length}`);
+    const vehicles = await Vehicle.find({}).lean();
+    console.log(`Public city routes: ${publicRoutes.length}   Vehicles: ${vehicles.length}`);
 
     if (!DRY_RUN) {
       const rf = writeBackup('public-city-routes-backup.json', publicRoutes);
-      const bf = writeBackup('buses-backup.json', buses);
+      const bf = writeBackup('vehicles-backup.json', vehicles);
       console.log(`  backed up routes -> ${path.relative(process.cwd(), rf)}`);
-      console.log(`  backed up buses  -> ${path.relative(process.cwd(), bf)}`);
+      console.log(`  backed up vehicles  -> ${path.relative(process.cwd(), bf)}`);
 
       const dr = await Route.deleteMany({ serviceType: 'PUBLIC' });
-      const dbu = await Bus.deleteMany({});
-      console.log(`  removed ${dr.deletedCount} public routes, ${dbu.deletedCount} buses from TrackMe`);
+      const dbu = await Vehicle.deleteMany({});
+      console.log(`  removed ${dr.deletedCount} public routes, ${dbu.deletedCount} vehicles from TrackMe`);
     }
   } else {
-    console.log('--keep-public: leaving public routes & buses untouched');
+    console.log('--keep-public: leaving public routes & vehicles untouched');
   }
 
   // ── 3. Clear existing shuttle data (clean replace) ────────────────────────

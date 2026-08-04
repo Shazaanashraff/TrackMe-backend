@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 // Approval flow for PRIVATE routes with joinApprovalRequired:true. Mirrors
-// ManagerBusRequest. See PRIVATE_ROUTES_PLAN.md §3.3.
+// ManagerVehicleRequest. See PRIVATE_ROUTES_PLAN.md §3.3.
 const routeJoinRequestSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,

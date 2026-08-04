@@ -1,16 +1,16 @@
-// Sets Route.simBusCount for the curated 21 Western-Province demo routes. These are
+// Sets Route.simVehicleCount for the curated 21 Western-Province demo routes. These are
 // approximate real-world fleet sizes (both directions combined) used to drive the
-// client-side deterministic bus simulation on the live map. Idempotent — re-running
-// just re-applies the same values. Any route not listed keeps simBusCount = 0
+// client-side deterministic vehicle simulation on the live map. Idempotent — re-running
+// just re-applies the same values. Any route not listed keeps simVehicleCount = 0
 // (no simulation).
 //
-// Usage: node scripts/set-sim-bus-counts.js
+// Usage: node scripts/set-sim-vehicle-counts.js
 
 require('dotenv').config();
 const mongoose = require('mongoose');
 const Route = require('../src/models/Route');
 
-// routeId -> approximate total buses operating on the route (both directions).
+// routeId -> approximate total vehicles operating on the route (both directions).
 const COUNTS = {
   '138': 300,
   '100': 200,
@@ -50,13 +50,13 @@ const run = async () => {
   for (const [routeId, count] of Object.entries(COUNTS)) {
     const res = await Route.updateOne(
       { routeId, isDeleted: false },
-      { $set: { simBusCount: count } }
+      { $set: { simVehicleCount: count } }
     );
     if (res.matchedCount === 0) {
       missing.push(routeId);
     } else {
       updated += 1;
-      console.log(`  ${routeId.padEnd(5)} -> ${count} buses`);
+      console.log(`  ${routeId.padEnd(5)} -> ${count} vehicles`);
     }
   }
 

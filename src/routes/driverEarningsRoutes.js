@@ -22,7 +22,7 @@ router.post(
   protect,
   [
     body('driverId').isMongoId().withMessage('Valid driverId required'),
-    body('busId').isMongoId().withMessage('Valid busId required'),
+    body('vehicleId').isMongoId().withMessage('Valid vehicleId required'),
     body('routeId').isMongoId().withMessage('Valid routeId required'),
     body('journeyDate').isISO8601().withMessage('Valid journeyDate required'),
     body('startTime').isISO8601().withMessage('Valid startTime required'),
