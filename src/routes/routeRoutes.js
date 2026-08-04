@@ -11,12 +11,6 @@ const {
   getRoutesStats
 } = require('../controllers/routeController');
 const {
-  verifyRoomKey,
-  getMyPrivateRoutes,
-  getMyJoinRequests,
-  leavePrivateRoute
-} = require('../controllers/routeAccessController');
-const {
   validateCreateRoute,
   validateUpdateRoute,
   validateRouteId
@@ -36,12 +30,6 @@ router.get('/', getAllRoutes);
 // GET /api/routes/stats/overview - Get routes statistics
 router.get('/stats/overview', getRoutesStats);
 
-// Private Routes (room-key / PIN) — authenticated. Declared before the generic
-// /:routeId routes below so these literal paths win. See PRIVATE_ROUTES_PLAN.md §5.2.
-router.post('/join/verify', protect, verifyRoomKey);
-router.get('/my-private', protect, getMyPrivateRoutes);
-router.get('/my-requests', protect, getMyJoinRequests);
-
 // GET /api/routes/:routeId - Get single route
 router.get('/:routeId', validateRouteId, handleValidationErrors, getRouteById);
 
@@ -53,8 +41,5 @@ router.patch('/:routeId/toggle', protect, requireAdmin, toggleRouteStatus);
 
 // DELETE /api/routes/:routeId - Delete route (admin)
 router.delete('/:routeId', protect, requireAdmin, deleteRoute);
-
-// DELETE /api/routes/:routeId/membership - User leaves a private route
-router.delete('/:routeId/membership', protect, leavePrivateRoute);
 
 module.exports = router;

@@ -48,26 +48,14 @@ exports.createRoute = async (req, res, next) => {
   }
 };
 
-// PUBLIC routes, or unhidden PRIVATE routes shown as locked stubs (no stops/geometry)
-// per the Private Routes feature. Hidden PRIVATE routes (incl. migrated custom-route
-// shuttles) never appear here — see PRIVATE_ROUTES_PLAN.md §5.3.
-const listableRouteFilter = () => ({
-  $or: [
-    { visibility: 'PUBLIC' },
-    { visibility: 'PRIVATE', isHidden: { $ne: true } }
-  ]
-});
+// Every route is listable now that private routes are gone; geometry is still
+// trimmed from list responses to keep them small.
+const listableRouteFilter = () => ({});
 
 const projectListedRoute = (route) => {
-  const isPrivate = route.visibility === 'PRIVATE';
   const plain = route.toObject ? route.toObject() : route;
-  const { stops, pathPolyline, pathPolylineReturn, roomKey, ...rest } = plain;
-  return {
-    ...rest,
-    isPrivate,
-    requiresApproval: isPrivate ? !!route.joinApprovalRequired : false,
-    locked: isPrivate
-  };
+  const { stops, pathPolyline, pathPolylineReturn, ...rest } = plain;
+  return rest;
 };
 
 // @desc    Get all routes
@@ -90,7 +78,7 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simVehicleCount createdAt visibility isHidden joinApprovalRequired');
+      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simVehicleCount createdAt');
 
     res.status(200).json({
       success: true,
@@ -109,7 +97,7 @@ exports.getRouteById = async (req, res, next) => {
     const { routeId } = req.params;
 
     // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
-    const route = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' });
+    const route = await Route.findOne({ routeId, isDeleted: false });
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
@@ -208,7 +196,7 @@ exports.getRoutesPaginated = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('-stops -pathPolyline -pathPolylineReturn -roomKey')
+      .select('-stops -pathPolyline -pathPolylineReturn')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -259,17 +247,17 @@ exports.toggleRouteStatus = async (req, res, next) => {
 exports.getRoutesStats = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
-    const totalRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC' });
-    const activeRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC', isActive: true });
+    const totalRoutes = await Route.countDocuments({ isDeleted: false });
+    const activeRoutes = await Route.countDocuments({ isDeleted: false, isActive: true });
     const inactiveRoutes = totalRoutes - activeRoutes;
 
     const avgDistance = await Route.aggregate([
-      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
+      { $match: { isDeleted: false } },
       { $group: { _id: null, avg: { $avg: '$distance' } } }
     ]);
 
     const avgEstimatedTime = await Route.aggregate([
-      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
+      { $match: { isDeleted: false } },
       { $group: { _id: null, avg: { $avg: '$estimatedTime' } } }
     ]);
 

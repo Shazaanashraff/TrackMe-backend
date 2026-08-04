@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
-const RouteMembership = require('../models/RouteMembership');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -30,7 +29,7 @@ exports.registerVehicle = async (req, res, next) => {
 
     // Verify route exists — self-registration may only target a PUBLIC route;
     // a manager's PRIVATE custom route is assigned only via the manager flow.
-    const routeExists = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' });
+    const routeExists = await Route.findOne({ routeId, isDeleted: false });
     if (!routeExists) {
       return res.status(400).json({
         success: false,
@@ -97,16 +96,6 @@ exports.getVehiclesByRoute = async (req, res, next) => {
     });
 
     // A manager's PRIVATE route (custom shuttle, or a Private Routes feature route)
-    // only surfaces its vehicles to an authenticated user with an ACTIVE membership;
-    // everyone else (including unauthenticated custom-route callers) gets an empty
-    // list rather than a 403, preserving existing custom-route behavior.
-    if (route && route.visibility === 'PRIVATE') {
-      const isMember = req.user && await RouteMembership.exists({ userId: req.user._id, routeId: route.routeId, status: 'ACTIVE' });
-      if (!isMember) {
-        return res.status(200).json({ success: true, count: 0, data: [] });
-      }
-    }
-
     // Filter vehicles by effective route lookup
     if (route) {
       filter.routeId = route.routeId;
@@ -144,7 +133,7 @@ exports.getAllRoutes = async (req, res, next) => {
   try {
     const { serviceType } = req.query;
     // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
-    const filter = { isDeleted: false, isActive: true, visibility: 'PUBLIC' };
+    const filter = { isDeleted: false, isActive: true };
 
     if (serviceType && SERVICE_TYPES.includes(String(serviceType).toUpperCase())) {
       filter.serviceType = String(serviceType).toUpperCase();
@@ -168,7 +157,7 @@ exports.getAllRoutes = async (req, res, next) => {
 exports.getStops = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route stops.
-    const routes = await Route.find({ isDeleted: false, isActive: true, visibility: 'PUBLIC' }).select('stops');
+    const routes = await Route.find({ isDeleted: false, isActive: true }).select('stops');
 
     // Dedupe by stop name (case-insensitive); first coordinates win.
     const seen = new Map();
@@ -211,7 +200,7 @@ exports.planJourney = async (req, res, next) => {
 
     // Unauthenticated endpoint — journey planning must never surface a manager's
     // PRIVATE custom route.
-    const filter = { isDeleted: false, isActive: true, visibility: 'PUBLIC' };
+    const filter = { isDeleted: false, isActive: true };
     if (req.query.serviceType && SERVICE_TYPES.includes(String(req.query.serviceType).toUpperCase())) {
       filter.serviceType = String(req.query.serviceType).toUpperCase();
     }
@@ -359,11 +348,7 @@ exports.updateVehicle = async (req, res, next) => {
       // (driver self-service and other managers are limited to PUBLIC routes).
       const route = await Route.findOne({
         routeId: updateData.routeId,
-        isDeleted: false,
-        $or: [
-          { visibility: 'PUBLIC' },
-          { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
-        ]
+        isDeleted: false
       });
       if (!route) {
         return res.status(400).json({

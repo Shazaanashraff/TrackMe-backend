@@ -1,6 +1,5 @@
 const Vehicle = require('../models/Vehicle');
 const Booking = require('../models/Booking');
-const LiveLocation = require('../models/LiveLocation');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const Route = require('../models/Route');
@@ -221,11 +220,7 @@ exports.updateManagerVehicle = async (req, res, next) => {
       // PRIVATE custom routes — never another manager's private route.
       const route = await Route.findOne({
         routeId: updateData.routeId,
-        isDeleted: false,
-        $or: [
-          { visibility: 'PUBLIC' },
-          { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
-        ]
+        isDeleted: false
       });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
@@ -526,43 +521,6 @@ exports.resetVehicleAccountPassword = async (req, res, next) => {
   }
 };
 
-exports.getManagerVehicleLocation = async (req, res, next) => {
-  try {
-    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
-    if (!vehicle) {
-      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
-    }
-
-    const minutes = Number(req.query.minutes) || 15;
-    const allowedMinutes = [15, 30, 60];
-    const windowMinutes = allowedMinutes.includes(minutes) ? minutes : 15;
-    const startTime = new Date(Date.now() - windowMinutes * 60 * 1000);
-
-    const [latest, history] = await Promise.all([
-      LiveLocation.findOne({ vehicleId: vehicle.vehicleId }).sort({ timestamp: -1 }).lean(),
-      LiveLocation.find({ vehicleId: vehicle.vehicleId, timestamp: { $gte: startTime } })
-        .sort({ timestamp: 1 })
-        .lean()
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        vehicle: {
-          vehicleId: vehicle.vehicleId,
-          vehicleName: vehicle.vehicleName,
-          routeId: vehicle.routeId
-        },
-        latest,
-        history,
-        windowMinutes
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 // @desc    Routes available for this manager to assign to a vehicle: public routes
 //          plus this manager's own named (ACTIVE) private custom routes.
 // @route   GET /api/manager/routes
@@ -570,14 +528,48 @@ exports.getManagerAssignableRoutes = async (req, res, next) => {
   try {
     const routes = await Route.find({
       isDeleted: false,
-      isActive: true,
-      $or: [
-        { visibility: 'PUBLIC' },
-        { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
-      ]
-    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops visibility');
+      isActive: true
+    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
 
     return res.status(200).json({ success: true, count: routes.length, data: routes });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Toggle QR attendance for one of this manager's own routes.
+// @route   PATCH /api/manager/routes/:routeId/qr
+// Moved here when private routes were removed — QR attendance is independent of
+// route privacy and works on public routes, which is what most riders use.
+exports.updateRouteQr = async (req, res, next) => {
+  try {
+    const route = await Route.findOne({
+      routeId: String(req.params.routeId).toUpperCase(),
+      managerId: req.user._id,
+      isDeleted: false
+    });
+    if (!route) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
+    route.qrEnabled = !!(req.body || {}).qrEnabled;
+    await route.save();
+
+    await writeAuditLog({
+      managerId: req.user._id,
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'ROUTE_QR_UPDATED',
+      entityType: 'ROUTE',
+      entityId: route.routeId,
+      metadata: { qrEnabled: route.qrEnabled }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Route QR attendance updated',
+      data: { routeId: route.routeId, qrEnabled: route.qrEnabled }
+    });
   } catch (error) {
     next(error);
   }
