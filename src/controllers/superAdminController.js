@@ -7,7 +7,6 @@ const Route = require('../models/Route');
 const Organization = require('../models/Organization');
 const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
-const { createProvisionalCustomRoute } = require('../utils/customRoute');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -778,18 +777,9 @@ exports.reviewVehicleRequest = async (req, res, next) => {
         vehiclePayload.registrationNumber = `AUTO-${vehiclePayload.vehicleId}`;
       }
 
-      const isCustomRoute = requestDoc.payload?.routeMode === 'CUSTOM';
-      if (isCustomRoute) {
-        const provisionalRoute = await createProvisionalCustomRoute({
-          managerId: requestDoc.managerId,
-          serviceType: vehiclePayload.serviceType
-        });
-        vehiclePayload.routeId = provisionalRoute.routeId;
-      } else {
-        const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
-        if (!route) {
-          return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
-        }
+      const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
+      if (!route) {
+        return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
       }
 
       const duplicateVehicle = await Vehicle.findOne({

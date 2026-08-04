@@ -21,7 +21,6 @@ const managerRoutes = require('./routes/managerRoutes');
 const vehicleReviewRoutes = require('./routes/vehicleReviewRoutes');
 const placesRoutes = require('./routes/placesRoutes');
 const transitRoutes = require('./routes/transitRoutes');
-const customRouteRoutes = require('./routes/customRouteRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
@@ -88,7 +87,6 @@ app.use('/api/manager', managerRoutes);
 app.use('/api/vehicle-reviews', vehicleReviewRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/transit', transitRoutes);
-app.use('/api/driver/custom-routes', customRouteRoutes);
 // QR Attendance (see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md)
 app.use('/api/qr', qrRoutes);
 app.use('/api/attendance', attendanceRoutes);

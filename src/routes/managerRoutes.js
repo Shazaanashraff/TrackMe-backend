@@ -6,14 +6,10 @@ const {
   getManagerVehicleById,
   getManagerVehicles,
   getManagerVehicleLocation,
-  getManagerCustomRoutes,
   getManagerDashboard,
-  getManagerRouteChangeRequests,
   getMyRequests,
-  nameCustomRoute,
   requestVehicleDelete,
   resetVehicleAccountPassword,
-  resolveRouteChangeRequest,
   updateManagerVehicle
 } = require('../controllers/managerController');
 const {
@@ -42,10 +38,6 @@ router.get('/vehicles/:vehicleId', getManagerVehicleById);
 router.put('/vehicles/:vehicleId', updateManagerVehicle);
 router.post('/vehicles/:vehicleId/delete-request', requestVehicleDelete);
 router.get('/vehicles/:vehicleId/location', getManagerVehicleLocation);
-router.get('/custom-routes', getManagerCustomRoutes);
-router.patch('/custom-routes/:routeId/name', nameCustomRoute);
-router.get('/route-change-requests', getManagerRouteChangeRequests);
-router.patch('/route-change-requests/:id/resolve', resolveRouteChangeRequest);
 
 // Private Routes (room-key / PIN) — see PRIVATE_ROUTES_PLAN.md §5.1
 router.get('/owned-routes', getOwnedRoutes);
