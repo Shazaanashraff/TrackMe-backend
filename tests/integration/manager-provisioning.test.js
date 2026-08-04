@@ -1,28 +1,22 @@
 const request = require('supertest');
 const app = require('../../src/server');
 const SuperAdmin = require('../../src/models/SuperAdmin');
+const Manager = require('../../src/models/Manager');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
-// Manager provisioning: the super admin invites managers (no password); each
-// manager sets their own password via a one-time emailed link. When email isn't
-// configured the link is returned in the response (dev fallback) so we can drive
-// the whole activation + reset lifecycle here.
+// Manager provisioning: the super admin creates the account with an email and a
+// password directly. There is no invite email, no activation link and no pending
+// state — the manager can log in the moment the account exists.
 
 async function loginAs(email, password) {
-  const res = await request(app).post('/api/auth/login').send({ email, password });
-  return res;
+  return request(app).post('/api/auth/login').send({ email, password });
 }
-
-const tokenFromLink = (link) => new URL(link).searchParams.get('token');
 
 let superAdminToken;
 
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
-  // Force the "no email service" path so activation/reset links come back in the
-  // response body regardless of local .env.
-  delete process.env.RESEND_API_KEY;
   process.env.NODE_ENV = 'test';
 
   const superAdmin = await SuperAdmin.create({
@@ -40,101 +34,120 @@ afterAll(async () => {
 
 const auth = () => ['Authorization', `Bearer ${superAdminToken}`];
 
-const createManager = (email) =>
+const GOOD_PASSWORD = 'MgrPass1!';
+
+const createManager = (email, password = GOOD_PASSWORD) =>
   request(app)
     .post('/api/super-admin/managers')
     .set(...auth())
-    .send({ name: 'Invited Mgr', email, serviceType: 'PUBLIC' });
+    .send({ name: 'Direct Mgr', email, password, serviceType: 'PUBLIC' });
 
-describe('Manager invite → activate lifecycle', () => {
-  it('creates an INVITED manager without a password and returns an activation link', async () => {
-    const res = await createManager(`inv1-${Date.now()}@t.com`);
+describe('Manager creation with a directly-set password', () => {
+  it('creates an immediately-active manager and never returns an activation link', async () => {
+    const res = await createManager(`dir1-${Date.now()}@t.com`);
+
     expect(res.status).toBe(201);
-    expect(res.body.data.status).toBe('INVITED');
-    expect(res.body.data.invitedAt).toBeTruthy();
-    expect(res.body.data.activatedAt).toBeNull();
-    expect(res.body.emailSent).toBe(false);
-    expect(res.body.activationLink).toContain('/activate?token=');
+    expect(res.body.data.status).toBe('ACTIVE');
+    expect(res.body.data.activatedAt).toBeTruthy();
+    expect(res.body.data.invitedAt).toBeNull();
+    // The invite flow is gone — nothing link- or email-shaped may come back.
+    expect(res.body.activationLink).toBeUndefined();
+    expect(res.body.emailSent).toBeUndefined();
   });
 
-  it('validates the link (purpose INVITE), sets a password, then the manager can log in', async () => {
-    const email = `inv2-${Date.now()}@t.com`;
-    const created = await createManager(email);
-    const token = tokenFromLink(created.body.activationLink);
+  it('lets the manager log in with the password the super admin set', async () => {
+    const email = `dir2-${Date.now()}@t.com`;
+    await createManager(email);
 
-    // Validate reveals whose account it is and that it's a first-time invite.
-    const validate = await request(app).post('/api/auth/account-setup/validate').send({ token });
-    expect(validate.status).toBe(200);
-    expect(validate.body.email).toBe(email.toLowerCase());
-    expect(validate.body.purpose).toBe('INVITE');
-
-    // Cannot log in before activating (password is a random unknown value).
-    const preLogin = await loginAs(email, 'NotThePassword1');
-    expect(preLogin.status).toBe(401);
-
-    // Set own password.
-    const complete = await request(app)
-      .post('/api/auth/account-setup/complete')
-      .send({ token, password: 'MyNewPass1' });
-    expect(complete.status).toBe(200);
-
-    // Now login works, and the roster shows ACTIVE.
-    const login = await loginAs(email, 'MyNewPass1');
+    const login = await loginAs(email, GOOD_PASSWORD);
     expect(login.status).toBe(200);
     expect(login.body.user.role).toBe('admin');
-
-    const list = await request(app).get('/api/super-admin/managers').set(...auth());
-    const row = list.body.data.find((m) => m.email === email.toLowerCase());
-    expect(row.status).toBe('ACTIVE');
-    expect(row.activatedAt).toBeTruthy();
   });
 
-  it('rejects a used or invalid token', async () => {
-    const email = `inv3-${Date.now()}@t.com`;
-    const created = await createManager(email);
-    const token = tokenFromLink(created.body.activationLink);
-    await request(app).post('/api/auth/account-setup/complete').send({ token, password: 'FirstPass1' });
+  it('never stores the password in plaintext', async () => {
+    const email = `dir3-${Date.now()}@t.com`;
+    await createManager(email);
 
-    // Token is single-use — a second complete fails.
-    const reuse = await request(app).post('/api/auth/account-setup/complete').send({ token, password: 'SecondPass1' });
-    expect(reuse.status).toBe(400);
-
-    // Garbage token fails validation lookup.
-    const bad = await request(app).post('/api/auth/account-setup/validate').send({ token: 'not-a-real-token' });
-    expect(bad.status).toBe(400);
+    const stored = await Manager.findOne({ email: email.toLowerCase() }).select('+password');
+    expect(stored.password).not.toBe(GOOD_PASSWORD);
+    expect(stored.password).toMatch(/^\$2[aby]\$/); // bcrypt hash
   });
 
-  it('rejects a too-short password', async () => {
-    const created = await createManager(`inv4-${Date.now()}@t.com`);
-    const token = tokenFromLink(created.body.activationLink);
-    const res = await request(app).post('/api/auth/account-setup/complete').send({ token, password: 'short' });
+  it('rejects the wrong password', async () => {
+    const email = `dir4-${Date.now()}@t.com`;
+    await createManager(email);
+
+    expect((await loginAs(email, 'NotThePassword1!')).status).toBe(401);
+  });
+
+  it('requires a password', async () => {
+    const res = await request(app)
+      .post('/api/super-admin/managers')
+      .set(...auth())
+      .send({ name: 'No Password Mgr', email: `dir5-${Date.now()}@t.com`, serviceType: 'PUBLIC' });
+
     expect(res.status).toBe(400);
+  });
+
+  it.each([
+    ['too short', 'Ab1!'],
+    ['no uppercase', 'lowerpass1!'],
+    ['no lowercase', 'UPPERPASS1!'],
+    ['no number', 'NoNumber!!'],
+    ['no special character', 'NoSpecial11'],
+  ])('rejects a weak password (%s)', async (_label, password) => {
+    const email = `weak-${Date.now()}-${_label.replace(/\s/g, '')}@t.com`;
+    const res = await createManager(email, password);
+
+    expect(res.status).toBe(400);
+    expect(await Manager.findOne({ email: email.toLowerCase() })).toBeNull();
+  });
+
+  it('rejects a duplicate email', async () => {
+    const email = `dup-${Date.now()}@t.com`;
+    expect((await createManager(email)).status).toBe(201);
+    expect((await createManager(email)).status).toBe(409);
   });
 });
 
-describe('Super-admin password reset (link)', () => {
-  it('issues a RESET link for an active manager; old password stops working after reset', async () => {
+describe('Super-admin password reset (direct)', () => {
+  it('sets a new password so the old one stops working', async () => {
     const email = `rst-${Date.now()}@t.com`;
     const created = await createManager(email);
-    await request(app)
-      .post('/api/auth/account-setup/complete')
-      .send({ token: tokenFromLink(created.body.activationLink), password: 'OriginalPass1' });
     const managerId = created.body.data._id;
 
-    // Super admin triggers a reset — gets a link (no plaintext password involved).
     const reset = await request(app)
       .patch(`/api/super-admin/managers/${managerId}/reset-password`)
-      .set(...auth());
+      .set(...auth())
+      .send({ password: 'ChangedPass2!' });
+
     expect(reset.status).toBe(200);
-    expect(reset.body.resetLink).toContain('/activate?token=');
+    // No link may be handed back — the super admin shares the password directly.
+    expect(reset.body.resetLink).toBeUndefined();
 
-    const resetToken = tokenFromLink(reset.body.resetLink);
-    const validate = await request(app).post('/api/auth/account-setup/validate').send({ token: resetToken });
-    expect(validate.body.purpose).toBe('RESET');
+    expect((await loginAs(email, GOOD_PASSWORD)).status).toBe(401);
+    expect((await loginAs(email, 'ChangedPass2!')).status).toBe(200);
+  });
 
-    await request(app).post('/api/auth/account-setup/complete').send({ token: resetToken, password: 'ChangedPass2' });
+  it('rejects a weak replacement password and keeps the old one working', async () => {
+    const email = `rst2-${Date.now()}@t.com`;
+    const created = await createManager(email);
 
-    expect((await loginAs(email, 'OriginalPass1')).status).toBe(401);
-    expect((await loginAs(email, 'ChangedPass2')).status).toBe(200);
+    const reset = await request(app)
+      .patch(`/api/super-admin/managers/${created.body.data._id}/reset-password`)
+      .set(...auth())
+      .send({ password: 'weak' });
+
+    expect(reset.status).toBe(400);
+    expect((await loginAs(email, GOOD_PASSWORD)).status).toBe(200);
+  });
+
+  it('404s for a manager that does not exist', async () => {
+    const res = await request(app)
+      .patch('/api/super-admin/managers/6a63e3fa67212cbddf637779/reset-password')
+      .set(...auth())
+      .send({ password: 'ChangedPass2!' });
+
+    expect(res.status).toBe(404);
   });
 });

@@ -279,7 +279,14 @@ exports.validateCreateManager = [
     .trim()
     .notEmpty().withMessage('Email is required')
     .isEmail().withMessage('Invalid email format'),
-  // No password: managers are invited and set their own via the emailed link.
+  // The super admin sets the manager's password directly at creation time.
+  body('password')
+    .notEmpty().withMessage('Password is required')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character'),
   body('serviceType')
     .optional()
     .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
@@ -325,9 +332,16 @@ exports.validateManagerStatus = [
     .isBoolean().withMessage('isActive must be boolean')
 ];
 
-// Reset now issues an emailed link instead of accepting a password, so there is
-// no request body to validate (the managerId param is validated separately).
-exports.validateManagerPasswordReset = [];
+// The super admin sets a manager's password directly — no emailed link.
+exports.validateManagerPasswordReset = [
+  body('password')
+    .notEmpty().withMessage('Password is required')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
+];
 
 // Public invite/reset link endpoints (manager sets their own password).
 exports.validateAccountSetupValidate = [

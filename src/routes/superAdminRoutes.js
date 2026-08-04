@@ -6,6 +6,7 @@ const {
   getManagerById,
   updateManager,
   updateManagerStatus,
+  deleteManager,
   resetManagerPassword,
   assignBusesToManager,
   getSuperAdminDashboard,
@@ -46,6 +47,7 @@ router.get('/managers', getManagers);
 router.get('/managers/:managerId', validateManagerId, handleValidationErrors, getManagerById);
 router.put('/managers/:managerId', validateManagerId, validateUpdateManager, handleValidationErrors, updateManager);
 router.patch('/managers/:managerId/status', validateManagerId, validateManagerStatus, handleValidationErrors, updateManagerStatus);
+router.delete('/managers/:managerId', validateManagerId, handleValidationErrors, deleteManager);
 router.patch('/managers/:managerId/reset-password', validateManagerId, validateManagerPasswordReset, handleValidationErrors, resetManagerPassword);
 router.patch('/managers/:managerId/assign-buses', validateManagerId, validateAssignBuses, handleValidationErrors, assignBusesToManager);
 

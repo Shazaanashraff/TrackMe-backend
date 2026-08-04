@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const Manager = require('../models/Manager');
 const Driver = require('../models/Driver');
 const Bus = require('../models/Bus');
@@ -9,7 +8,6 @@ const Organization = require('../models/Organization');
 const ManagerBusRequest = require('../models/ManagerBusRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { createProvisionalCustomRoute } = require('../utils/customRoute');
-const { generateSetupToken, buildSetupLink, isEmailConfigured, sendAccountSetupEmail } = require('../utils/accountSetup');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -72,7 +70,7 @@ const resolveManagerService = async (serviceType, organizationId) => {
 
 exports.createManager = async (req, res, next) => {
   try {
-    const { name, email, serviceType = 'PUBLIC', organizationId = null } = req.body;
+    const { name, email, password, serviceType = 'PUBLIC', organizationId = null } = req.body;
     const normalizedEmail = email.toLowerCase().trim();
 
     const emailTaken = await isEmailRegistered(normalizedEmail);
@@ -88,59 +86,28 @@ exports.createManager = async (req, res, next) => {
       return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
     }
 
-    // Invite flow: the super admin never chooses a password. We seed the account
-    // with a random, undisclosed password (so it satisfies the schema and can't be
-    // logged into) and email the manager a one-time link to set their own. The raw
-    // token lives only in that link; we persist only its hash.
-    const setup = generateSetupToken();
+    // The super admin sets the password directly, so the account is usable the
+    // moment it is created — no invite email, no activation link, no pending state.
     const manager = await Manager.create({
       name: name.trim(),
       email: normalizedEmail,
-      password: crypto.randomBytes(24).toString('hex'),
+      password,
       isActive: true,
       isEmailVerified: true,
       serviceType,
       organization: resolved.organization ? resolved.organization._id : null,
-      invitedAt: new Date(),
-      activatedAt: null,
-      accountSetup: { tokenHash: setup.tokenHash, expiresAt: setup.expiresAt }
+      invitedAt: null,
+      activatedAt: new Date(),
+      accountSetup: { tokenHash: null, expiresAt: null }
     });
 
     await manager.populate('organization', 'name serviceType');
 
-    const link = buildSetupLink(setup.rawToken);
-    const emailSent = await sendAccountSetupEmail(manager.email, {
-      link,
-      name: manager.name,
-      purpose: 'INVITE'
-    });
-
-    // Real email is configured but delivery failed: no demo-link fallback. Roll
-    // back the just-created manager so the operation stays atomic and can be retried.
-    if (!emailSent && isEmailConfigured()) {
-      await Manager.deleteOne({ _id: manager._id });
-      return res.status(502).json({
-        success: false,
-        message: 'Could not send the invitation email. Check the email configuration and try again.'
-      });
-    }
-
-    const response = {
+    return res.status(201).json({
       success: true,
-      message: emailSent
-        ? 'Manager invited. An activation link was emailed to them.'
-        : 'Manager created. Email service is not configured — share the activation link below.',
-      emailSent,
+      message: 'Manager created successfully',
       data: sanitizeManager(manager)
-    };
-
-    // Demo mode only (no email configured): hand the link back so the super admin
-    // can copy it. Never in production, and never once real email is set up.
-    if (!emailSent && !isEmailConfigured() && process.env.NODE_ENV !== 'production') {
-      response.activationLink = link;
-    }
-
-    return res.status(201).json(response);
+    });
   } catch (error) {
     next(error);
   }
@@ -348,50 +315,62 @@ exports.updateManagerStatus = async (req, res, next) => {
   }
 };
 
-// Super-admin-triggered password reset. Like the invite, this never sets a
-// password directly — it issues a fresh one-time link and emails it so the
-// manager chooses their own. Doubles as "resend invite" for a manager who
-// hasn't activated yet.
-exports.resetManagerPassword = async (req, res, next) => {
+// Hard-deletes a manager account. Gated on the manager already being
+// deactivated so the super admin always takes the reversible step (deactivate)
+// before the irreversible one. Buses the manager owned are unassigned rather
+// than deleted — they return to the pool for another manager to pick up.
+exports.deleteManager = async (req, res, next) => {
   try {
     const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    const notYetActivated = Boolean(manager.invitedAt) && !manager.activatedAt;
-    const setup = generateSetupToken();
-    manager.accountSetup = { tokenHash: setup.tokenHash, expiresAt: setup.expiresAt };
-    await manager.save();
-
-    const link = buildSetupLink(setup.rawToken);
-    const emailSent = await sendAccountSetupEmail(manager.email, {
-      link,
-      name: manager.name,
-      purpose: notYetActivated ? 'INVITE' : 'RESET'
-    });
-
-    // Real email configured but failed to send: surface an error, never a demo link.
-    if (!emailSent && isEmailConfigured()) {
-      return res.status(502).json({
+    if (manager.isActive !== false) {
+      return res.status(409).json({
         success: false,
-        message: 'Could not send the email. Check the email configuration and try again.'
+        message: 'Deactivate this manager before deleting the account'
       });
     }
 
-    const response = {
-      success: true,
-      message: emailSent
-        ? `${notYetActivated ? 'Invitation' : 'Password reset link'} emailed to the manager.`
-        : 'Email service is not configured — share the reset link below.',
-      emailSent
-    };
+    const { modifiedCount } = await Bus.updateMany(
+      { managerId: manager._id },
+      { $set: { managerId: null } }
+    );
 
-    if (!emailSent && !isEmailConfigured() && process.env.NODE_ENV !== 'production') {
-      response.resetLink = link;
+    await manager.deleteOne();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Manager deleted successfully',
+      data: { _id: manager._id, unassignedBuses: modifiedCount }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Super-admin-triggered password reset. The super admin sets the new password
+// directly and hands it to the manager out of band — no emailed link.
+exports.resetManagerPassword = async (req, res, next) => {
+  try {
+    const { password } = req.body;
+
+    const manager = await Manager.findById(req.params.managerId);
+    if (!manager) {
+      return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    return res.status(200).json(response);
+    manager.password = password;
+    // Any half-finished link-based setup is void once a password is set directly.
+    manager.accountSetup = { tokenHash: null, expiresAt: null };
+    if (!manager.activatedAt) manager.activatedAt = new Date();
+    await manager.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password updated successfully'
+    });
   } catch (error) {
     next(error);
   }
