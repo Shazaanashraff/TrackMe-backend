@@ -5,6 +5,7 @@ const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Organization = require('../../src/models/Organization');
 const DriverEnrollmentKey = require('../../src/models/DriverEnrollmentKey');
+const { findDriverIdByEnrollmentKey } = require('../../src/utils/enrollmentKey');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // The manager driver directory. A driver belongs to one manager, so the whole
@@ -610,6 +611,124 @@ describe('Enrollment keys', () => {
 
     expect(record.ciphertext).not.toContain(created.body.enrollmentKey);
     expect(record.lookupHash).not.toContain(created.body.enrollmentKey);
+  });
+
+  it('reports whether a rotation can still be undone', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+
+    const fresh = await request(app).get(`/api/manager/drivers/${id}/enrollment-key`).set(...auth());
+    expect(fresh.body.data.canRevert).toBe(false);
+
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/rotate`).set(...auth());
+
+    const after = await request(app).get(`/api/manager/drivers/${id}/enrollment-key`).set(...auth());
+    expect(after.body.data.canRevert).toBe(true);
+  });
+
+  it('restores the previous key when a rotation is reverted', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+    const original = created.body.enrollmentKey;
+
+    const rotated = await request(app)
+      .post(`/api/manager/drivers/${id}/enrollment-key/rotate`)
+      .set(...auth());
+    expect(rotated.body.data.enrollmentKey).not.toBe(original);
+
+    const res = await request(app)
+      .post(`/api/manager/drivers/${id}/enrollment-key/revert`)
+      .set(...auth());
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.enrollmentKey).toBe(original);
+
+    const reveal = await request(app).get(`/api/manager/drivers/${id}/enrollment-key`).set(...auth());
+    expect(reveal.body.data.enrollmentKey).toBe(original);
+  });
+
+  it('allows the undo only once per rotation', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/rotate`).set(...auth());
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/revert`).set(...auth());
+
+    // A second undo would put the rotated-away key back, which is the opposite
+    // of what the manager asked for.
+    const second = await request(app)
+      .post(`/api/manager/drivers/${id}/enrollment-key/revert`)
+      .set(...auth());
+
+    expect(second.status).toBe(409);
+    expect(second.body.success).toBe(false);
+  });
+
+  it('refuses to revert a key that was never rotated', async () => {
+    const created = await createDriver();
+
+    const res = await request(app)
+      .post(`/api/manager/drivers/${created.body.data._id}/enrollment-key/revert`)
+      .set(...auth());
+
+    expect(res.status).toBe(409);
+  });
+
+  it('stops the rotated-away key from enrolling, and makes it work again on revert', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+    const original = created.body.enrollmentKey;
+
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/rotate`).set(...auth());
+    expect(await findDriverIdByEnrollmentKey(original)).toBeNull();
+
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/revert`).set(...auth());
+    expect(String(await findDriverIdByEnrollmentKey(original))).toBe(String(id));
+  });
+
+  it('keeps only the most recent rotation recoverable', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+    const original = created.body.enrollmentKey;
+
+    const first = await request(app)
+      .post(`/api/manager/drivers/${id}/enrollment-key/rotate`)
+      .set(...auth());
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/rotate`).set(...auth());
+
+    // Two rotations deep, the undo reaches the middle key, never the original.
+    const res = await request(app)
+      .post(`/api/manager/drivers/${id}/enrollment-key/revert`)
+      .set(...auth());
+
+    expect(res.body.data.enrollmentKey).toBe(first.body.data.enrollmentKey);
+    expect(res.body.data.enrollmentKey).not.toBe(original);
+  });
+
+  it('never stores the superseded key in plaintext either', async () => {
+    const created = await createDriver();
+    const id = created.body.data._id;
+    const original = created.body.enrollmentKey;
+
+    await request(app).post(`/api/manager/drivers/${id}/enrollment-key/rotate`).set(...auth());
+
+    const record = await DriverEnrollmentKey.findOne({ driverId: id }).select('+previous');
+    expect(JSON.stringify(record.previous)).not.toContain(original);
+  });
+
+  it('will not revert another manager\'s driver key', async () => {
+    const theirs = await Driver.create({
+      name: 'Not Yours Either',
+      email: `norevert-${Date.now()}@t.com`,
+      password: 'DriverPass1!',
+      managerId: otherManagerId
+    });
+
+    const res = await request(app)
+      .post(`/api/manager/drivers/${theirs._id}/enrollment-key/revert`)
+      .set(...auth());
+
+    expect(res.status).toBe(404);
   });
 
   it('will not reveal another manager\'s driver key', async () => {

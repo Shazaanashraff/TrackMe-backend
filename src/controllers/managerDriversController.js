@@ -8,7 +8,9 @@ const DriverEnrollmentKey = require('../models/DriverEnrollmentKey');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 const {
   ensureDriverEnrollmentKey,
-  rotateDriverEnrollmentKey
+  getDriverEnrollmentKeyState,
+  rotateDriverEnrollmentKey,
+  revertDriverEnrollmentKey
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
 const { formatPlate, plateMatches } = require('../utils/numberPlate');
@@ -483,8 +485,8 @@ exports.getDriverEnrollmentKey = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Driver not found for this manager' });
     }
 
-    const enrollmentKey = await ensureDriverEnrollmentKey(driver._id);
-    return res.status(200).json({ success: true, data: { enrollmentKey } });
+    const state = await getDriverEnrollmentKeyState(driver._id);
+    return res.status(200).json({ success: true, data: state });
   } catch (error) {
     next(error);
   }
@@ -500,8 +502,36 @@ exports.rotateDriverEnrollmentKey = async (req, res, next) => {
     const enrollmentKey = await rotateDriverEnrollmentKey(driver._id);
     return res.status(200).json({
       success: true,
-      message: 'Enrollment key rotated. The previous key no longer works.',
-      data: { enrollmentKey }
+      message: 'Enrollment key replaced. The old key no longer works.',
+      data: { enrollmentKey, canRevert: true }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Undo for the endpoint above, available once per rotation. Restores the key
+// passengers were already given, so a mistaken rotation does not force a
+// manager to re-issue the key to a whole vehicle's worth of people.
+exports.revertDriverEnrollmentKey = async (req, res, next) => {
+  try {
+    const driver = await findOwnedDriver(req.user._id, req.params.driverId);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found for this manager' });
+    }
+
+    const enrollmentKey = await revertDriverEnrollmentKey(driver._id);
+    if (!enrollmentKey) {
+      return res.status(409).json({
+        success: false,
+        message: 'There is no previous enrollment key to restore'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Previous enrollment key restored. The replacement no longer works.',
+      data: { enrollmentKey, canRevert: false }
     });
   } catch (error) {
     next(error);

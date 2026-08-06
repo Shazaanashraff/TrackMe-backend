@@ -70,16 +70,42 @@ function decrypt(record) {
   ]).toString('utf8');
 }
 
+const SECRET_FIELDS = '+lookupHash +ciphertext +iv +authTag +previous';
+
+const loadRecord = (driverId) => DriverEnrollmentKey.findOne({ driverId }).select(SECRET_FIELDS);
+
 // Retries on the unique lookupHash index, so a collision costs a retry rather
 // than handing two drivers the same key.
-async function createKeyForDriver(driverId) {
+//
+// `supersede` is the record being replaced, if any. Its secret material is
+// carried into `previous` in the same write, so a rotation and its undo point
+// are never persisted apart.
+async function createKeyForDriver(driverId, supersede = null) {
+  const previous = supersede
+    ? {
+        lookupHash: supersede.lookupHash,
+        ciphertext: supersede.ciphertext,
+        iv: supersede.iv,
+        authTag: supersede.authTag,
+        replacedAt: new Date()
+      }
+    : null;
+
   for (let attempt = 0; attempt < MAX_GENERATE_RETRIES; attempt += 1) {
     const key = generateDisplayKey();
+    const update = {
+      driverId,
+      lookupHash: lookupHash(key),
+      ...encrypt(key),
+      rotatedAt: new Date()
+    };
     try {
       // eslint-disable-next-line no-await-in-loop
       await DriverEnrollmentKey.findOneAndUpdate(
         { driverId },
-        { driverId, lookupHash: lookupHash(key), ...encrypt(key), rotatedAt: new Date() },
+        // A first issue has nothing to undo, so any stale `previous` is dropped
+        // rather than left pointing at a key from an earlier life of this driver.
+        previous ? { $set: { ...update, previous } } : { $set: update, $unset: { previous: '' } },
         { new: true, upsert: true, setDefaultsOnInsert: true }
       );
       return key;
@@ -92,14 +118,54 @@ async function createKeyForDriver(driverId) {
 
 // Returns the existing key, creating one if the driver has none yet.
 async function ensureDriverEnrollmentKey(driverId) {
-  const existing = await DriverEnrollmentKey.findOne({ driverId }).select(
-    '+ciphertext +iv +authTag'
-  );
+  const existing = await loadRecord(driverId);
   if (existing) return decrypt(existing);
   return createKeyForDriver(driverId);
 }
 
-const rotateDriverEnrollmentKey = (driverId) => createKeyForDriver(driverId);
+// The key plus whether the last rotation can still be undone — what the manager
+// UI needs to decide if it may offer "revert".
+async function getDriverEnrollmentKeyState(driverId) {
+  const existing = await loadRecord(driverId);
+  if (!existing) {
+    return { enrollmentKey: await createKeyForDriver(driverId), canRevert: false };
+  }
+  return { enrollmentKey: decrypt(existing), canRevert: Boolean(existing.previous) };
+}
+
+async function rotateDriverEnrollmentKey(driverId) {
+  const current = await loadRecord(driverId);
+  return createKeyForDriver(driverId, current);
+}
+
+// Puts the superseded key back and drops the undo point, so a rotation can be
+// taken back once and not ping-ponged. Returns null when there is nothing to
+// undo, which the controller turns into a 409 rather than a silent success.
+async function revertDriverEnrollmentKey(driverId) {
+  const record = await loadRecord(driverId);
+  if (!record?.previous) return null;
+
+  const { lookupHash: hash, ciphertext, iv, authTag } = record.previous;
+  try {
+    await DriverEnrollmentKey.updateOne(
+      { driverId },
+      {
+        $set: { lookupHash: hash, ciphertext, iv, authTag, rotatedAt: new Date() },
+        $unset: { previous: '' }
+      }
+    );
+  } catch (error) {
+    // The unique index refusing the old hash means some other driver now holds
+    // that key. Vanishingly unlikely, but silently keeping the rotated key
+    // while reporting success would be worse.
+    if (error?.code === 11000) {
+      throw new Error('That enrollment key has since been issued to another driver');
+    }
+    throw error;
+  }
+
+  return decrypt(record.previous);
+}
 
 const findDriverIdByEnrollmentKey = async (value) => {
   const record = await DriverEnrollmentKey.findOne({ lookupHash: lookupHash(value) });
@@ -109,6 +175,8 @@ const findDriverIdByEnrollmentKey = async (value) => {
 module.exports = {
   normalizeEnrollmentKey,
   ensureDriverEnrollmentKey,
+  getDriverEnrollmentKeyState,
   rotateDriverEnrollmentKey,
+  revertDriverEnrollmentKey,
   findDriverIdByEnrollmentKey
 };

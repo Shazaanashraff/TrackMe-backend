@@ -21,6 +21,7 @@ const {
   resetManagerDriverPassword,
   getDriverEnrollmentKey,
   rotateDriverEnrollmentKey,
+  revertDriverEnrollmentKey,
   deleteManagerDriver
 } = require('../controllers/managerDriversController');
 const { getManagerAttendance } = require('../controllers/managerAttendanceController');
@@ -49,6 +50,7 @@ router.delete('/drivers/:driverId', deleteManagerDriver);
 router.put('/drivers/:driverId/password', resetManagerDriverPassword);
 router.get('/drivers/:driverId/enrollment-key', getDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/rotate', rotateDriverEnrollmentKey);
+router.post('/drivers/:driverId/enrollment-key/revert', revertDriverEnrollmentKey);
 
 // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md)
 router.get('/attendance', getManagerAttendance);

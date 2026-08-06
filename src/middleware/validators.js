@@ -124,7 +124,11 @@ exports.validateCreateVehicle = [
   body('routeId')
     .trim()
     .notEmpty().withMessage('Route ID is required'),
+  // Optional since drivers are no longer asked for a seat count when they
+  // register a vehicle. The bounds still apply to anything that does send one
+  // (seat-map bookings read it — see bookingController.getAvailableSeats).
   body('seatCapacity')
+    .optional()
     .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
   body('vehicleType')
     .optional()
