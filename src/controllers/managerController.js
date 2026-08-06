@@ -137,7 +137,8 @@ exports.getManagerDashboard = async (req, res, next) => {
 exports.getManagerVehicles = async (req, res, next) => {
   try {
     const vehicles = await Vehicle.find({ managerId: req.user._id, isDeleted: false })
-      .populate('driverId', 'name email')
+      .populate('driverId', 'name email driverCode')
+      .populate('organization', 'name serviceType')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -281,6 +282,31 @@ exports.updateManagerVehicle = async (req, res, next) => {
   }
 };
 
+// A vehicle carries the same organization as the drivers who drive it. The id
+// is enough on its own; the category is only used to catch a mismatch, since
+// the form offers both.
+async function resolveVehicleOrganization(body) {
+  const { organizationId, organizationCategory } = body || {};
+  if (!organizationId) return { organizationId: null, serviceType: null };
+
+  const organization = await Organization.findOne({
+    _id: organizationId,
+    isDeleted: false
+  }).lean();
+  if (!organization) {
+    return { error: { status: 400, message: 'Organization not found' } };
+  }
+
+  if (organizationCategory
+    && String(organizationCategory).toUpperCase() !== organization.serviceType) {
+    return {
+      error: { status: 400, message: 'Organization does not match the selected category' }
+    };
+  }
+
+  return { organizationId: organization._id, serviceType: organization.serviceType };
+}
+
 // A manager creates vehicles in their own fleet outright. This used to raise a
 // request for a super admin to approve, which left a new manager unable to add
 // anything at all until somebody else acted.
@@ -311,12 +337,22 @@ exports.createManagerVehicle = async (req, res, next) => {
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
 
-    // The driver's email is optional here for the same reason it is on the
-    // drivers page: they sign in with a driver code.
-    if (!normalizedVehicleId || !normalizedNumberPlate || !normalizedRouteId || !driverName || !password) {
+    // A vehicle may be added to the fleet on its own and given a driver later,
+    // so the driver half of this form is optional. Naming a driver still means
+    // giving them a password.
+    const wantsDriver = Boolean(String(driverName || '').trim());
+
+    if (!normalizedVehicleId || !normalizedNumberPlate) {
       return res.status(400).json({
         success: false,
-        message: 'vehicleId, numberPlate, routeId, driverName, and password are required'
+        message: 'vehicleId and numberPlate are required'
+      });
+    }
+
+    if (wantsDriver && !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'A driver needs a password'
       });
     }
 
@@ -324,7 +360,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Enter a valid email address' });
     }
 
-    if (String(password).length < 8) {
+    if (password && String(password).length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
@@ -353,7 +389,7 @@ exports.createManagerVehicle = async (req, res, next) => {
     // since the request carries a new password.
     let driver = null;
     let reusedExistingDriver = false;
-    if (normalizedEmail) {
+    if (wantsDriver && normalizedEmail) {
       const existingDriverAccount = await Driver.findOne({ email: normalizedEmail });
       if (existingDriverAccount) {
         if (String(existingDriverAccount.managerId || '') !== String(req.user._id)) {
@@ -372,12 +408,23 @@ exports.createManagerVehicle = async (req, res, next) => {
       }
     }
 
-    const route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
-    if (!route) {
-      return res.status(400).json({ success: false, message: 'Invalid route ID' });
+    // A route can be attached later, so it is only checked when one is given.
+    let route = null;
+    if (normalizedRouteId) {
+      route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
+      if (!route) {
+        return res.status(400).json({ success: false, message: 'Invalid route ID' });
+      }
     }
 
-    const normalizedServiceType = String(serviceType || route?.serviceType || 'PUBLIC').toUpperCase();
+    const org = await resolveVehicleOrganization(req.body);
+    if (org.error) {
+      return res.status(org.error.status).json({ success: false, message: org.error.message });
+    }
+
+    const normalizedServiceType = String(
+      serviceType || org.serviceType || route?.serviceType || 'PUBLIC'
+    ).toUpperCase();
     if (!SERVICE_TYPES.includes(normalizedServiceType)) {
       return res.status(400).json({ success: false, message: 'Invalid service type' });
     }
@@ -389,58 +436,65 @@ exports.createManagerVehicle = async (req, res, next) => {
       });
     }
 
-    // A manager owns their own fleet, so the vehicle and its driver are created
-    // here rather than queued for a super admin to approve.
-    const driverFields = {
-      name: String(driverName).trim(),
-      phoneNumber: normalizedDriverPhone,
-      nicNumber: String(driverNicNumber || '').trim(),
-      licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
-      password,
-      isActive: true,
-      isEmailVerified: true,
-      managerId: req.user._id
-    };
+    // A manager owns their own fleet, so the vehicle is created here rather than
+    // queued for a super admin to approve. Its driver, if one was named, comes
+    // with it.
+    if (wantsDriver) {
+      const driverFields = {
+        name: String(driverName).trim(),
+        phoneNumber: normalizedDriverPhone,
+        nicNumber: String(driverNicNumber || '').trim(),
+        licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
+        password,
+        isActive: true,
+        isEmailVerified: true,
+        managerId: req.user._id,
+        organization: org.organizationId
+      };
 
-    if (driver) {
-      Object.assign(driver, driverFields);
-      if (!driver.driverCode) driver.driverCode = await generateUniqueDriverCode(Driver);
-      await driver.save();
-    } else {
-      driver = await Driver.create({
-        ...driverFields,
-        // Left off entirely rather than stored blank, so the sparse unique index
-        // does not treat two email-less drivers as duplicates.
-        ...(normalizedEmail ? { email: normalizedEmail } : {}),
-        driverCode: await generateUniqueDriverCode(Driver)
-      });
+      if (driver) {
+        Object.assign(driver, driverFields);
+        if (!driver.driverCode) driver.driverCode = await generateUniqueDriverCode(Driver);
+        await driver.save();
+      } else {
+        driver = await Driver.create({
+          ...driverFields,
+          // Left off entirely rather than stored blank, so the sparse unique index
+          // does not treat two email-less drivers as duplicates.
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
+          driverCode: await generateUniqueDriverCode(Driver)
+        });
+      }
     }
 
     let vehicle;
     try {
       vehicle = await Vehicle.create({
         vehicleId: normalizedVehicleId,
-        vehicleName,
+        // Named after its plate unless the manager gave it a name.
+        vehicleName: String(vehicleName || '').trim() || normalizedNumberPlate,
         numberPlate: normalizedNumberPlate,
         registrationNumber: normalizedReg,
         routeId: normalizedRouteId,
-        seatCapacity,
+        // Left unknown rather than guessed when the form did not ask.
+        seatCapacity: seatCapacity ? Number(seatCapacity) : null,
         vehicleType: vehicleType || 'AC',
         serviceType: normalizedServiceType,
+        organization: org.organizationId,
         bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true,
         managerId: req.user._id,
-        driverId: driver._id,
+        driverId: driver ? driver._id : null,
         isActive: true,
         isDeleted: false
       });
     } catch (error) {
       // A driver with no vehicle is a half-provisioned account nobody asked
       // for, so a brand new one goes back if the vehicle will not save.
-      if (!reusedExistingDriver) await Driver.deleteOne({ _id: driver._id });
+      if (driver && !reusedExistingDriver) await Driver.deleteOne({ _id: driver._id });
       throw error;
     }
 
-    const enrollmentKey = await ensureDriverEnrollmentKey(driver._id);
+    const enrollmentKey = driver ? await ensureDriverEnrollmentKey(driver._id) : null;
 
     await writeAuditLog({
       managerId: req.user._id,
@@ -452,22 +506,24 @@ exports.createManagerVehicle = async (req, res, next) => {
       metadata: {
         vehicleId: normalizedVehicleId,
         routeId: normalizedRouteId,
-        driverId: String(driver._id),
+        driverId: driver ? String(driver._id) : null,
         reason: String(reason || '').trim()
       }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Vehicle created',
+      message: driver ? 'Vehicle created' : 'Vehicle created. Add a driver to put it on the road.',
       data: {
         vehicle,
-        driver: {
-          _id: driver._id,
-          name: driver.name,
-          email: driver.email || '',
-          driverCode: driver.driverCode || null
-        }
+        driver: driver
+          ? {
+            _id: driver._id,
+            name: driver.name,
+            email: driver.email || '',
+            driverCode: driver.driverCode || null
+          }
+          : null
       },
       enrollmentKey
     });

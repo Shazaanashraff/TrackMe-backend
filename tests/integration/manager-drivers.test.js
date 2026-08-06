@@ -448,15 +448,71 @@ describe('POST /api/manager/drivers: vehicle number', () => {
     expect(res.body.message).toMatch(/moved from Previous Driver/i);
   });
 
-  it('rejects a vehicle number that is not in the fleet, creating nothing', async () => {
+  it('rejects a vehicle ID that is not in the fleet, creating nothing', async () => {
     const before = await Driver.countDocuments({ managerId });
 
+    // Not a plate, so there is nothing to put on a new vehicle.
     const res = await request(app).post('/api/manager/drivers').set(...auth())
       .send(newDriver({ vehicleNumber: 'NOT-A-BUS' }));
 
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/no vehicle numbered/i);
     expect(await Driver.countDocuments({ managerId })).toBe(before);
+  });
+
+  it('adds the vehicle to the fleet when the plate is not there yet', async () => {
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'cab-8801' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toMatch(/along with vehicle CAB-8801/i);
+    expect(res.body.data.vehicle.numberPlate).toBe('CAB-8801');
+
+    const vehicle = await Vehicle.findOne({ numberPlate: 'CAB-8801' }).lean();
+    expect(String(vehicle.managerId)).toBe(String(managerId));
+    expect(String(vehicle.driverId)).toBe(res.body.data._id);
+    // Named after its plate, with route and capacity left for the Vehicles page.
+    expect(vehicle.vehicleName).toBe('CAB-8801');
+    expect(vehicle.routeId).toBe('');
+    expect(vehicle.seatCapacity).toBeNull();
+    expect(vehicle.vehicleId).toMatch(/^VEH-CAB8801-[0-9A-Z]{4}$/);
+  });
+
+  it('gives the new vehicle the driver\'s organization', async () => {
+    const org = await Organization.create({ name: `Zahira ${Date.now()}`, serviceType: 'SCHOOL' });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'CAB-8802', organizationId: String(org._id) }));
+
+    expect(res.status).toBe(201);
+    const vehicle = await Vehicle.findOne({ numberPlate: 'CAB-8802' }).lean();
+    expect(String(vehicle.organization)).toBe(String(org._id));
+    expect(vehicle.serviceType).toBe('SCHOOL');
+  });
+
+  it('does not create a second vehicle for a plate already in the fleet', async () => {
+    await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'CAB-8803' }));
+    await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'cab 8803' }));
+
+    expect(await Vehicle.countDocuments({ numberPlate: 'CAB-8803' })).toBe(1);
+  });
+
+  it('refuses a plate that belongs to a vehicle it cannot see', async () => {
+    await Vehicle.create({
+      vehicleId: `OTHER-${Date.now()}`,
+      vehicleName: 'Someone else',
+      numberPlate: 'CAB-8804',
+      registrationNumber: `REG-OTHER-${Date.now()}`,
+      managerId: otherManagerId
+    });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'CAB-8804' }));
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/already belongs to another vehicle/i);
   });
 
   it('refuses a vehicle belonging to another manager', async () => {

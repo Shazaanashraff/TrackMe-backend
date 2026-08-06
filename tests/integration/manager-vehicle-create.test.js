@@ -176,13 +176,65 @@ describe('POST /api/manager/vehicle-accounts', () => {
   });
 
   it('leaves no driver behind when the vehicle cannot be saved', async () => {
+    // A soft-deleted vehicle keeps its plate in the unique index, so the
+    // duplicate check (which only looks at live vehicles) misses it and the
+    // save itself fails. That is the window where a driver could be orphaned.
+    const buried = await Vehicle.create({
+      vehicleId: `BURIED-${Date.now()}`,
+      vehicleName: 'Buried',
+      numberPlate: 'CAB-9911',
+      registrationNumber: `REG-BURIED-${Date.now()}`,
+      managerId,
+      isDeleted: true
+    });
+    expect(buried.isDeleted).toBe(true);
+
     const before = await Driver.countDocuments({ managerId });
 
-    // No seat capacity, which the Vehicle schema requires.
     const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth())
-      .send(newVehicle({ seatCapacity: undefined }));
+      .send(newVehicle({ numberPlate: 'CAB-9911' }));
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(await Driver.countDocuments({ managerId })).toBe(before);
+  });
+
+  it('creates a vehicle with no driver at all', async () => {
+    const body = newVehicle({ driverName: undefined, password: undefined });
+    const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.driver).toBeNull();
+    expect(res.body.message).toMatch(/add a driver/i);
+
+    const vehicle = await Vehicle.findOne({ vehicleId: body.vehicleId }).lean();
+    expect(vehicle.driverId).toBeNull();
+  });
+
+  it('creates a vehicle with no route or seat capacity, to be filled in later', async () => {
+    const body = newVehicle({
+      driverName: undefined, password: undefined, routeId: undefined, seatCapacity: undefined
+    });
+    const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+
+    expect(res.status).toBe(201);
+    const vehicle = await Vehicle.findOne({ vehicleId: body.vehicleId }).lean();
+    expect(vehicle.routeId).toBe('');
+    expect(vehicle.seatCapacity).toBeNull();
+  });
+
+  it('names the vehicle after its plate when no name is given', async () => {
+    const body = newVehicle({ vehicleName: undefined, numberPlate: 'CAB-7777' });
+    const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.vehicleName).toBe('CAB-7777');
+  });
+
+  it('refuses a driver named with no password', async () => {
+    const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth())
+      .send(newVehicle({ password: undefined }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/password/i);
   });
 });

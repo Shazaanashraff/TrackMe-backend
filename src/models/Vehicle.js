@@ -27,24 +27,37 @@ const vehicleSchema = new mongoose.Schema({
     trim: true,
     uppercase: true
   },
+  // A vehicle can sit in the fleet before it has been put on a route, so this
+  // is filled in on the Vehicles page rather than demanded at creation.
   routeId: {
     type: String,
-    required: [true, 'Route ID is required'],
+    default: '',
     trim: true
   },
+  // Null while the vehicle is unassigned. A vehicle added from the Vehicles
+  // page starts that way; one created alongside a driver does not.
   driverId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Driver',
-    required: [true, 'Driver ID is required']
+    default: null
   },
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Manager',
     default: null
   },
+  // The school / university / office this vehicle runs for, matching the
+  // organization on its driver. Null for public service.
+  organization: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true
+  },
+  // Unknown until someone fills it in; the bounds still apply once it is set.
   seatCapacity: {
     type: Number,
-    required: [true, 'Seat capacity is required'],
+    default: null,
     min: [1, 'Seat capacity must be at least 1'],
     max: [100, 'Seat capacity cannot exceed 100']
   },

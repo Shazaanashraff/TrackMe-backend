@@ -11,7 +11,7 @@ const {
   rotateDriverEnrollmentKey
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
-const { plateMatches } = require('../utils/numberPlate');
+const { formatPlate, plateMatches } = require('../utils/numberPlate');
 const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 const {
   createOrganization,
@@ -89,8 +89,7 @@ async function resolveOrganization(body, actorId) {
 }
 
 // "Vehicle number" on the form is whatever the manager calls the bus: its
-// vehicle ID or its number plate. Vehicles are created on the Vehicles page,
-// so this only ever assigns an existing one; it never creates a vehicle.
+// vehicle ID or its number plate.
 async function findManagerVehicleByNumber(managerId, vehicleNumber) {
   const value = String(vehicleNumber || '').trim();
   if (!value) return null;
@@ -111,6 +110,34 @@ async function findManagerVehicleByNumber(managerId, vehicleNumber) {
   if (byId) return byId;
 
   return fleet.find((vehicle) => plateMatches(vehicle.numberPlate, value)) || null;
+}
+
+// A vehicle ID that reads back to a person. Derived from the plate, which is
+// already unique among live vehicles, with a short random tail so a plate that
+// belonged to a deleted vehicle does not collide.
+const vehicleIdFromPlate = (plate) =>
+  `VEH-${plate.replace(/[^A-Z0-9]/g, '')}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+// A manager naming a bus that is not in the fleet yet means they are adding it,
+// not making a mistake. Only a number plate can start one: a vehicle needs a
+// plate, and a bare vehicle ID gives us nothing to put there.
+//
+// Route and seat capacity are left for the Vehicles page. The vehicle is named
+// after its plate, which the manager can rename there too.
+async function createVehicleForDriver({ managerId, plate, organizationId, serviceType }) {
+  const vehicleId = vehicleIdFromPlate(plate);
+
+  return Vehicle.create({
+    vehicleId,
+    vehicleName: plate,
+    numberPlate: plate,
+    registrationNumber: `AUTO-${vehicleId}`,
+    managerId,
+    organization: organizationId || null,
+    serviceType: serviceType || 'PUBLIC',
+    isActive: true,
+    isDeleted: false
+  });
 }
 
 // Managers pick (or add) the school/university/office a driver serves while
@@ -234,17 +261,49 @@ exports.createManagerDriver = async (req, res, next) => {
       return res.status(org.error.status).json({ success: false, message: org.error.message });
     }
 
-    // Resolved before the driver exists, so a bad vehicle number fails without
-    // leaving a half-provisioned account behind.
+    // Resolved before the driver exists, so a vehicle number that cannot be
+    // used fails without leaving a half-provisioned account behind.
     const requestedVehicleNumber = String(vehicleNumber || '').trim();
     let vehicle = null;
+    let vehicleWasCreated = false;
     if (requestedVehicleNumber) {
       vehicle = await findManagerVehicleByNumber(req.user._id, requestedVehicleNumber);
+
       if (!vehicle) {
-        return res.status(400).json({
-          success: false,
-          message: `No vehicle numbered ${requestedVehicleNumber} in your fleet`
-        });
+        // Not in the fleet: a plate is enough to add it, a bare vehicle ID is
+        // not, since there would be no plate to put on the new vehicle.
+        const plate = formatPlate(requestedVehicleNumber);
+        if (!plate) {
+          return res.status(400).json({
+            success: false,
+            message: `No vehicle numbered ${requestedVehicleNumber} in your fleet. `
+              + 'Enter a number plate to add it, or pick one from the Vehicles page.'
+          });
+        }
+
+        const organizationForVehicle = org.organizationId
+          ? await Organization.findById(org.organizationId).select('serviceType').lean()
+          : null;
+
+        try {
+          vehicle = await createVehicleForDriver({
+            managerId: req.user._id,
+            plate,
+            organizationId: org.organizationId,
+            serviceType: organizationForVehicle?.serviceType || 'PUBLIC'
+          });
+          vehicleWasCreated = true;
+        } catch (error) {
+          // The plate is unique across every vehicle, deleted ones included, so
+          // it can be taken by a bus this manager cannot see.
+          if (error?.code === 11000) {
+            return res.status(409).json({
+              success: false,
+              message: `Number plate ${plate} already belongs to another vehicle`
+            });
+          }
+          throw error;
+        }
       }
     }
 
@@ -274,11 +333,13 @@ exports.createManagerDriver = async (req, res, next) => {
       enrollmentKey = await ensureDriverEnrollmentKey(driver._id);
     } catch (error) {
       await Driver.deleteOne({ _id: driver._id });
+      if (vehicleWasCreated) await Vehicle.deleteOne({ _id: vehicle._id });
       throw error;
     }
 
-    // A vehicle always has a driver (the schema requires one), so assigning it
-    // here takes it off whoever held it before, which the response says plainly.
+    // Taking on a vehicle that already had a driver moves it off them, which
+    // the response says plainly. A vehicle sitting unassigned, or one just
+    // created here, has nobody to take it from.
     let reassignedFrom = null;
     if (vehicle) {
       const previousDriverId = vehicle.driverId;
@@ -294,11 +355,16 @@ exports.createManagerDriver = async (req, res, next) => {
       ? await Organization.findById(org.organizationId).select('name serviceType').lean()
       : null;
 
+    let message = 'Driver created successfully';
+    if (reassignedFrom) {
+      message = `Driver created. Vehicle ${vehicle.vehicleId} moved from ${reassignedFrom}.`;
+    } else if (vehicleWasCreated) {
+      message = `Driver created, along with vehicle ${vehicle.numberPlate}.`;
+    }
+
     return res.status(201).json({
       success: true,
-      message: reassignedFrom
-        ? `Driver created. Vehicle ${vehicle.vehicleId} moved from ${reassignedFrom}.`
-        : 'Driver created successfully',
+      message,
       data: sanitizeDriver(driver, vehicle, organization),
       enrollmentKey
     });
