@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-  createVehicleAccountRequest,
+  createManagerVehicle,
   getManagerAssignableRoutes,
   updateRouteQr,
   getManagerVehicleById,
@@ -32,7 +32,7 @@ router.get('/dashboard', getManagerDashboard);
 router.get('/vehicles', getManagerVehicles);
 router.get('/routes', getManagerAssignableRoutes);
 router.get('/requests', getMyRequests);
-router.post('/vehicle-accounts', createVehicleAccountRequest);
+router.post('/vehicle-accounts', createManagerVehicle);
 router.patch('/vehicle-accounts/:vehicleId/reset-password', resetVehicleAccountPassword);
 router.get('/vehicles/:vehicleId', getManagerVehicleById);
 router.put('/vehicles/:vehicleId', updateManagerVehicle);

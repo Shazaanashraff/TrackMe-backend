@@ -4,7 +4,6 @@ const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
-const ManagerVehicleRequest = require('../../src/models/ManagerVehicleRequest');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // Number plates are Sri Lankan and are stored canonically, so the same plate
@@ -92,8 +91,8 @@ describe('POST /api/manager/vehicle-accounts', () => {
 
     expect(res.status).toBe(201);
 
-    const stored = await ManagerVehicleRequest.findOne({ vehicleId: body.vehicleId }).lean();
-    expect(stored.payload.vehicle.numberPlate).toBe('WP CAB-4321');
+    const stored = await Vehicle.findOne({ vehicleId: body.vehicleId }).lean();
+    expect(stored.numberPlate).toBe('WP CAB-4321');
   });
 
   it('accepts a pre-2000 numeric plate', async () => {
@@ -101,8 +100,8 @@ describe('POST /api/manager/vehicle-accounts', () => {
     const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
 
     expect(res.status).toBe(201);
-    const stored = await ManagerVehicleRequest.findOne({ vehicleId: body.vehicleId }).lean();
-    expect(stored.payload.vehicle.numberPlate).toBe('62-1234');
+    const stored = await Vehicle.findOne({ vehicleId: body.vehicleId }).lean();
+    expect(stored.numberPlate).toBe('62-1234');
   });
 });
 
