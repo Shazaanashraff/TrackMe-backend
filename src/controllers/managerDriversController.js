@@ -12,6 +12,7 @@ const {
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
 const { plateMatches } = require('../utils/numberPlate');
+const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 const {
   createOrganization,
   isOrgServiceType,
@@ -216,6 +217,11 @@ exports.createManagerDriver = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Enter a valid email address' });
     }
 
+    const normalizedPhone = String(phoneNumber || '').trim();
+    if (normalizedPhone && !isValidPhone(normalizedPhone)) {
+      return res.status(400).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+    }
+
     if (normalizedEmail && await isEmailRegistered(normalizedEmail)) {
       return res.status(409).json({
         success: false,
@@ -250,7 +256,7 @@ exports.createManagerDriver = async (req, res, next) => {
       driverCode: await generateUniqueDriverCode(Driver),
       password,
       organization: org.organizationId,
-      phoneNumber: String(phoneNumber || '').trim(),
+      phoneNumber: normalizedPhone,
       nicNumber: String(nicNumber || '').trim(),
       licenseCardNumber: String(licenseCardNumber || '').trim(),
       isActive: true,
@@ -344,7 +350,13 @@ exports.updateManagerDriver = async (req, res, next) => {
     }
 
     if (name !== undefined) driver.name = String(name).trim();
-    if (phoneNumber !== undefined) driver.phoneNumber = String(phoneNumber).trim();
+    if (phoneNumber !== undefined) {
+      const trimmedPhone = String(phoneNumber).trim();
+      if (trimmedPhone && !isValidPhone(trimmedPhone)) {
+        return res.status(400).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+      }
+      driver.phoneNumber = trimmedPhone;
+    }
     if (nicNumber !== undefined) driver.nicNumber = String(nicNumber).trim();
     if (licenseCardNumber !== undefined) driver.licenseCardNumber = String(licenseCardNumber).trim();
     if (isActive !== undefined) driver.isActive = Boolean(isActive);

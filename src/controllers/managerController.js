@@ -7,6 +7,7 @@ const Organization = require('../models/Organization');
 const Driver = require('../models/Driver');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 const { formatPlate, isValidPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
+const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const VEHICLE_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
@@ -319,6 +320,11 @@ exports.createVehicleAccountRequest = async (req, res, next) => {
       return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
     }
 
+    const normalizedDriverPhone = String(driverPhoneNumber || '').trim();
+    if (normalizedDriverPhone && !isValidPhone(normalizedDriverPhone)) {
+      return res.status(400).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+    }
+
     const existingVehicle = await Vehicle.findOne({
       $or: [{ vehicleId: normalizedVehicleId }, { registrationNumber: normalizedReg }, { numberPlate: normalizedNumberPlate }],
       isDeleted: false
@@ -392,7 +398,7 @@ exports.createVehicleAccountRequest = async (req, res, next) => {
         driver: {
           name: String(driverName).trim(),
           email: normalizedEmail,
-          phoneNumber: String(driverPhoneNumber || '').trim(),
+          phoneNumber: normalizedDriverPhone,
           nicNumber: String(driverNicNumber || '').trim(),
           licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
           password

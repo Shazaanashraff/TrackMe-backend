@@ -171,6 +171,40 @@ describe('POST /api/manager/drivers', () => {
     expect(res.body.message).toMatch(/8 characters/i);
   });
 
+  it('rejects a phone number that is not Sri Lankan', async () => {
+    const res = await request(app)
+      .post('/api/manager/drivers')
+      .set(...auth())
+      .send(newDriver({ phoneNumber: '07712345678901' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/Sri Lankan phone number/i);
+  });
+
+  it('takes a phone number in either the local or the +94 form', async () => {
+    const local = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ phoneNumber: '0771234567' }));
+    const international = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ phoneNumber: '+94771234567' }));
+
+    expect(local.status).toBe(201);
+    expect(local.body.data.phoneNumber).toBe('0771234567');
+    expect(international.status).toBe(201);
+    expect(international.body.data.phoneNumber).toBe('+94771234567');
+  });
+
+  it('rejects a malformed phone number on update', async () => {
+    const created = await createDriver();
+
+    const res = await request(app)
+      .put(`/api/manager/drivers/${created.body.data._id}`)
+      .set(...auth())
+      .send({ phoneNumber: '12345' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/Sri Lankan phone number/i);
+  });
+
   it('rejects a malformed email', async () => {
     const res = await request(app)
       .post('/api/manager/drivers')
