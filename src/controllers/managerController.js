@@ -6,6 +6,7 @@ const Route = require('../models/Route');
 const Organization = require('../models/Organization');
 const Driver = require('../models/Driver');
 const { isEmailRegistered } = require('../utils/accountRegistry');
+const { formatPlate, isValidPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const VEHICLE_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
@@ -204,7 +205,12 @@ exports.updateManagerVehicle = async (req, res, next) => {
     }
 
     if (updateData.numberPlate) {
-      updateData.numberPlate = String(updateData.numberPlate).trim().toUpperCase();
+      const formatted = formatPlate(updateData.numberPlate);
+      if (!formatted) {
+        return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
+      }
+      // Stored canonical, so the same plate typed any which way is one record.
+      updateData.numberPlate = formatted;
       const duplicate = await Vehicle.findOne({
         numberPlate: updateData.numberPlate,
         _id: { $ne: vehicle._id },
@@ -292,7 +298,8 @@ exports.createVehicleAccountRequest = async (req, res, next) => {
     } = req.body;
 
     const normalizedVehicleId = String(vehicleId || '').trim();
-    const normalizedNumberPlate = String(numberPlate || '').trim().toUpperCase();
+    // Canonical, so "PF- 2327" and "pf2327" are the same plate on the way in.
+    const normalizedNumberPlate = formatPlate(numberPlate) || String(numberPlate || '').trim().toUpperCase();
     const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedVehicleId}`).trim();
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
@@ -306,6 +313,10 @@ exports.createVehicleAccountRequest = async (req, res, next) => {
 
     if (String(password).length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    if (!isValidPlate(normalizedNumberPlate)) {
+      return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
     }
 
     const existingVehicle = await Vehicle.findOne({

@@ -373,6 +373,26 @@ describe('POST /api/manager/drivers: vehicle number', () => {
     expect(res.body.data.vehicle.numberPlate).toBe(vehicle.numberPlate);
   });
 
+  it('finds a Sri Lankan plate however the manager spaced it', async () => {
+    const vehicle = await makeVehicle({ numberPlate: 'PF-2327' });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'pf- 2327' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.vehicleId).toBe(vehicle.vehicleId);
+  });
+
+  it('finds a plate that carries its province', async () => {
+    const vehicle = await makeVehicle({ numberPlate: 'WP CAB-1234' });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'wpcab1234' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.vehicleId).toBe(vehicle.vehicleId);
+  });
+
   it('says so plainly when the vehicle moves off another driver', async () => {
     const previous = await createDriver({ name: 'Previous Driver' });
     const vehicle = await makeVehicle({ driverId: previous.body.data._id });

@@ -11,6 +11,7 @@ const {
   rotateDriverEnrollmentKey
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
+const { plateMatches } = require('../utils/numberPlate');
 const {
   createOrganization,
   isOrgServiceType,
@@ -93,11 +94,18 @@ async function findManagerVehicleByNumber(managerId, vehicleNumber) {
   const value = String(vehicleNumber || '').trim();
   if (!value) return null;
 
-  return Vehicle.findOne({
-    managerId,
-    isDeleted: false,
-    $or: [{ vehicleId: value }, { numberPlate: value.toUpperCase() }]
-  });
+  const byId = await Vehicle.findOne({ managerId, isDeleted: false, vehicleId: value });
+  if (byId) return byId;
+
+  // Plates are compared canonically, so "PF- 2327", "pf2327" and "PF-2327" all
+  // find the same bus. Legacy rows were stored before plates were normalised,
+  // hence the comparison in memory rather than a query on an exact string.
+  // A manager's fleet is small enough that reading it is cheaper than keeping a
+  // second normalised field in step.
+  // Full documents, not a projection: the match gets its driver reassigned and
+  // saved, and saving a partially selected vehicle is asking for trouble.
+  const fleet = await Vehicle.find({ managerId, isDeleted: false });
+  return fleet.find((vehicle) => plateMatches(vehicle.numberPlate, value)) || null;
 }
 
 // Managers pick (or add) the school/university/office a driver serves while

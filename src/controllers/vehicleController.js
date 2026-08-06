@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
+const { formatPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -16,7 +17,12 @@ const parseBooleanQuery = (value) => {
 exports.registerVehicle = async (req, res, next) => {
   try {
     const { vehicleId, vehicleName, registrationNumber, numberPlate, routeId, seatCapacity, vehicleType, serviceType, bookingEnabled } = req.body;
-    const normalizedNumberPlate = String(numberPlate || registrationNumber || '').trim().toUpperCase();
+    const plateInput = numberPlate || registrationNumber || '';
+    const normalizedNumberPlate = formatPlate(plateInput);
+
+    if (!normalizedNumberPlate) {
+      return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
+    }
 
     // Check if vehicle exists
     const vehicleExists = await Vehicle.findOne({ $or: [{ vehicleId }, { registrationNumber }, { numberPlate: normalizedNumberPlate }], isDeleted: false });
