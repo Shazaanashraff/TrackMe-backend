@@ -383,6 +383,16 @@ describe('POST /api/manager/drivers: vehicle number', () => {
     expect(res.body.data.vehicle.vehicleId).toBe(vehicle.vehicleId);
   });
 
+  it('finds a vehicle by ID whatever the case, since the form upper-cases it', async () => {
+    const vehicle = await makeVehicle();
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: vehicle.vehicleId.toLowerCase() }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.vehicleId).toBe(vehicle.vehicleId);
+  });
+
   it('finds a plate that carries its province', async () => {
     const vehicle = await makeVehicle({ numberPlate: 'WP CAB-1234' });
 

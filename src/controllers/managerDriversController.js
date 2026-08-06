@@ -94,17 +94,21 @@ async function findManagerVehicleByNumber(managerId, vehicleNumber) {
   const value = String(vehicleNumber || '').trim();
   if (!value) return null;
 
-  const byId = await Vehicle.findOne({ managerId, isDeleted: false, vehicleId: value });
-  if (byId) return byId;
-
   // Plates are compared canonically, so "PF- 2327", "pf2327" and "PF-2327" all
-  // find the same bus. Legacy rows were stored before plates were normalised,
-  // hence the comparison in memory rather than a query on an exact string.
-  // A manager's fleet is small enough that reading it is cheaper than keeping a
-  // second normalised field in step.
+  // find the same bus, and a vehicle ID is compared without regard to case
+  // because the form upper-cases whatever is typed. Legacy rows were stored
+  // before plates were normalised, hence the comparison in memory rather than a
+  // query on an exact string; a manager's fleet is small enough that reading it
+  // is cheaper than keeping a second normalised field in step.
+  //
   // Full documents, not a projection: the match gets its driver reassigned and
   // saved, and saving a partially selected vehicle is asking for trouble.
   const fleet = await Vehicle.find({ managerId, isDeleted: false });
+  const wanted = value.toUpperCase();
+
+  const byId = fleet.find((vehicle) => String(vehicle.vehicleId || '').toUpperCase() === wanted);
+  if (byId) return byId;
+
   return fleet.find((vehicle) => plateMatches(vehicle.numberPlate, value)) || null;
 }
 
