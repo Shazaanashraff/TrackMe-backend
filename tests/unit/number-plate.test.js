@@ -2,6 +2,7 @@ const {
   parsePlate,
   formatPlate,
   isValidPlate,
+  plateKey,
   plateMatches
 } = require('../../src/utils/numberPlate');
 
@@ -68,19 +69,49 @@ describe('formatPlate', () => {
   });
 });
 
+describe('plateKey', () => {
+  test('is the series and digits, whatever spacing or case was used', () => {
+    expect(plateKey('pf- 2327')).toBe('PF-2327');
+    expect(plateKey('PF2327')).toBe('PF-2327');
+  });
+
+  // The number is allocated nationally, so the province on the plate says where
+  // the vehicle was registered, not which vehicle it is.
+  test('ignores the province, so re-registering does not make a second vehicle', () => {
+    expect(plateKey('WP CAB-1234')).toBe('CAB-1234');
+    expect(plateKey('CP CAB-1234')).toBe('CAB-1234');
+    expect(plateKey('CAB-1234')).toBe('CAB-1234');
+  });
+
+  // Rows saved before plates were normalised still need a key, or the unique
+  // index would let any number of them through.
+  test('falls back to the stripped text for something that is not a plate', () => {
+    expect(plateKey('BUS-FLEET-9')).toBe('BUSFLEET9');
+    expect(plateKey('bus fleet 9')).toBe('BUSFLEET9');
+  });
+
+  test('is empty for nothing at all', () => {
+    expect(plateKey('')).toBe('');
+    expect(plateKey(null)).toBe('');
+  });
+});
+
 describe('plateMatches', () => {
   test('matches the same plate however it was typed', () => {
     expect(plateMatches('PF-2327', 'pf 2327')).toBe(true);
     expect(plateMatches('WP CAB-1234', 'wpcab1234')).toBe(true);
   });
 
-  test('does not match different plates', () => {
-    expect(plateMatches('CAB-1234', 'CAB-1235')).toBe(false);
-    expect(plateMatches('WP CAB-1234', 'CP CAB-1234')).toBe(false);
+  test('matches the same registration across provinces', () => {
+    expect(plateMatches('WP CAB-1234', 'CP CAB-1234')).toBe(true);
+    expect(plateMatches('WP CAB-1234', 'CAB-1234')).toBe(true);
   });
 
-  // Rows saved before plates were normalised may hold anything at all; they
-  // still have to be findable by typing exactly what is stored.
+  test('does not match different registrations', () => {
+    expect(plateMatches('CAB-1234', 'CAB-1235')).toBe(false);
+    expect(plateMatches('CAB-1234', 'CAD-1234')).toBe(false);
+  });
+
   test('falls back to a plain comparison for a legacy plate', () => {
     expect(plateMatches('BUS-FLEET-9', 'bus fleet 9')).toBe(true);
     expect(plateMatches('BUS-FLEET-9', 'BUS-FLEET-8')).toBe(false);

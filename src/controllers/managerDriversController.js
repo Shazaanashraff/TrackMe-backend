@@ -12,6 +12,7 @@ const {
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
 const { formatPlate, plateMatches } = require('../utils/numberPlate');
+const { plateConflict } = require('../utils/vehiclePlateGuard');
 const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 const {
   createOrganization,
@@ -279,6 +280,12 @@ exports.createManagerDriver = async (req, res, next) => {
             message: `No vehicle numbered ${requestedVehicleNumber} in your fleet. `
               + 'Enter a number plate to add it, or pick one from the Vehicles page.'
           });
+        }
+
+        // Said plainly before the unique index says it in its own way.
+        const conflict = await plateConflict(plate, { managerId: req.user._id });
+        if (conflict) {
+          return res.status(conflict.status).json({ success: false, message: conflict.message });
         }
 
         const organizationForVehicle = org.organizationId

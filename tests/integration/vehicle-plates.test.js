@@ -12,6 +12,7 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 let managerToken;
 let managerId;
+let otherManagerId;
 let routeId;
 
 beforeAll(async () => {
@@ -27,6 +28,15 @@ beforeAll(async () => {
     isActive: true
   });
   managerId = manager._id;
+
+  const other = await Manager.create({
+    name: 'Other Plate Manager',
+    email: `mgr-plate-other-${Date.now()}@t.com`,
+    password: 'P@ssw0rd!',
+    isEmailVerified: true,
+    isActive: true
+  });
+  otherManagerId = other._id;
 
   const route = await Route.create({
     routeId: `PLATE-R-${Date.now()}`,
@@ -102,6 +112,84 @@ describe('POST /api/manager/vehicle-accounts', () => {
     expect(res.status).toBe(201);
     const stored = await Vehicle.findOne({ vehicleId: body.vehicleId }).lean();
     expect(stored.numberPlate).toBe('62-1234');
+  });
+});
+
+describe('A plate belongs to one vehicle', () => {
+  const created = [];
+
+  const add = async (numberPlate) => {
+    const body = vehicleAccount({ numberPlate });
+    const res = await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+    if (res.status === 201) created.push(body.vehicleId);
+    return res;
+  };
+
+  it('refuses a plate already in the fleet', async () => {
+    expect((await add('CAB-5001')).status).toBe(201);
+
+    const again = await add('CAB-5001');
+    expect(again.status).toBe(409);
+    expect(again.body.message).toMatch(/already on vehicle/i);
+  });
+
+  it('refuses the same plate written differently', async () => {
+    expect((await add('CAB-5002')).status).toBe(201);
+
+    const spaced = await add('cab 5002');
+    expect(spaced.status).toBe(409);
+  });
+
+  // The registration is national; the province only says where it was issued.
+  it('refuses the same registration under another province', async () => {
+    expect((await add('WP CAB-5003')).status).toBe(201);
+
+    const elsewhere = await add('CP CAB-5003');
+    expect(elsewhere.status).toBe(409);
+    expect(elsewhere.body.message).toMatch(/already on vehicle/i);
+  });
+
+  it('refuses a plate held by another manager, without naming their vehicle', async () => {
+    await Vehicle.create({
+      vehicleId: `THEIRS-${Date.now()}`,
+      vehicleName: 'Theirs',
+      numberPlate: 'CAB-5004',
+      registrationNumber: `REG-THEIRS-${Date.now()}`,
+      managerId: otherManagerId
+    });
+
+    const res = await add('CAB-5004');
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/belongs to another vehicle/i);
+    expect(res.body.message).not.toMatch(/THEIRS-/);
+  });
+
+  it('refuses a plate held by a deleted vehicle, saying so', async () => {
+    await Vehicle.create({
+      vehicleId: `GONE-${Date.now()}`,
+      vehicleName: 'Gone',
+      numberPlate: 'CAB-5005',
+      registrationNumber: `REG-GONE-${Date.now()}`,
+      managerId,
+      isDeleted: true
+    });
+
+    const res = await add('CAB-5005');
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/deleted vehicle/i);
+  });
+
+  it('keeps the database from holding two, even past the checks', async () => {
+    await add('CAB-5006');
+
+    // Straight at the model, bypassing every controller guard.
+    await expect(Vehicle.create({
+      vehicleId: `RAW-${Date.now()}`,
+      vehicleName: 'Raw',
+      numberPlate: 'WP CAB-5006',
+      registrationNumber: `REG-RAW-${Date.now()}`,
+      managerId
+    })).rejects.toMatchObject({ code: 11000 });
   });
 });
 

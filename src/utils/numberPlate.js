@@ -69,17 +69,30 @@ function formatPlate(value) {
 
 const isValidPlate = (value) => parsePlate(value) !== null;
 
+// What makes two plates the same registration: the series and its four digits,
+// with any province prefix dropped. The number is allocated nationally, so
+// "WP CAB-1234" and "CP CAB-1234" are one vehicle that changed province, not
+// two vehicles. This is the value the unique index is built on.
+//
+// Falls back to the stripped input for anything that does not parse, so rows
+// saved before plates were normalised still get a key and still collide with
+// themselves.
+function plateKey(value) {
+  const parsed = parsePlate(value);
+  if (parsed) return `${parsed.series}-${parsed.digits}`;
+  return strip(value);
+}
+
 // Same wording everywhere a plate is rejected, so the manager sees one rule.
 const PLATE_FORMAT_MESSAGE =
   'Enter a Sri Lankan number plate, for example CAB-1234, WP CAB-1234 or 62-1234';
 
-// Two plates are the same vehicle when they canonicalise to the same thing.
-// Falls back to a plain comparison for legacy rows stored in some other shape.
+// Two plates are the same vehicle when they share a registration, whatever
+// province either was written with.
 function plateMatches(a, b) {
-  const left = formatPlate(a);
-  const right = formatPlate(b);
-  if (left && right) return left === right;
-  return strip(a) === strip(b) && strip(a) !== '';
+  const left = plateKey(a);
+  const right = plateKey(b);
+  return left !== '' && left === right;
 }
 
 module.exports = {
@@ -89,5 +102,6 @@ module.exports = {
   parsePlate,
   formatPlate,
   isValidPlate,
+  plateKey,
   plateMatches
 };

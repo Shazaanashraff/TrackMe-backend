@@ -10,6 +10,7 @@ const { formatPlate, isValidPlate, PLATE_FORMAT_MESSAGE } = require('../utils/nu
 const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
 const { ensureDriverEnrollmentKey } = require('../utils/enrollmentKey');
+const { plateConflict } = require('../utils/vehiclePlateGuard');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -216,13 +217,13 @@ exports.updateManagerVehicle = async (req, res, next) => {
       }
       // Stored canonical, so the same plate typed any which way is one record.
       updateData.numberPlate = formatted;
-      const duplicate = await Vehicle.findOne({
-        numberPlate: updateData.numberPlate,
-        _id: { $ne: vehicle._id },
-        isDeleted: false
+
+      const conflict = await plateConflict(formatted, {
+        managerId: req.user._id,
+        excludeId: vehicle._id
       });
-      if (duplicate) {
-        return res.status(409).json({ success: false, message: 'Number plate already exists' });
+      if (conflict) {
+        return res.status(conflict.status).json({ success: false, message: conflict.message });
       }
     }
 
@@ -373,14 +374,21 @@ exports.createManagerVehicle = async (req, res, next) => {
       return res.status(400).json({ success: false, message: PHONE_FORMAT_MESSAGE });
     }
 
+    // The plate is checked on its own so the manager is told which vehicle
+    // holds it, rather than being handed a list of three things it might be.
+    const conflict = await plateConflict(normalizedNumberPlate, { managerId: req.user._id });
+    if (conflict) {
+      return res.status(conflict.status).json({ success: false, message: conflict.message });
+    }
+
     const existingVehicle = await Vehicle.findOne({
-      $or: [{ vehicleId: normalizedVehicleId }, { registrationNumber: normalizedReg }, { numberPlate: normalizedNumberPlate }],
+      $or: [{ vehicleId: normalizedVehicleId }, { registrationNumber: normalizedReg }],
       isDeleted: false
     });
     if (existingVehicle) {
       return res.status(409).json({
         success: false,
-        message: 'Vehicle ID, number plate, or registration number already exists'
+        message: 'Vehicle ID or registration number already exists'
       });
     }
 

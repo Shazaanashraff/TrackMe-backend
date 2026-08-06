@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { plateKey } = require('../utils/numberPlate');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -24,6 +25,17 @@ const vehicleSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Number plate is required'],
     unique: true,
+    trim: true,
+    uppercase: true
+  },
+  // The registration behind the plate, province prefix dropped, kept unique so
+  // no two vehicles can claim the same bus however their plates were written.
+  // Maintained by the hook below rather than by callers; a soft-deleted vehicle
+  // keeps its key, because the registration is still spoken for.
+  plateKey: {
+    type: String,
+    unique: true,
+    sparse: true,
     trim: true,
     uppercase: true
   },
@@ -95,6 +107,17 @@ const vehicleSchema = new mongoose.Schema({
   insuranceExpiry: Date
 }, {
   timestamps: true
+});
+
+// The plate is the vehicle's identity, so its key is derived here rather than
+// trusted from whoever is saving. Every write path in the app goes through
+// save(), so this runs on creation and on a plate change alike.
+vehicleSchema.pre('save', function derivePlateKey(next) {
+  if (this.isModified('numberPlate') || !this.plateKey) {
+    const key = plateKey(this.numberPlate);
+    this.plateKey = key || undefined;
+  }
+  next();
 });
 
 // Index for faster queries

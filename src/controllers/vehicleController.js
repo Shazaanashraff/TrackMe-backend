@@ -3,6 +3,7 @@ const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 const { formatPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
+const { plateConflict } = require('../utils/vehiclePlateGuard');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -24,8 +25,14 @@ exports.registerVehicle = async (req, res, next) => {
       return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
     }
 
+    // A plate is one vehicle, whoever is registering it.
+    const conflict = await plateConflict(normalizedNumberPlate);
+    if (conflict) {
+      return res.status(conflict.status).json({ success: false, message: conflict.message });
+    }
+
     // Check if vehicle exists
-    const vehicleExists = await Vehicle.findOne({ $or: [{ vehicleId }, { registrationNumber }, { numberPlate: normalizedNumberPlate }], isDeleted: false });
+    const vehicleExists = await Vehicle.findOne({ $or: [{ vehicleId }, { registrationNumber }], isDeleted: false });
     if (vehicleExists) {
       return res.status(400).json({ 
         success: false, 
