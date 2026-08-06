@@ -1,6 +1,8 @@
 const { body, param, query } = require('express-validator');
+const { looksLikeDriverCode } = require('../utils/driverCode');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Route Validation Rules
 exports.validateCreateRoute = [
@@ -200,11 +202,18 @@ exports.validateRegister = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
+// Sign-in accepts an email or a driver code (drivers may have no email), sent as
+// either `identifier` or the original `email` field. The shape check happens
+// here; which account it belongs to is the controller's business.
 exports.validateLogin = [
-  body('email')
-    .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email format'),
+  body(['identifier', 'email'])
+    .custom((_value, { req }) => {
+      const raw = String(req.body?.identifier ?? req.body?.email ?? '').trim();
+      if (!raw) throw new Error('Email or driver ID is required');
+      if (looksLikeDriverCode(raw)) return true;
+      if (!EMAIL_REGEX.test(raw)) throw new Error('Enter a valid email address or driver ID');
+      return true;
+    }),
   body('password')
     .notEmpty().withMessage('Password is required')
 ];

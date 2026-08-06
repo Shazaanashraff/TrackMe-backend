@@ -3,17 +3,31 @@
 // can never read or edit another manager's drivers.
 const Driver = require('../models/Driver');
 const Vehicle = require('../models/Vehicle');
+const Organization = require('../models/Organization');
 const DriverEnrollmentKey = require('../models/DriverEnrollmentKey');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 const {
   ensureDriverEnrollmentKey,
   rotateDriverEnrollmentKey
 } = require('../utils/enrollmentKey');
+const { generateUniqueDriverCode } = require('../utils/driverCode');
+const {
+  createOrganization,
+  isOrgServiceType,
+  listOrganizations,
+  publicOrganization
+} = require('../utils/organizations');
 
-const sanitizeDriver = (driver, vehicle) => ({
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const sanitizeDriver = (driver, vehicle, organization) => ({
   _id: driver._id,
+  // The permanent sign-in ID. Drivers created before it existed have none
+  // until the backfill runs, so it can be null.
+  driverCode: driver.driverCode || null,
   name: driver.name,
-  email: driver.email,
+  email: driver.email || '',
+  organization: publicOrganization(organization),
   phoneNumber: driver.phoneNumber || '',
   nicNumber: driver.nicNumber || '',
   licenseCardNumber: driver.licenseCardNumber || '',
@@ -34,6 +48,91 @@ const isSetupComplete = (driver, vehicle) => Boolean(driver.phoneNumber && vehic
 const findOwnedDriver = (managerId, driverId) =>
   Driver.findOne({ _id: driverId, managerId });
 
+// The form offers "choose existing" or "create new" in one step, so the request
+// may carry either an id or a name + category. Resolves to { organizationId }
+// or { error: { status, message } }.
+async function resolveOrganization(body, actorId) {
+  const { organizationId, organizationName, organizationCategory } = body || {};
+
+  if (organizationId) {
+    const organization = await Organization.findOne({
+      _id: organizationId,
+      isDeleted: false
+    }).lean();
+    if (!organization) {
+      return { error: { status: 400, message: 'Organization not found' } };
+    }
+    return { organizationId: organization._id };
+  }
+
+  const name = String(organizationName || '').trim();
+  if (!name) return { organizationId: null };
+
+  if (!isOrgServiceType(organizationCategory)) {
+    return {
+      error: {
+        status: 400,
+        message: 'Choose a category (school, university, or office) for the new organization'
+      }
+    };
+  }
+
+  const result = await createOrganization({
+    name,
+    serviceType: organizationCategory,
+    createdBy: actorId
+  });
+  if (result.error) return { error: result.error };
+  return { organizationId: result.organization._id };
+}
+
+// "Vehicle number" on the form is whatever the manager calls the bus — its
+// vehicle ID or its number plate. Vehicles are created on the Vehicles page,
+// so this only ever assigns an existing one; it never creates a vehicle.
+async function findManagerVehicleByNumber(managerId, vehicleNumber) {
+  const value = String(vehicleNumber || '').trim();
+  if (!value) return null;
+
+  return Vehicle.findOne({
+    managerId,
+    isDeleted: false,
+    $or: [{ vehicleId: value }, { numberPlate: value.toUpperCase() }]
+  });
+}
+
+// Managers pick (or add) the school/university/office a driver serves while
+// creating them, so they get the same organization list the super admin has.
+exports.getOrganizationsForManager = async (req, res, next) => {
+  try {
+    const organizations = await listOrganizations(req.query.serviceType);
+    return res.status(200).json({ success: true, count: organizations.length, data: organizations });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createOrganizationForManager = async (req, res, next) => {
+  try {
+    const result = await createOrganization({
+      name: req.body?.name,
+      serviceType: req.body?.serviceType,
+      createdBy: req.user?._id || null
+    });
+
+    if (result.error) {
+      return res.status(result.error.status).json({ success: false, message: result.error.message });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Organization created successfully',
+      data: publicOrganization(result.organization)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getManagerDrivers = async (req, res, next) => {
   try {
     const drivers = await Driver.find({ managerId: req.user._id })
@@ -50,10 +149,24 @@ exports.getManagerDrivers = async (req, res, next) => {
 
     const vehicleByDriver = new Map(vehicles.map((v) => [String(v.driverId), v]));
 
+    // One lookup for the whole page rather than a populate per driver.
+    const organizationIds = [...new Set(
+      drivers.map((d) => d.organization).filter(Boolean).map(String)
+    )];
+    const organizations = organizationIds.length
+      ? await Organization.find({ _id: { $in: organizationIds } })
+        .select('name serviceType')
+        .lean()
+      : [];
+    const organizationById = new Map(organizations.map((o) => [String(o._id), o]));
+
     const data = drivers.map((driver) => {
       const vehicle = vehicleByDriver.get(String(driver._id)) || null;
+      const organization = driver.organization
+        ? organizationById.get(String(driver.organization)) || null
+        : null;
       return {
-        ...sanitizeDriver(driver, vehicle),
+        ...sanitizeDriver(driver, vehicle, organization),
         setupComplete: isSetupComplete(driver, vehicle)
       };
     });
@@ -66,31 +179,71 @@ exports.getManagerDrivers = async (req, res, next) => {
 
 exports.createManagerDriver = async (req, res, next) => {
   try {
-    const { name, email, password, phoneNumber, nicNumber, licenseCardNumber } = req.body || {};
+    const {
+      name, email, password, phoneNumber, nicNumber, licenseCardNumber, vehicleNumber
+    } = req.body || {};
 
+    // Email is optional — the driver always gets a driver code to sign in with,
+    // and many drivers have no work email at all.
     const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!String(name || '').trim() || !normalizedEmail || !password) {
+    if (!String(name || '').trim() || !password) {
       return res.status(400).json({
         success: false,
-        message: 'name, email and password are required'
+        message: 'name and password are required'
       });
     }
 
-    if (await isEmailRegistered(normalizedEmail)) {
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters'
+      });
+    }
+
+    if (normalizedEmail && !emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address' });
+    }
+
+    if (normalizedEmail && await isEmailRegistered(normalizedEmail)) {
       return res.status(409).json({
         success: false,
         message: 'This email is already registered to a different account type.'
       });
     }
 
+    const org = await resolveOrganization(req.body, req.user._id);
+    if (org.error) {
+      return res.status(org.error.status).json({ success: false, message: org.error.message });
+    }
+
+    // Resolved before the driver exists, so a bad vehicle number fails without
+    // leaving a half-provisioned account behind.
+    const requestedVehicleNumber = String(vehicleNumber || '').trim();
+    let vehicle = null;
+    if (requestedVehicleNumber) {
+      vehicle = await findManagerVehicleByNumber(req.user._id, requestedVehicleNumber);
+      if (!vehicle) {
+        return res.status(400).json({
+          success: false,
+          message: `No vehicle numbered ${requestedVehicleNumber} in your fleet`
+        });
+      }
+    }
+
     const driver = await Driver.create({
       name: String(name).trim(),
-      email: normalizedEmail,
+      // Left off entirely rather than stored blank, so the sparse unique index
+      // does not treat two email-less drivers as duplicates.
+      ...(normalizedEmail ? { email: normalizedEmail } : {}),
+      driverCode: await generateUniqueDriverCode(Driver),
       password,
+      organization: org.organizationId,
       phoneNumber: String(phoneNumber || '').trim(),
       nicNumber: String(nicNumber || '').trim(),
       licenseCardNumber: String(licenseCardNumber || '').trim(),
       isActive: true,
+      // Nothing to verify without an email, and a manager-created account is
+      // already vouched for.
       isEmailVerified: true,
       managerId: req.user._id
     });
@@ -106,10 +259,29 @@ exports.createManagerDriver = async (req, res, next) => {
       throw error;
     }
 
+    // A vehicle always has a driver (the schema requires one), so assigning it
+    // here takes it off whoever held it before — said plainly in the response.
+    let reassignedFrom = null;
+    if (vehicle) {
+      const previousDriverId = vehicle.driverId;
+      vehicle.driverId = driver._id;
+      await vehicle.save();
+      if (previousDriverId && String(previousDriverId) !== String(driver._id)) {
+        const previous = await Driver.findById(previousDriverId).select('name').lean();
+        reassignedFrom = previous?.name || null;
+      }
+    }
+
+    const organization = org.organizationId
+      ? await Organization.findById(org.organizationId).select('name serviceType').lean()
+      : null;
+
     return res.status(201).json({
       success: true,
-      message: 'Driver created successfully',
-      data: sanitizeDriver(driver, null),
+      message: reassignedFrom
+        ? `Driver created. Vehicle ${vehicle.vehicleId} moved from ${reassignedFrom}.`
+        : 'Driver created successfully',
+      data: sanitizeDriver(driver, vehicle, organization),
       enrollmentKey
     });
   } catch (error) {
@@ -128,19 +300,35 @@ exports.updateManagerDriver = async (req, res, next) => {
 
     if (email !== undefined) {
       const normalizedEmail = String(email).trim().toLowerCase();
-      if (normalizedEmail !== driver.email) {
-        const taken = await isEmailRegistered(normalizedEmail, {
-          excludeId: driver._id,
-          excludeRole: 'driver'
-        });
-        if (taken) {
-          return res.status(409).json({
-            success: false,
-            message: 'Email already in use by another account'
-          });
+      if (normalizedEmail !== (driver.email || '')) {
+        if (normalizedEmail && !emailRegex.test(normalizedEmail)) {
+          return res.status(400).json({ success: false, message: 'Enter a valid email address' });
         }
-        driver.email = normalizedEmail;
+        if (normalizedEmail) {
+          const taken = await isEmailRegistered(normalizedEmail, {
+            excludeId: driver._id,
+            excludeRole: 'driver'
+          });
+          if (taken) {
+            return res.status(409).json({
+              success: false,
+              message: 'Email already in use by another account'
+            });
+          }
+        }
+        // Removing the email has to unset the field, not blank it — a blank
+        // would sit in the sparse unique index and collide with the next one.
+        driver.set('email', normalizedEmail || undefined);
       }
+    }
+
+    if (req.body.organizationId !== undefined
+      || req.body.organizationName !== undefined) {
+      const org = await resolveOrganization(req.body, req.user._id);
+      if (org.error) {
+        return res.status(org.error.status).json({ success: false, message: org.error.message });
+      }
+      driver.organization = org.organizationId;
     }
 
     if (name !== undefined) driver.name = String(name).trim();
@@ -159,10 +347,14 @@ exports.updateManagerDriver = async (req, res, next) => {
       .select('vehicleId numberPlate')
       .lean();
 
+    const organization = driver.organization
+      ? await Organization.findById(driver.organization).select('name serviceType').lean()
+      : null;
+
     return res.status(200).json({
       success: true,
       message: 'Driver updated successfully',
-      data: sanitizeDriver(driver, vehicle)
+      data: sanitizeDriver(driver, vehicle, organization)
     });
   } catch (error) {
     next(error);

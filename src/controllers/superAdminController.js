@@ -8,6 +8,11 @@ const Organization = require('../models/Organization');
 const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { isEmailRegistered } = require('../utils/accountRegistry');
+const {
+  listOrganizations,
+  createOrganization: createOrganizationRecord,
+  publicOrganization
+} = require('../utils/organizations');
 
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -927,15 +932,7 @@ exports.getAuditLogs = async (req, res, next) => {
 // @route   GET /api/super-admin/organizations?serviceType=SCHOOL
 exports.getOrganizations = async (req, res, next) => {
   try {
-    const { serviceType } = req.query;
-    const filter = { isDeleted: false };
-    if (serviceType) filter.serviceType = String(serviceType).toUpperCase();
-
-    const organizations = await Organization.find(filter)
-      .sort({ name: 1 })
-      .select('name serviceType isActive')
-      .lean();
-
+    const organizations = await listOrganizations(req.query.serviceType);
     return res.status(200).json({ success: true, count: organizations.length, data: organizations });
   } catch (error) {
     next(error);
@@ -946,35 +943,20 @@ exports.getOrganizations = async (req, res, next) => {
 // @route   POST /api/super-admin/organizations
 exports.createOrganization = async (req, res, next) => {
   try {
-    const { name, serviceType } = req.body;
-    const trimmedName = String(name).trim();
-    const normalizedType = String(serviceType).toUpperCase();
-
-    if (!Organization.ORG_SERVICE_TYPES.includes(normalizedType)) {
-      return res.status(400).json({ success: false, message: 'Organizations only exist for school, university, or office services' });
-    }
-
-    // Case-insensitive duplicate guard within the same service type. Collation
-    // strength:2 makes the exact-name match case-insensitive without regex escaping.
-    const existing = await Organization.findOne({
-      serviceType: normalizedType,
-      name: trimmedName,
-      isDeleted: false
-    }).collation({ locale: 'en', strength: 2 });
-    if (existing) {
-      return res.status(409).json({ success: false, message: 'An organization with this name already exists for this service' });
-    }
-
-    const organization = await Organization.create({
-      name: trimmedName,
-      serviceType: normalizedType,
+    const result = await createOrganizationRecord({
+      name: req.body?.name,
+      serviceType: req.body?.serviceType,
       createdBy: req.user?._id || null
     });
+
+    if (result.error) {
+      return res.status(result.error.status).json({ success: false, message: result.error.message });
+    }
 
     return res.status(201).json({
       success: true,
       message: 'Organization created successfully',
-      data: { _id: organization._id, name: organization.name, serviceType: organization.serviceType }
+      data: publicOrganization(result.organization)
     });
   } catch (error) {
     next(error);

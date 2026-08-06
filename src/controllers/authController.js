@@ -4,7 +4,14 @@ const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const Manager = require('../models/Manager');
-const { findAccountByEmail, findAccountById, isEmailRegistered, modelForRole } = require('../utils/accountRegistry');
+const {
+  findAccountByEmail,
+  findAccountByIdentifier,
+  findAccountById,
+  isEmailRegistered,
+  modelForRole
+} = require('../utils/accountRegistry');
+const { looksLikeDriverCode, normalizeDriverCode } = require('../utils/driverCode');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -170,7 +177,10 @@ const issueTokensForUser = async (user, role) => {
 const userPayload = (user, role) => ({
   _id: user._id,
   name: user.name,
-  email: user.email,
+  email: user.email || '',
+  // Drivers sign in with this and it is shown in their profile; absent on
+  // every other role.
+  ...(user.driverCode ? { driverCode: user.driverCode } : {}),
   phoneNumber: user.phoneNumber,
   avatarUrl: user.avatarUrl || '',
   role,
@@ -321,22 +331,32 @@ exports.verifyEmail = async (req, res, next) => {
 // @route   POST /api/auth/login
 exports.login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    const normalizedEmail = String(email).trim().toLowerCase();
+    // Drivers sign in with either their driver code or an email, so the field is
+    // an identifier. `email` is still accepted for every existing caller.
+    const { email, identifier, password } = req.body;
+    const rawIdentifier = String(identifier ?? email ?? '').trim();
+    const isDriverCode = looksLikeDriverCode(rawIdentifier);
+    const normalizedIdentifier = isDriverCode
+      ? normalizeDriverCode(rawIdentifier)
+      : rawIdentifier.toLowerCase();
 
-    if (!normalizedEmail || !password) {
+    if (!normalizedIdentifier || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email and password'
+        message: 'Please provide an email or driver ID and a password'
       });
     }
 
-    const account = await findAccountByEmail(normalizedEmail, { select: '+password' });
+    const badCredentials = isDriverCode
+      ? 'Invalid driver ID or password'
+      : 'Invalid email or password';
+
+    const account = await findAccountByIdentifier(normalizedIdentifier, { select: '+password' });
 
     if (!account) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: badCredentials
       });
     }
     const { doc: user, role } = account;
@@ -359,18 +379,20 @@ exports.login = async (req, res, next) => {
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: badCredentials
       });
     }
 
-    const canBypassVerification = ['admin', 'super-admin'].includes(role);
+    // An account with no email has nothing to verify — the gate would lock out
+    // every driver who signs in with a driver code alone.
+    const canBypassVerification = ['admin', 'super-admin'].includes(role) || !user.email;
 
     if (!user.isEmailVerified && !canBypassVerification) {
       return res.status(403).json({
         success: false,
         message: 'Please verify your email before logging in',
         requiresVerification: true,
-        email: normalizedEmail
+        email: user.email
       });
     }
 

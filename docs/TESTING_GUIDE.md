@@ -7,6 +7,8 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 |---|---|---|---|---|
 | POST /api/auth/register + POST /api/auth/verify-email | integration | tests/integration/auth.test.js | register → unverified user + `requiresVerification` + `developmentOtp` (Resend mocked, never hits the real API); verify-email wrong OTP → 400; correct OTP → verified + tokens | register/verify contract, OTP flow, or verification email template changes |
 | POST /api/auth/login | integration | tests/integration/auth.test.js | valid creds → 200 + tokens, invalid creds → 401, missing password → 400, unverified account → 403 with `requiresVerification` + `email` | auth flow changes |
+| POST /api/auth/login with a driver ID | integration | tests/integration/manager-drivers.test.js | driver code signs in dashed or bare/lower-case; wrong password → 401 with a driver-ID-worded message; a driver who has an email can still sign in with it; `user.driverCode` returned | login identifier handling or the driver-code format changes |
+| driverCode utils: generateDriverCode, normalizeDriverCode, looksLikeDriverCode | unit (no DB) | tests/unit/driver-code.test.js | DRV-XXXX-XXXX shape, no look-alike characters (I/O/0/1), uniqueness across draws; normalizes case/spacing/missing prefix; rejects partials and anything containing `@` | driver-code format or normalization rules change |
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
 | POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |
 | PUT /api/auth/profile (name + phoneNumber) | integration | tests/integration/auth.test.js | accepts + persists `phoneNumber`, returned on `user`; rejects malformed `phoneNumber`; empty string clears it; 401 when unauthenticated | profile update contract or phoneNumber validation changes |
@@ -56,6 +58,9 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 |---|---|---|---|---|
 | /api/manager/* | integration | tests/integration/admin/manager.test.js | dashboards, bus updates, requests | manager workflow changes |
 | /api/super-admin/* | integration | tests/integration/admin/super-admin.test.js | dashboards, reviews, audits, managers | admin workflow changes |
+| POST /api/manager/drivers — identity | integration | tests/integration/manager-drivers.test.js | every driver gets a permanent `driverCode`; email is optional (field left unset, not blank) and several email-less drivers can coexist under the sparse unique index; clearing an email on update frees it for reuse; password < 8 chars and malformed emails → 400 | driver identity fields, the email index, or create validation change |
+| POST /api/manager/drivers — organization | integration | tests/integration/manager-drivers.test.js | links an existing organization; creates one inline from name + category; missing category → 400; unknown id → 400; none given → null; GET/POST /api/manager/organizations list and create, filtered by category | organization resolution or the manager organization endpoints change |
+| POST /api/manager/drivers — vehicle number | integration | tests/integration/manager-drivers.test.js | assigns by vehicle ID or number plate (any case); reports in the message when the vehicle moves off its previous driver; unknown number → 400 and no driver created; another manager's vehicle → 400 | vehicle matching or assignment-on-create changes |
 
 ## Custom Routes (School/Work Shuttles)
 | Item | Test type | Test file | Cases covered | Update when |

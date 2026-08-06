@@ -13,6 +13,8 @@ const {
   updateManagerVehicle
 } = require('../controllers/managerController');
 const {
+  getOrganizationsForManager,
+  createOrganizationForManager,
   getManagerDrivers,
   createManagerDriver,
   updateManagerDriver,
@@ -38,6 +40,8 @@ router.post('/vehicles/:vehicleId/delete-request', requestVehicleDelete);
 
 
 // Driver directory
+router.get('/organizations', getOrganizationsForManager);
+router.post('/organizations', createOrganizationForManager);
 router.get('/drivers', getManagerDrivers);
 router.post('/drivers', createManagerDriver);
 router.put('/drivers/:driverId', updateManagerDriver);

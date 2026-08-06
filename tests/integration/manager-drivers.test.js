@@ -3,6 +3,7 @@ const app = require('../../src/server');
 const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
+const Organization = require('../../src/models/Organization');
 const DriverEnrollmentKey = require('../../src/models/DriverEnrollmentKey');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
@@ -21,6 +22,11 @@ beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
   process.env.NODE_ENV = 'test';
+  // Drivers may have no email, which only works against the sparse unique index.
+  // A test database created before that change still carries the plain unique
+  // one, so bring it in line with the schema first (the migration script does
+  // the same thing for real databases).
+  await Driver.syncIndexes();
 
   const manager = await Manager.create({
     name: 'Fleet Manager',
@@ -146,11 +152,254 @@ describe('POST /api/manager/drivers', () => {
     expect(res.status).toBe(409);
   });
 
-  it('requires name, email and password', async () => {
+  it('requires name and password', async () => {
     const res = await request(app)
       .post('/api/manager/drivers')
       .set(...auth())
       .send({ name: 'No Creds' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a password shorter than 8 characters', async () => {
+    const res = await request(app)
+      .post('/api/manager/drivers')
+      .set(...auth())
+      .send(newDriver({ password: 'short1!' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/8 characters/i);
+  });
+
+  it('rejects a malformed email', async () => {
+    const res = await request(app)
+      .post('/api/manager/drivers')
+      .set(...auth())
+      .send(newDriver({ email: 'not-an-email' }));
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/manager/drivers — driver ID and optional email', () => {
+  it('gives every new driver a permanent driver ID', async () => {
+    const res = await createDriver();
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.driverCode).toMatch(/^DRV-[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/);
+  });
+
+  it('creates a driver with no email at all', async () => {
+    const res = await request(app)
+      .post('/api/manager/drivers')
+      .set(...auth())
+      .send({ name: 'No Email', password: 'DriverPass1!', phoneNumber: '0771234567' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.email).toBe('');
+    expect(res.body.data.driverCode).toBeTruthy();
+
+    // The field is absent rather than blank — a blank would sit in the sparse
+    // unique index and collide with the next email-less driver.
+    const stored = await Driver.findById(res.body.data._id).lean();
+    expect(stored.email).toBeUndefined();
+  });
+
+  it('allows more than one driver without an email', async () => {
+    const first = await request(app).post('/api/manager/drivers').set(...auth())
+      .send({ name: 'Emailless One', password: 'DriverPass1!' });
+    const second = await request(app).post('/api/manager/drivers').set(...auth())
+      .send({ name: 'Emailless Two', password: 'DriverPass1!' });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.data.driverCode).not.toBe(first.body.data.driverCode);
+  });
+
+  it('signs in with the driver ID, with or without its dashes', async () => {
+    const created = await request(app).post('/api/manager/drivers').set(...auth())
+      .send({ name: 'Code Login', password: 'DriverPass1!' });
+    const { driverCode } = created.body.data;
+
+    const dashed = await login(driverCode, 'DriverPass1!');
+    expect(dashed.status).toBe(200);
+    expect(dashed.body.user.role).toBe('driver');
+    expect(dashed.body.user.driverCode).toBe(driverCode);
+
+    const messy = await login(driverCode.replace(/-/g, '').toLowerCase(), 'DriverPass1!');
+    expect(messy.status).toBe(200);
+  });
+
+  it('rejects a wrong password for a driver ID without leaking which part failed', async () => {
+    const created = await request(app).post('/api/manager/drivers').set(...auth())
+      .send({ name: 'Wrong Pass', password: 'DriverPass1!' });
+
+    const res = await login(created.body.data.driverCode, 'NotThePassword1!');
+
+    expect(res.status).toBe(401);
+    expect(res.body.message).toMatch(/invalid driver id or password/i);
+  });
+
+  it('still signs in by email when the driver has one', async () => {
+    const body = newDriver();
+    await request(app).post('/api/manager/drivers').set(...auth()).send(body);
+
+    const res = await login(body.email, body.password);
+    expect(res.status).toBe(200);
+    expect(res.body.user.driverCode).toBeTruthy();
+  });
+
+  it('clears the email on update without blocking the next driver', async () => {
+    const body = newDriver();
+    const created = await request(app).post('/api/manager/drivers').set(...auth()).send(body);
+
+    const res = await request(app)
+      .put(`/api/manager/drivers/${created.body.data._id}`)
+      .set(...auth())
+      .send({ email: '' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.email).toBe('');
+    expect((await Driver.findById(created.body.data._id).lean()).email).toBeUndefined();
+
+    // The freed address can now be given to somebody else.
+    const reuse = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ email: body.email }));
+    expect(reuse.status).toBe(201);
+  });
+});
+
+describe('POST /api/manager/drivers — organization', () => {
+  it('attaches an existing organization', async () => {
+    const org = await Organization.create({ name: `Royal ${Date.now()}`, serviceType: 'SCHOOL' });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ organizationId: String(org._id) }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.organization).toMatchObject({
+      name: org.name,
+      serviceType: 'SCHOOL'
+    });
+
+    const listed = await request(app).get('/api/manager/drivers').set(...auth());
+    const row = listed.body.data.find((d) => d._id === res.body.data._id);
+    expect(row.organization.name).toBe(org.name);
+  });
+
+  it('creates a new organization inline and links the driver to it', async () => {
+    const name = `Inline Campus ${Date.now()}`;
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ organizationName: name, organizationCategory: 'UNIVERSITY' }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.organization.name).toBe(name);
+
+    const stored = await Organization.findOne({ name }).lean();
+    expect(stored.serviceType).toBe('UNIVERSITY');
+  });
+
+  it('refuses a new organization with no category', async () => {
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ organizationName: 'Category Missing' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/category/i);
+  });
+
+  it('refuses an organization id that does not exist', async () => {
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ organizationId: '6a63e3f967212cbddf637776' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/organization not found/i);
+  });
+
+  it('leaves the driver unattached when no organization is given', async () => {
+    const res = await createDriver();
+    expect(res.body.data.organization).toBeNull();
+  });
+
+  it('lists and creates organizations for the manager', async () => {
+    const created = await request(app).post('/api/manager/organizations').set(...auth())
+      .send({ name: `Manager Made ${Date.now()}`, serviceType: 'OFFICE' });
+    expect(created.status).toBe(201);
+
+    const offices = await request(app).get('/api/manager/organizations?serviceType=OFFICE')
+      .set(...auth());
+    expect(offices.status).toBe(200);
+    expect(offices.body.data.some((o) => o._id === created.body.data._id)).toBe(true);
+
+    // A different category must not surface it.
+    const schools = await request(app).get('/api/manager/organizations?serviceType=SCHOOL')
+      .set(...auth());
+    expect(schools.body.data.some((o) => o._id === created.body.data._id)).toBe(false);
+  });
+});
+
+describe('POST /api/manager/drivers — vehicle number', () => {
+  const makeVehicle = async (overrides = {}) => Vehicle.create({
+    vehicleId: `VN-${Date.now()}-${seq++}`,
+    vehicleName: 'Shuttle C',
+    registrationNumber: `REGC-${Date.now()}-${seq}`,
+    numberPlate: `NPC-${Date.now()}-${seq}`,
+    routeId: 'R-1',
+    driverId: otherManagerId, // stand-in previous driver
+    managerId,
+    seatCapacity: 30,
+    ...overrides
+  });
+
+  it('assigns a vehicle by its vehicle ID', async () => {
+    const vehicle = await makeVehicle();
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: vehicle.vehicleId }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.vehicleId).toBe(vehicle.vehicleId);
+    expect(String((await Vehicle.findById(vehicle._id)).driverId))
+      .toBe(res.body.data._id);
+  });
+
+  it('assigns a vehicle by its number plate, however it is cased', async () => {
+    const vehicle = await makeVehicle();
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: vehicle.numberPlate.toLowerCase() }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.numberPlate).toBe(vehicle.numberPlate);
+  });
+
+  it('says so plainly when the vehicle moves off another driver', async () => {
+    const previous = await createDriver({ name: 'Previous Driver' });
+    const vehicle = await makeVehicle({ driverId: previous.body.data._id });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: vehicle.vehicleId }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toMatch(/moved from Previous Driver/i);
+  });
+
+  it('rejects a vehicle number that is not in the fleet, creating nothing', async () => {
+    const before = await Driver.countDocuments({ managerId });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: 'NOT-A-BUS' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/no vehicle numbered/i);
+    expect(await Driver.countDocuments({ managerId })).toBe(before);
+  });
+
+  it('refuses a vehicle belonging to another manager', async () => {
+    const vehicle = await makeVehicle({ managerId: otherManagerId });
+
+    const res = await request(app).post('/api/manager/drivers').set(...auth())
+      .send(newDriver({ vehicleNumber: vehicle.vehicleId }));
 
     expect(res.status).toBe(400);
   });
