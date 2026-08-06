@@ -5,7 +5,7 @@ const {
 } = require('../../src/utils/driverCode');
 
 // A driver's permanent sign-in ID. It gets read aloud and typed by hand on a
-// phone, so the normalizer has to forgive case, spacing, and a missing prefix —
+// phone, so the normalizer has to forgive case, spacing, and a missing prefix,
 // without ever turning something that is not an ID into one.
 
 describe('generateDriverCode', () => {

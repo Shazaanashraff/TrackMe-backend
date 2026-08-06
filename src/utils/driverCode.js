@@ -1,12 +1,12 @@
 // A driver's permanent, human-readable sign-in ID (e.g. TMD-4K7P-9XQ2).
 //
-// Unlike the enrollment key this is not a secret — it is printed on a slip and
+// Unlike the enrollment key this is not a secret. It is printed on a slip and
 // read aloud, so it is stored in plaintext on the driver and only needs to be
 // unique and hard to mistype. It never changes: a driver whose email is later
 // added or removed keeps the same ID.
 const crypto = require('crypto');
 
-// Excludes I/O/0/1 — these get read aloud and typed by hand.
+// Excludes I/O/0/1, which get read aloud and typed by hand.
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const PREFIX = 'DRV';
 const BLOCK = 4;
@@ -32,7 +32,7 @@ function normalizeDriverCode(value) {
   return `${PREFIX}-${body.slice(0, BLOCK)}-${body.slice(BLOCK)}`;
 }
 
-// Anything with an @ is an email, never a driver code — checked first so a
+// Anything with an @ is an email, never a driver code, checked first so a
 // malformed email is reported as a bad email rather than a bad ID.
 const looksLikeDriverCode = (value) =>
   !String(value || '').includes('@') && normalizeDriverCode(value) !== '';

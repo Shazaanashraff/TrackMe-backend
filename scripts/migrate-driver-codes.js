@@ -22,7 +22,7 @@ const { generateUniqueDriverCode } = require('../src/utils/driverCode');
 
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGOURI;
 
-// Mongo cannot change an index in place — the old one is dropped and the model's
+// Mongo cannot change an index in place, so the old one is dropped and the model's
 // current (sparse) definition is rebuilt from the schema.
 async function rebuildEmailIndex() {
   const collection = Driver.collection;
@@ -30,9 +30,9 @@ async function rebuildEmailIndex() {
   const emailIndex = indexes.find((index) => index.key && index.key.email === 1);
 
   if (!emailIndex) {
-    console.log('   No email index found — syncing indexes from the schema');
+    console.log('   No email index found, syncing indexes from the schema');
   } else if (emailIndex.sparse) {
-    console.log('   email index is already sparse — leaving it alone');
+    console.log('   email index is already sparse, leaving it alone');
     return;
   } else {
     console.log(`   Dropping non-sparse index ${emailIndex.name}`);

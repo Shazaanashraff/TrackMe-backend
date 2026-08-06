@@ -383,7 +383,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // An account with no email has nothing to verify — the gate would lock out
+    // An account with no email has nothing to verify, and the gate would lock out
     // every driver who signs in with a driver code alone.
     const canBypassVerification = ['admin', 'super-admin'].includes(role) || !user.email;
 

@@ -35,7 +35,7 @@ const findAccountByEmail = async (email, { select } = {}) => {
   return null;
 };
 
-// Drivers can sign in with their permanent driver code instead of an email —
+// Drivers can sign in with their permanent driver code instead of an email;
 // many have no email at all. Only the driver collection has these codes.
 const findAccountByDriverCode = async (code, { select } = {}) => {
   const normalized = normalizeDriverCode(code);

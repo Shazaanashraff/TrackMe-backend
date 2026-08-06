@@ -8,7 +8,7 @@ const DriverEnrollmentKey = require('../../src/models/DriverEnrollmentKey');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // The manager driver directory. A driver belongs to one manager, so the whole
-// surface is scoped by that ownership — the cross-manager cases below are the
+// surface is scoped by that ownership. The cross-manager cases below are the
 // point of the suite, not an afterthought.
 
 let managerToken;
@@ -181,7 +181,7 @@ describe('POST /api/manager/drivers', () => {
   });
 });
 
-describe('POST /api/manager/drivers — driver ID and optional email', () => {
+describe('POST /api/manager/drivers: driver ID and optional email', () => {
   it('gives every new driver a permanent driver ID', async () => {
     const res = await createDriver();
 
@@ -199,7 +199,7 @@ describe('POST /api/manager/drivers — driver ID and optional email', () => {
     expect(res.body.data.email).toBe('');
     expect(res.body.data.driverCode).toBeTruthy();
 
-    // The field is absent rather than blank — a blank would sit in the sparse
+    // The field is absent rather than blank, because a blank would sit in the sparse
     // unique index and collide with the next email-less driver.
     const stored = await Driver.findById(res.body.data._id).lean();
     expect(stored.email).toBeUndefined();
@@ -269,7 +269,7 @@ describe('POST /api/manager/drivers — driver ID and optional email', () => {
   });
 });
 
-describe('POST /api/manager/drivers — organization', () => {
+describe('POST /api/manager/drivers: organization', () => {
   it('attaches an existing organization', async () => {
     const org = await Organization.create({ name: `Royal ${Date.now()}`, serviceType: 'SCHOOL' });
 
@@ -338,7 +338,7 @@ describe('POST /api/manager/drivers — organization', () => {
   });
 });
 
-describe('POST /api/manager/drivers — vehicle number', () => {
+describe('POST /api/manager/drivers: vehicle number', () => {
   const makeVehicle = async (overrides = {}) => Vehicle.create({
     vehicleId: `VN-${Date.now()}-${seq++}`,
     vehicleName: 'Shuttle C',

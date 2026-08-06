@@ -341,7 +341,7 @@ exports.validateManagerStatus = [
     .isBoolean().withMessage('isActive must be boolean')
 ];
 
-// The super admin sets a manager's password directly — no emailed link.
+// The super admin sets a manager's password directly, with no emailed link.
 exports.validateManagerPasswordReset = [
   body('password')
     .notEmpty().withMessage('Password is required')

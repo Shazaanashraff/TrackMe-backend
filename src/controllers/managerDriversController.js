@@ -1,5 +1,5 @@
 // Manager-facing driver directory. A driver belongs to exactly one manager
-// (Driver.managerId), so every handler here scopes by req.user._id — a manager
+// (Driver.managerId), so every handler here scopes by req.user._id. A manager
 // can never read or edit another manager's drivers.
 const Driver = require('../models/Driver');
 const Vehicle = require('../models/Vehicle');
@@ -32,7 +32,7 @@ const sanitizeDriver = (driver, vehicle, organization) => ({
   nicNumber: driver.nicNumber || '',
   licenseCardNumber: driver.licenseCardNumber || '',
   isActive: driver.isActive !== false,
-  // Denormalised for the directory table — the driver's currently assigned
+  // Denormalised for the directory table: the driver's currently assigned
   // vehicle, or null when they have not been given one yet.
   vehicle: vehicle
     ? { _id: vehicle._id, vehicleId: vehicle.vehicleId, numberPlate: vehicle.numberPlate }
@@ -86,7 +86,7 @@ async function resolveOrganization(body, actorId) {
   return { organizationId: result.organization._id };
 }
 
-// "Vehicle number" on the form is whatever the manager calls the bus — its
+// "Vehicle number" on the form is whatever the manager calls the bus: its
 // vehicle ID or its number plate. Vehicles are created on the Vehicles page,
 // so this only ever assigns an existing one; it never creates a vehicle.
 async function findManagerVehicleByNumber(managerId, vehicleNumber) {
@@ -183,8 +183,8 @@ exports.createManagerDriver = async (req, res, next) => {
       name, email, password, phoneNumber, nicNumber, licenseCardNumber, vehicleNumber
     } = req.body || {};
 
-    // Email is optional — the driver always gets a driver code to sign in with,
-    // and many drivers have no work email at all.
+    // Email is optional, because the driver always gets a driver code to sign
+    // in with, and many drivers have no work email at all.
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!String(name || '').trim() || !password) {
       return res.status(400).json({
@@ -260,7 +260,7 @@ exports.createManagerDriver = async (req, res, next) => {
     }
 
     // A vehicle always has a driver (the schema requires one), so assigning it
-    // here takes it off whoever held it before — said plainly in the response.
+    // here takes it off whoever held it before, which the response says plainly.
     let reassignedFrom = null;
     if (vehicle) {
       const previousDriverId = vehicle.driverId;
@@ -316,7 +316,7 @@ exports.updateManagerDriver = async (req, res, next) => {
             });
           }
         }
-        // Removing the email has to unset the field, not blank it — a blank
+        // Removing the email has to unset the field, not blank it, because a blank
         // would sit in the sparse unique index and collide with the next one.
         driver.set('email', normalizedEmail || undefined);
       }
