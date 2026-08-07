@@ -51,7 +51,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Driver Earnings
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| /api/driver-earnings/* | integration | tests/integration/driver/earnings.test.js | stats, history, payout | earnings logic changes |
+| /api/driver/trips/* | integration | tests/integration/driver/trips.test.js | history pagination, trip details, log trip | trip-log logic changes |
 
 ## Manager and Super Admin
 | Item | Test type | Test file | Cases covered | Update when |

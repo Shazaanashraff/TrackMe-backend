@@ -1,6 +1,6 @@
 # CRUD Edge Cases & Test Guidance
 
-This document lists required edge-case tests for all major CRUD surfaces (Auth, Bookings, Buses, Routes, Notifications, ETA, DriverEarnings, Reviews) and specifies expectations for responses, error codes, and E2E behaviours. Use `backend/tests/mock.json` as canonical fixture data; stress-test TTL is set to 86400 seconds (1 day) via `meta.ttl_seconds`.
+This document lists required edge-case tests for all major CRUD surfaces (Auth, Bookings, Buses, Routes, Notifications, ETA, DriverTrips, Reviews) and specifies expectations for responses, error codes, and E2E behaviours. Use `backend/tests/mock.json` as canonical fixture data; stress-test TTL is set to 86400 seconds (1 day) via `meta.ttl_seconds`.
 
 Principles
 - Always assert shape: JSON response includes `code` (string), `message` (human), and optional `details` (object/array) on errors.
