@@ -9,11 +9,11 @@ test('manager controller exports expected handlers', () => {
     'getManagerVehicles',
     'getManagerVehicleById',
     'updateManagerVehicle',
-    'createVehicleAccountRequest',
+    'createManagerVehicle',
     'requestVehicleDelete',
     'getMyRequests',
     'resetVehicleAccountPassword',
-    'getManagerVehicleLocation'
+    'getManagerAssignableRoutes'
   ];
 
   for (const key of expected) {
