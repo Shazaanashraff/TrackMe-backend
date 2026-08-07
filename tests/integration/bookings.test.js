@@ -136,4 +136,29 @@ describe('Bookings Integration - POST /api/bookings', () => {
     expect(second.body.message).toMatch(/already booked/i);
     expect(second.body.conflictingSeats).toContain(3);
   });
+
+  test('rejects a journeyDate that has already passed (400)', async () => {
+    const payload = bookingPayload([5]);
+    payload.journeyDate = '2020-01-01T08:00:00.000Z';
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(payload);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/past/i);
+  });
+
+  test('accepts a journeyDate of today (200/201, not rejected as past)', async () => {
+    const payload = bookingPayload([6]);
+    payload.journeyDate = new Date().toISOString();
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(payload);
+
+    expect(res.status).toBe(201);
+  });
 });
