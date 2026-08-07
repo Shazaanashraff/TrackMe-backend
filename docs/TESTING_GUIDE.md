@@ -30,7 +30,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Bookings and ETA
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| /api/bookings | integration | tests/integration/user/bookings.test.js | create, confirm, cancel | booking rules change |
+| POST /api/bookings | integration | tests/integration/bookings.test.js | valid booking → 201; missing required fields → 400; unauthenticated → 401; seat conflict → 409; past `journeyDate` → 400; today's `journeyDate` still accepted | booking rules or journeyDate validation change |
 | /api/eta/* | integration | tests/integration/user/eta.test.js | ETA calculations | ETA logic changes |
 
 ## Notifications
