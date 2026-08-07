@@ -113,23 +113,7 @@ service (`RESEND_API_KEY` blank locally).
 
 ---
 
-## 6. Live journey simulator (moving buses)
-
-Drives the active buses along their routes in real time (connects as each bus's
-driver, emits `driver:location`, which the server broadcasts to the UserApp):
-
-```bash
-cd TrackMe-backend
-npm run simulate     # Ctrl+C to stop
-```
-
-Tunables: `SIM_TICK_MS` (default 1500), `SIM_STEPS` (25), `SIM_SERVER_URL`
-(http://localhost:5000). Bus counts scale by time of day (peak 06–09 & 16–19, none
-00–05) — force a busy view with `SIM_FORCE_HOUR=8 npm run simulate`.
-
----
-
-## 7. Run the whole system (5 terminals)
+## 6. Run the whole system (4 terminals)
 
 ```bash
 # 0. MongoDB
@@ -146,9 +130,6 @@ cd TrackMe-WebAdmin && npm install && npm run dev
 
 # 4. UserApp (web)          (http://localhost:8081)
 cd TrackMe-UserApp && npm install && npx expo start --web --port 8081
-
-# 5. Moving buses
-cd TrackMe-backend && npm run simulate
 ```
 
 In the UserApp: hard-refresh (Ctrl+Shift+R), onboarding → Sign In → log in as the

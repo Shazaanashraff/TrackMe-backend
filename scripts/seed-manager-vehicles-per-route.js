@@ -10,8 +10,7 @@ dotenv.config();
 const MANAGER_EMAIL = 'testadmin@mail.com';
 const MANAGER_DEFAULT_NAME = 'Test Admin Manager';
 const MANAGER_DEFAULT_PASSWORD = 'TestAdmin@123';
-// Vehicles created per route. Should be >= the simulator's per-route cap
-// (SIM_MAX_PER_ROUTE) so there are enough vehicle records to drive.
+// Vehicles created per route.
 const VEHICLES_PER_ROUTE = Number(process.env.VEHICLES_PER_ROUTE || 8);
 
 const ensureManager = async () => {

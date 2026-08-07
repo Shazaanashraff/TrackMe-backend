@@ -90,17 +90,7 @@ cd TrackMe-UserApp && npm install && npx expo start --web --port 8081
 
 ---
 
-## 6. Live journey simulator (moving buses)
-
-```bash
-cd TrackMe-backend && npm run simulate     # Ctrl+C to stop
-```
-
-Tunables: `SIM_TICK_MS` (default 1500), `SIM_STEPS` (25), `SIM_SERVER_URL`, `SIM_FORCE_HOUR=8` to force a busy view.
-
----
-
-## 7. Quick start (all together)
+## 6. Quick start (all together)
 
 ```bash
 docker start trackme-mongo                                   # or the docker run above
@@ -108,7 +98,6 @@ cd TrackMe-backend && npm run dev                            # 1. backend
 cd TrackMe-backend && npm run seed:wp && npm run seed:manager-buses && npm run seed:start-journeys   # 2. seed (once)
 cd TrackMe-WebAdmin && npm run dev                           # 3. webadmin
 cd TrackMe-UserApp && npx expo start --web --port 8081       # 4. userapp
-cd TrackMe-backend && npm run simulate                       # 5. moving buses
 ```
 
 ---

@@ -13,7 +13,6 @@
     "seed:manager-vehicles": "node scripts/seed-manager-vehicles-per-route.js",
     "seed:start-journeys": "node scripts/start-two-vehicles-per-route.js",
     "snap:stops": "node scripts/snap-stops-to-vehiclestops.js",
-    "simulate": "node scripts/simulate-journeys.js",
     "test": "node --test tests/manager-workflow.smoke.test.js",
     "test:integration": "jest"
   },
