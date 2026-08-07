@@ -700,6 +700,13 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
 
     await user.save();
 
+    // `resetToken` is a short-lived (10-min) bearer secret that resetPasswordWithToken
+    // accepts in place of a password — treat it with the same care as a password.
+    // Never log this response body (or this request's — resetPasswordWithToken's
+    // `resetToken` param) in request/response logging, error tracking, or analytics
+    // middleware. This service has no such middleware today (no morgan/winston/pino,
+    // and no request-logging in src/middleware/) — if one is added later, make sure
+    // it excludes or redacts these two endpoints' bodies before shipping it.
     return res.status(200).json({
       success: true,
       message: 'OTP verified successfully',
