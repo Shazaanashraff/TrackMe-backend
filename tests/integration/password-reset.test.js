@@ -96,4 +96,41 @@ describe('Password reset OTP', () => {
     expect(res.status).toBe(200);
     expect(res.body.resetToken).toBeTruthy();
   });
+
+  it('reports success=false with a 502 when the reset email fails to send in production (issue #5)', async () => {
+    const email = await createUser();
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      // No RESEND_API_KEY is configured in the test env, so the send still
+      // fails — but in production there's no developmentOtp fallback, so the
+      // client needs an honest failure signal instead of a misleading 200.
+      const res = await request(app)
+        .post('/api/auth/forgot-password/request-otp')
+        .send({ email });
+
+      expect(res.status).toBe(502);
+      expect(res.body.success).toBe(false);
+      expect(res.body.developmentOtp).toBeUndefined();
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
+  it('still reports success=true for an unregistered email even when NODE_ENV is production (no enumeration signal)', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const res = await request(app)
+        .post('/api/auth/forgot-password/request-otp')
+        .send({ email: 'no-such-account-prod@test.com' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
 });
