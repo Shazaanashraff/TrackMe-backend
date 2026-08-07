@@ -133,4 +133,30 @@ describe('Password reset OTP', () => {
       process.env.NODE_ENV = originalEnv;
     }
   });
+
+  it('expires the reset OTP sooner than an email-verification OTP (issue #13)', async () => {
+    const email = await createUser();
+    await requestOtp(email);
+
+    const withReset = await User.findOne({ email }).select('+passwordReset.expiresAt');
+    const resetExpiryMs = withReset.passwordReset.expiresAt.getTime() - Date.now();
+    // 5-minute window, allowing slack for test execution time.
+    expect(resetExpiryMs).toBeGreaterThan(4.5 * 60 * 1000);
+    expect(resetExpiryMs).toBeLessThanOrEqual(5 * 60 * 1000);
+
+    const registerRes = await request(app).post('/api/auth/register').send({
+      name: 'Verify Expiry Tester',
+      email: `verify-expiry-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!'
+    });
+    expect(registerRes.status).toBe(201);
+
+    const withVerification = await User.findOne({ email: registerRes.body.email }).select('+emailVerification.expiresAt');
+    const verificationExpiryMs = withVerification.emailVerification.expiresAt.getTime() - Date.now();
+    // 10-minute window, allowing slack for test execution time.
+    expect(verificationExpiryMs).toBeGreaterThan(9.5 * 60 * 1000);
+    expect(verificationExpiryMs).toBeLessThanOrEqual(10 * 60 * 1000);
+
+    expect(resetExpiryMs).toBeLessThan(verificationExpiryMs);
+  });
 });
