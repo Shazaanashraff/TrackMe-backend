@@ -41,8 +41,8 @@ exports.markAsRead = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
 
-    const notification = await Notification.findByIdAndUpdate(
-      notificationId,
+    const notification = await Notification.findOneAndUpdate(
+      { _id: notificationId, userId: req.user._id },
       { isRead: true, readAt: new Date() },
       { new: true }
     );
@@ -85,7 +85,10 @@ exports.deleteNotification = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
 
-    const notification = await Notification.findByIdAndDelete(notificationId);
+    const notification = await Notification.findOneAndDelete({
+      _id: notificationId,
+      userId: req.user._id
+    });
 
     if (!notification) {
       return res.status(404).json({ success: false, message: 'Notification not found' });
@@ -143,7 +146,10 @@ exports.getNotificationById = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
 
-    const notification = await Notification.findById(notificationId);
+    const notification = await Notification.findOne({
+      _id: notificationId,
+      userId: req.user._id
+    });
 
     if (!notification) {
       return res.status(404).json({ success: false, message: 'Notification not found' });

@@ -35,6 +35,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
+| /api/notifications/:id, /:id/read, DELETE /:id ownership | integration | tests/integration/notifications.test.js | GET/PUT(read)/DELETE on another user's notification → 404, no mutation; same operations on the caller's own notification succeed | notification ownership/authorization logic changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
 ## QR Attendance
