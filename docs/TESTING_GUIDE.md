@@ -88,6 +88,13 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Enforcement matrix: getAllRoutes locked stubs, hidden absence, bus/route + eta/route membership gating | integration | tests/integration/private-routes.test.js | unhidden PRIVATE route listed locked with no stops; hidden PRIVATE route absent; bus/route/:id empty for non-member vs populated for ACTIVE member; eta/route/:id/all-buses 403 for non-member vs 200 for ACTIVE member; getRouteById stays 404 for PRIVATE (member or not) | listing projection, membership-gated bus/ETA reads, or detail-endpoint scope changes |
 | GET /api/routes/my-private, DELETE /:routeId/membership | integration | tests/integration/private-routes.test.js | lists ACTIVE-membership routes; leaving clears membership from the list | my-private / leave endpoints change |
 
+## Driver Enrollment (private drivers)
+| Item | Test type | Test file | Cases covered | Update when |
+|---|---|---|---|---|
+| POST /api/enrollments/redeem | integration | tests/integration/driver-enrollment.test.js | public driver key enrols straight to ACTIVE; private driver key creates PENDING only; repeat redeem is idempotent (409 when ACTIVE, 200 when PENDING); REJECTED may re-request without duplicating; unknown key, inactive driver and blank key all fail generically; 8 wrong keys throttle to 429 and a good key clears the counter | redeem rules, the privacy gate, or the attempt throttle change |
+| GET /api/enrollments/mine, DELETE /api/enrollments/:id | integration | tests/integration/driver-enrollment.test.js | lists ACTIVE and PENDING only (REJECTED hidden); leaving drops the record and allows re-enrolling | passenger enrollment list or leave behaviour changes |
+| Manager queue + decisions | integration | tests/integration/driver-enrollment.test.js | queue and count scoped to owned drivers; approve flips PENDING to ACTIVE; reject leaves the passenger unenrolled; deciding twice 409s; another manager gets 404 and cannot decide | manager enrollment-request endpoints or ownership scoping change |
+
 ## Websocket
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|

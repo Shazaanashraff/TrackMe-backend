@@ -25,6 +25,12 @@ const {
   deleteManagerDriver
 } = require('../controllers/managerDriversController');
 const { getManagerAttendance } = require('../controllers/managerAttendanceController');
+const {
+  getManagerEnrollmentRequests,
+  getManagerEnrollmentRequestCount,
+  approveManagerEnrollmentRequest,
+  rejectManagerEnrollmentRequest
+} = require('../controllers/managerEnrollmentsController');
 const { protect, requireManager } = require('../middleware/auth');
 
 router.use(protect, requireManager);
@@ -51,6 +57,13 @@ router.put('/drivers/:driverId/password', resetManagerDriverPassword);
 router.get('/drivers/:driverId/enrollment-key', getDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/rotate', rotateDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/revert', revertDriverEnrollmentKey);
+
+// Passengers redeeming a private driver's key land here for a decision.
+// The count endpoint is declared first so it is not swallowed by /:id.
+router.get('/enrollment-requests/count', getManagerEnrollmentRequestCount);
+router.get('/enrollment-requests', getManagerEnrollmentRequests);
+router.post('/enrollment-requests/:id/approve', approveManagerEnrollmentRequest);
+router.post('/enrollment-requests/:id/reject', rejectManagerEnrollmentRequest);
 
 // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md)
 router.get('/attendance', getManagerAttendance);

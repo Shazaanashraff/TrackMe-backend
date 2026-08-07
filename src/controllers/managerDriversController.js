@@ -5,6 +5,7 @@ const Driver = require('../models/Driver');
 const Vehicle = require('../models/Vehicle');
 const Organization = require('../models/Organization');
 const DriverEnrollmentKey = require('../models/DriverEnrollmentKey');
+const DriverEnrollment = require('../models/DriverEnrollment');
 const { isEmailRegistered } = require('../utils/accountRegistry');
 const {
   ensureDriverEnrollmentKey,
@@ -37,6 +38,8 @@ const sanitizeDriver = (driver, vehicle, organization) => ({
   nicNumber: driver.nicNumber || '',
   licenseCardNumber: driver.licenseCardNumber || '',
   isActive: driver.isActive !== false,
+  // Whether redeeming this driver's enrollment key needs the manager's approval.
+  isPrivate: driver.isPrivate === true,
   // Denormalised for the directory table: the driver's currently assigned
   // vehicle, or null when they have not been given one yet.
   vehicle: vehicle
@@ -223,7 +226,7 @@ exports.getManagerDrivers = async (req, res, next) => {
 exports.createManagerDriver = async (req, res, next) => {
   try {
     const {
-      name, email, password, phoneNumber, nicNumber, licenseCardNumber, vehicleNumber
+      name, email, password, phoneNumber, nicNumber, licenseCardNumber, vehicleNumber, isPrivate
     } = req.body || {};
 
     // Email is optional, because the driver always gets a driver code to sign
@@ -327,6 +330,9 @@ exports.createManagerDriver = async (req, res, next) => {
       phoneNumber: normalizedPhone,
       nicNumber: String(nicNumber || '').trim(),
       licenseCardNumber: String(licenseCardNumber || '').trim(),
+      // Public unless the manager opts in, so an omitted field never quietly
+      // puts a driver behind an approval gate.
+      isPrivate: isPrivate === true || isPrivate === 'true',
       isActive: true,
       // Nothing to verify without an email, and a manager-created account is
       // already vouched for.
@@ -389,7 +395,9 @@ exports.updateManagerDriver = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Driver not found for this manager' });
     }
 
-    const { name, email, phoneNumber, nicNumber, licenseCardNumber, isActive } = req.body || {};
+    const {
+      name, email, phoneNumber, nicNumber, licenseCardNumber, isActive, isPrivate
+    } = req.body || {};
 
     if (email !== undefined) {
       const normalizedEmail = String(email).trim().toLowerCase();
@@ -435,6 +443,9 @@ exports.updateManagerDriver = async (req, res, next) => {
     if (nicNumber !== undefined) driver.nicNumber = String(nicNumber).trim();
     if (licenseCardNumber !== undefined) driver.licenseCardNumber = String(licenseCardNumber).trim();
     if (isActive !== undefined) driver.isActive = Boolean(isActive);
+    // Flipping this only changes what happens to future redemptions. Passengers
+    // already enrolled keep their place, and requests already queued keep theirs.
+    if (isPrivate !== undefined) driver.isPrivate = Boolean(isPrivate);
 
     await driver.save();
 
@@ -560,6 +571,9 @@ exports.deleteManagerDriver = async (req, res, next) => {
     }
 
     await DriverEnrollmentKey.deleteOne({ driverId: driver._id });
+    // Enrolled passengers and queued requests point at a driver that is about to
+    // stop existing, so they go with it rather than lingering as dead links.
+    await DriverEnrollment.deleteMany({ driverId: driver._id });
     await driver.deleteOne();
 
     return res.status(200).json({ success: true, message: 'Driver deleted successfully' });

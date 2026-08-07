@@ -46,6 +46,14 @@ const driverSchema = applyAccountFields(new mongoose.Schema({
     ref: 'Manager',
     default: null,
     index: true
+  },
+  // Whether redeeming this driver's enrollment key needs the manager's approval.
+  // Public by default: holding the key is enough to enrol. When private, the key
+  // only raises a request and the owning manager decides. See DriverEnrollment.
+  isPrivate: {
+    type: Boolean,
+    default: false,
+    index: true
   }
 }, { timestamps: true }), { emailOptional: true });
 
