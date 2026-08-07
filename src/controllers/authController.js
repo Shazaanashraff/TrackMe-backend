@@ -608,18 +608,30 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       emailSent = false;
     }
 
-    const response = {
-      success: true,
-      message: emailSent
-        ? 'If this email is registered, an OTP has been sent.'
-        : 'Email service unavailable. Use development OTP in non-production environments.'
-    };
-
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
-      response.developmentOtp = otp;
+    if (emailSent) {
+      return res.status(200).json({
+        success: true,
+        message: 'If this email is registered, an OTP has been sent.'
+      });
     }
 
-    return res.status(200).json(response);
+    if (process.env.NODE_ENV !== 'production') {
+      // Dev/test fallback — no email provider configured, but the flow must
+      // still be completable, so hand back the OTP directly.
+      return res.status(200).json({
+        success: true,
+        message: 'Email service unavailable. Use development OTP in non-production environments.',
+        developmentOtp: otp
+      });
+    }
+
+    // Production and the email genuinely failed to send, with no fallback
+    // available — the client needs to know this didn't work rather than sit
+    // waiting for an email that's never coming.
+    return res.status(502).json({
+      success: false,
+      message: 'We could not send the reset email right now. Please try again shortly.'
+    });
   } catch (error) {
     next(error);
   }
