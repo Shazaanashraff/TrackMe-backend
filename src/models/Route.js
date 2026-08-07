@@ -83,15 +83,6 @@ const routeSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  // Approximate size of the real-world fleet operating this route (both directions
-  // combined). Drives the client-side deterministic vehicle simulation on the live map
-  // (see UserApp useSimulatedVehicles). 0 = no simulation for this route. Set for the
-  // curated demo routes by scripts/set-sim-vehicle-counts.js.
-  simVehicleCount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Simulated vehicle count cannot be negative']
-  },
   isActive: {
     type: Boolean,
     default: true

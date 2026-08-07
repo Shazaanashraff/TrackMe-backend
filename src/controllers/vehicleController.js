@@ -153,7 +153,7 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops simVehicleCount');
+      .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
 
     res.status(200).json({
       success: true,

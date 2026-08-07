@@ -78,7 +78,7 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simVehicleCount createdAt');
+      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy createdAt');
 
     res.status(200).json({
       success: true,
