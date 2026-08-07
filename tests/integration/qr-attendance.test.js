@@ -323,6 +323,47 @@ describe('POST /api/driver/boarding/scan', () => {
     const count = await BoardingEvent.countDocuments({ studentId: riderId, vehicleId: vehicle.vehicleId, type: 'BOARD' });
     expect(count).toBe(1);
   });
+
+  // Debounce is keyed on studentId+vehicleId+type regardless of trip, so back-date
+  // whatever this rider/vehicle's earlier tests left behind past the debounce
+  // window first — otherwise a same-type scan right after another test's BOARD
+  // gets silently debounced (200) instead of exercising the coordinate handling.
+  async function clearDebounceWindow() {
+    await BoardingEvent.updateMany(
+      { studentId: riderId, vehicleId: vehicle.vehicleId },
+      { $set: { timestamp: new Date(Date.now() - 60_000) } }
+    );
+  }
+
+  it('discards out-of-range lat/lng instead of storing them (issue #11)', async () => {
+    await clearDebounceWindow();
+    const token = await freshTokenForRider();
+    const res = await request(app)
+      .post('/api/driver/boarding/scan')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ token, vehicleId: vehicle.vehicleId, type: 'BOARD', lat: 200, lng: -500 });
+
+    expect(res.status).toBe(201);
+
+    const stored = await BoardingEvent.findById(res.body.data.eventId);
+    expect(stored.lat).toBeNull();
+    expect(stored.lng).toBeNull();
+  });
+
+  it('stores valid lat/lng unchanged', async () => {
+    await clearDebounceWindow();
+    const token = await freshTokenForRider();
+    const res = await request(app)
+      .post('/api/driver/boarding/scan')
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ token, vehicleId: vehicle.vehicleId, type: 'BOARD', lat: 6.9271, lng: 79.8612 });
+
+    expect(res.status).toBe(201);
+
+    const stored = await BoardingEvent.findById(res.body.data.eventId);
+    expect(stored.lat).toBe(6.9271);
+    expect(stored.lng).toBe(79.8612);
+  });
 });
 
 describe('PATCH /api/manager/routes/:routeId/qr', () => {
