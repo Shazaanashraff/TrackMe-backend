@@ -30,6 +30,21 @@ const {
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect } = require('../middleware/auth');
+const { createEmailRateLimiter } = require('../middleware/emailRateLimiter');
+
+const RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_EMAIL_RATE_LIMIT_WINDOW_MS) || 10 * 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.AUTH_EMAIL_RATE_LIMIT_MAX) || 3;
+
+const resendVerificationRateLimit = createEmailRateLimiter({
+	windowMs: RATE_LIMIT_WINDOW_MS,
+	max: RATE_LIMIT_MAX,
+	message: 'Too many verification code requests for this email. Please wait before trying again.'
+});
+const passwordResetRequestRateLimit = createEmailRateLimiter({
+	windowMs: RATE_LIMIT_WINDOW_MS,
+	max: RATE_LIMIT_MAX,
+	message: 'Too many password reset requests for this email. Please wait before trying again.'
+});
 
 // POST /api/auth/register
 router.post('/register', validateRegister, handleValidationErrors, register);
@@ -38,7 +53,7 @@ router.post('/register', validateRegister, handleValidationErrors, register);
 router.post('/verify-email', validateVerifyEmail, handleValidationErrors, verifyEmail);
 
 // POST /api/auth/resend-verification-otp
-router.post('/resend-verification-otp', resendVerificationOtp);
+router.post('/resend-verification-otp', resendVerificationRateLimit, resendVerificationOtp);
 
 // POST /api/auth/login
 router.post('/login', validateLogin, handleValidationErrors, login);
@@ -50,7 +65,7 @@ router.post('/google', validateGoogleSignIn, handleValidationErrors, googleSignI
 router.post('/refresh-token', validateRefreshToken, handleValidationErrors, refreshAccessToken);
 
 // POST /api/auth/forgot-password/request-otp
-router.post('/forgot-password/request-otp', validateForgotPasswordRequest, handleValidationErrors, requestPasswordResetOtp);
+router.post('/forgot-password/request-otp', validateForgotPasswordRequest, handleValidationErrors, passwordResetRequestRateLimit, requestPasswordResetOtp);
 
 // POST /api/auth/forgot-password/verify-otp
 router.post('/forgot-password/verify-otp', validateForgotPasswordVerifyOtp, handleValidationErrors, verifyPasswordResetOtp);

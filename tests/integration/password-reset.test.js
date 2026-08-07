@@ -7,80 +7,91 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 // brute-force lockout on verify-otp (issue #4): no RESEND_API_KEY is configured
 // in the test env, so requestPasswordResetOtp always falls back to returning
 // `developmentOtp` in the response body instead of actually emailing it.
+//
+// Each test uses its own account/email: request-otp is also rate-limited per
+// email (issue #2/#3, 3 requests/10 min by default), and these scenarios each
+// issue 2+ requests — sharing one email across tests would trip that limiter
+// and mask what's actually being tested here.
 
-const USER = { email: `pwreset-${Date.now()}@test.com`, password: 'P@ssw0rd!' };
+async function createUser() {
+  const email = `pwreset-${Date.now()}-${Math.random().toString(36).slice(2)}@test.com`;
+  await User.create({
+    name: 'Reset Tester', email, password: 'P@ssw0rd!',
+    role: 'user', isEmailVerified: true, isActive: true
+  });
+  return email;
+}
+
+async function requestOtp(email) {
+  const res = await request(app)
+    .post('/api/auth/forgot-password/request-otp')
+    .send({ email });
+  return res.body.developmentOtp;
+}
 
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
-
-  await User.create({
-    name: 'Reset Tester', email: USER.email, password: USER.password,
-    role: 'user', isEmailVerified: true, isActive: true
-  });
 });
 
 afterAll(async () => {
   await closeTestDb();
 });
 
-async function requestOtp() {
-  const res = await request(app)
-    .post('/api/auth/forgot-password/request-otp')
-    .send({ email: USER.email });
-  return res.body.developmentOtp;
-}
-
 describe('Password reset OTP', () => {
   it('a correct OTP on a fresh request verifies successfully', async () => {
-    const otp = await requestOtp();
+    const email = await createUser();
+    const otp = await requestOtp(email);
 
     const res = await request(app)
       .post('/api/auth/forgot-password/verify-otp')
-      .send({ email: USER.email, otp });
+      .send({ email, otp });
 
     expect(res.status).toBe(200);
     expect(res.body.resetToken).toBeTruthy();
   });
 
   it('locks out the code after 5 wrong attempts, rejecting even the correct code afterwards', async () => {
-    const otp = await requestOtp();
+    const email = await createUser();
+    const otp = await requestOtp(email);
 
     for (let i = 0; i < 4; i++) {
       const res = await request(app)
         .post('/api/auth/forgot-password/verify-otp')
-        .send({ email: USER.email, otp: '000000' });
+        .send({ email, otp: '000000' });
       expect(res.status).toBe(400);
     }
 
     // 5th wrong attempt trips the lockout.
     const lockoutRes = await request(app)
       .post('/api/auth/forgot-password/verify-otp')
-      .send({ email: USER.email, otp: '000000' });
+      .send({ email, otp: '000000' });
     expect(lockoutRes.status).toBe(400);
 
     // Now even the real code is rejected — the OTP was invalidated, not just expired.
     const afterLockoutRes = await request(app)
       .post('/api/auth/forgot-password/verify-otp')
-      .send({ email: USER.email, otp });
+      .send({ email, otp });
     expect(afterLockoutRes.status).toBe(400);
     expect(afterLockoutRes.body.resetToken).toBeUndefined();
   });
 
   it('a fresh reset request after lockout issues a new usable code', async () => {
+    const email = await createUser();
+
     // Trip the lockout on the first code.
-    await requestOtp();
+    await requestOtp(email);
     for (let i = 0; i < 5; i++) {
       await request(app)
         .post('/api/auth/forgot-password/verify-otp')
-        .send({ email: USER.email, otp: '000000' });
+        .send({ email, otp: '000000' });
     }
 
     // Requesting again should hand back a fresh, working code.
-    const freshOtp = await requestOtp();
+    const freshOtp = await requestOtp(email);
     const res = await request(app)
       .post('/api/auth/forgot-password/verify-otp')
-      .send({ email: USER.email, otp: freshOtp });
+      .send({ email, otp: freshOtp });
 
     expect(res.status).toBe(200);
     expect(res.body.resetToken).toBeTruthy();
