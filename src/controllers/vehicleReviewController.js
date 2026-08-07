@@ -34,10 +34,21 @@ exports.getReviewsByVehicle = async (req, res, next) => {
     const { vehicleId } = req.params;
     const vehicleObjectId = new mongoose.Types.ObjectId(vehicleId);
 
-    const reviews = await VehicleReview.find({ vehicleId, isDeleted: false })
+    let query = VehicleReview.find({ vehicleId, isDeleted: false })
       .populate('userId', 'name')
-      .sort({ createdAt: -1 })
-      .lean();
+      .sort({ createdAt: -1 });
+
+    // Pagination is opt-in — callers that don't pass page/limit keep getting
+    // the full list, same as before. A caller that does ask for a page gets
+    // one capped at MAX_LIMIT.
+    const MAX_LIMIT = 100;
+    if (req.query.page !== undefined || req.query.limit !== undefined) {
+      const page = Math.max(parseInt(req.query.page) || 1, 1);
+      const limit = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
+      query = query.skip((page - 1) * limit).limit(limit);
+    }
+
+    const reviews = await query.lean();
 
     const summary = await VehicleReview.aggregate([
       {
