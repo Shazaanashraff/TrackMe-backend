@@ -34,6 +34,12 @@ const toMillis = (expiresIn) => {
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+// Password reset enables full account takeover if intercepted, so its OTP window
+// is shorter than email verification's — a defense-in-depth control on top of the
+// attempt lockout (see verifyPasswordResetOtp).
+const PASSWORD_RESET_OTP_EXPIRY_MS = 5 * 60 * 1000;
+const EMAIL_VERIFICATION_OTP_EXPIRY_MS = 10 * 60 * 1000;
+
 const sendVerificationEmail = async (to, otp) => {
   if (!process.env.RESEND_API_KEY) return false;
 
@@ -123,7 +129,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
             <p>We received a request to reset your TrackMe password.</p>
           </div>
           
-          <p>Use this code to reset your password (valid for 10 minutes):</p>
+          <p>Use this code to reset your password (valid for 5 minutes):</p>
           
           <div class="code-box">
             <div class="code">${otp}</div>
@@ -234,7 +240,7 @@ exports.register = async (req, res, next) => {
       isEmailVerified: false,
       emailVerification: {
         otpHash,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
       }
     });
 
@@ -593,7 +599,7 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.passwordReset = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_OTP_EXPIRY_MS),
       attempts: 0,
       resetTokenHash: null,
       resetTokenExpiresAt: null
@@ -986,7 +992,7 @@ exports.resendVerificationOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.emailVerification = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
     };
     await user.save();
 
