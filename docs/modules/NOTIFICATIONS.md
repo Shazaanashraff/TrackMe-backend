@@ -41,7 +41,7 @@ All under `/api/notifications` (`src/routes/notificationRoutes.js`), all authent
 | `PUT` | `/:notificationId/read` | `markAsRead` | **PUT**, not PATCH. |
 | `PUT` | `/read-all` | `markAllAsRead` | **PUT**, not PATCH. |
 | `DELETE` | `/:notificationId` | `deleteNotification` | |
-| `DELETE` | `/admin/cleanup` | `cleanupOldNotifications` | Housekeeping; not a client call. |
+| `DELETE` | `/admin/cleanup` | `cleanupOldNotifications` | Housekeeping; not a client call. Guarded by `requireAdmin` (`admin` or `super-admin` only). |
 
 > `/read-all` is declared **after** `/:notificationId/read` but is a distinct literal path; keep
 > literal routes ordered so `:notificationId` can't swallow them.
@@ -93,7 +93,9 @@ flowchart TD
 
 - Every endpoint is authenticated; a caller only ever reads/mutates **their own** notifications.
 - `POST /device-token` writes to the calling account — tokens are never assigned to another user.
-- `DELETE /admin/cleanup` is housekeeping; confirm its guard before exposing it anywhere.
+- `DELETE /admin/cleanup` is guarded by `requireAdmin` (`admin`/`super-admin` only) — a rider or
+  driver token gets `403`. It deletes expired `Notification` docs system-wide, not scoped to the
+  caller. Covered by `tests/integration/notifications.test.js`.
 
 ## 7. Side effects
 

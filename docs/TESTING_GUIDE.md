@@ -32,7 +32,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Notifications
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
+| DELETE /api/notifications/admin/cleanup | integration | tests/integration/notifications.test.js | 401 no token; 403 rider; 403 driver; 200 manager (deletes expired docs system-wide, leaves non-expired); 200 super-admin | cleanup guard or delete-scope logic changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
 ## QR Attendance

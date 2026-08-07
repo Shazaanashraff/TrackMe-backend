@@ -23,6 +23,33 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-05 — Notification cleanup endpoint was missing its admin guard
+- **Branch:** feat/driver-on-board-roster
+- **Modules touched:** notifications — [docs/modules/NOTIFICATIONS.md](modules/NOTIFICATIONS.md)
+- **What changed:**
+  - `DELETE /api/notifications/admin/cleanup` was commented "admin only" but had no role-check
+    middleware at all — any authenticated rider or driver could call it. Added `requireAdmin`
+    (`admin`/`super-admin`) to the route in `src/routes/notificationRoutes.js`.
+- **Why:** Security audit finding — no test existed proving only admins could wipe notification
+  history, and once written, the test confirmed the guard was in fact entirely missing.
+- **Contract impact:** `DELETE /api/notifications/admin/cleanup` now returns `403` for a rider or
+  driver token where it previously returned `200`. No client currently calls this endpoint
+  (housekeeping-only per the module doc), so no consuming-app doc changes needed.
+- **Tests:** Added `tests/integration/notifications.test.js` — 401 no token, 403 rider, 403
+  driver, 200 manager (system-wide delete of expired docs, non-expired survive), 200 super-admin.
+- **Docs updated:** `docs/modules/NOTIFICATIONS.md` (route table + §6 authorization rules),
+  `docs/TESTING_GUIDE.md` (corrected a stale row that pointed at a non-existent
+  `tests/integration/shared/notifications.test.js`).
+- **Migration:** none.
+- **Follow-ups / known issues:** the fixture pattern in several sibling integration test files
+  (`qr-attendance.test.js`, `route-change-requests.test.js`, `auth.test.js`) creates
+  `User`/`Manager`/`Driver` documents directly via `Model.create()` with no linked `Identity`
+  document. Under the current Identity-based login (`authController.js` login now resolves
+  exclusively via `findIdentityByEmail`), that fixture pattern looks like it can no longer log in —
+  a likely pre-existing regression from the shared-Identity migration, not something this change
+  touches. The new `notifications.test.js` uses `createIdentityWithProfile` instead and is
+  unaffected either way.
+
 ## 2026-07-26 — Register offers a sign-in shortcut for a matching duplicate email
 - **Branch:** feat/driver-on-board-roster
 - **Modules touched:** auth — [docs/modules/AUTH.md](modules/AUTH.md)
