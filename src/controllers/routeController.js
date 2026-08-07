@@ -247,19 +247,22 @@ exports.toggleRouteStatus = async (req, res, next) => {
 exports.getRoutesStats = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
-    const totalRoutes = await Route.countDocuments({ isDeleted: false });
-    const activeRoutes = await Route.countDocuments({ isDeleted: false, isActive: true });
+    const [stats] = await Route.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          active: [{ $match: { isActive: true } }, { $count: 'count' }],
+          averages: [
+            { $group: { _id: null, avgDistance: { $avg: '$distance' }, avgEstimatedTime: { $avg: '$estimatedTime' } } }
+          ]
+        }
+      }
+    ]);
+
+    const totalRoutes = stats.total[0]?.count || 0;
+    const activeRoutes = stats.active[0]?.count || 0;
     const inactiveRoutes = totalRoutes - activeRoutes;
-
-    const avgDistance = await Route.aggregate([
-      { $match: { isDeleted: false } },
-      { $group: { _id: null, avg: { $avg: '$distance' } } }
-    ]);
-
-    const avgEstimatedTime = await Route.aggregate([
-      { $match: { isDeleted: false } },
-      { $group: { _id: null, avg: { $avg: '$estimatedTime' } } }
-    ]);
 
     res.status(200).json({
       success: true,
@@ -267,8 +270,8 @@ exports.getRoutesStats = async (req, res, next) => {
         totalRoutes,
         activeRoutes,
         inactiveRoutes,
-        avgDistance: avgDistance[0]?.avg || 0,
-        avgEstimatedTime: avgEstimatedTime[0]?.avg || 0
+        avgDistance: stats.averages[0]?.avgDistance || 0,
+        avgEstimatedTime: stats.averages[0]?.avgEstimatedTime || 0
       }
     });
   } catch (error) {

@@ -20,6 +20,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | /api/routes CRUD | integration | tests/integration/admin/routes.test.js | create, update, toggle, delete | route schema or admin rules change |
+| GET /api/routes/stats/overview | integration | tests/integration/route-stats.test.js | totalRoutes/activeRoutes/inactiveRoutes counts and avgDistance/avgEstimatedTime over non-deleted routes (single `$facet` aggregation, not 4 separate queries) | stats calculation or response shape changes |
 | /api/bus CRUD | integration | tests/integration/shared/buses.test.js | create, update, maintenance, delete | bus schema or status rules change |
 | /api/bus/routes + /api/bus/route/:id | integration | tests/integration/shared/bus-reads.test.js | list + filter | filtering rules change |
 | /api/bus/stops + /api/bus/routes/plan | integration + unit | tests/integration/journey-plan.test.js | stop list, direct A→B matching, direction filter, no-match, validation; geo helpers | journey-matching or geo logic changes |
