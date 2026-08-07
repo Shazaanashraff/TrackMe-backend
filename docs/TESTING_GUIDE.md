@@ -10,7 +10,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | POST /api/auth/login with a driver ID | integration | tests/integration/manager-drivers.test.js | driver code signs in dashed or bare/lower-case; wrong password → 401 with a driver-ID-worded message; a driver who has an email can still sign in with it; `user.driverCode` returned | login identifier handling or the driver-code format changes |
 | driverCode utils: generateDriverCode, normalizeDriverCode, looksLikeDriverCode | unit (no DB) | tests/unit/driver-code.test.js | DRV-XXXX-XXXX shape, no look-alike characters (I/O/0/1), uniqueness across draws; normalizes case/spacing/missing prefix; rejects partials and anything containing `@` | driver-code format or normalization rules change |
 | POST /api/auth/refresh-token | integration | tests/integration/auth/refresh.test.js | valid, invalid | token lifecycle changes |
-| POST /api/auth/forgot-password/* | integration | tests/integration/auth/password-reset.test.js | request/verify/reset | otp or reset logic changes |
+| POST /api/auth/forgot-password/request-otp + verify-otp | integration | tests/integration/password-reset.test.js | correct OTP on a fresh request verifies; 5 wrong attempts locks out the code (rejects the correct code afterwards, even unexpired); a fresh request after lockout issues a new usable code | otp verification, lockout threshold, or reset logic changes |
 | PUT /api/auth/profile (name + phoneNumber) | integration | tests/integration/auth.test.js | accepts + persists `phoneNumber`, returned on `user`; rejects malformed `phoneNumber`; empty string clears it; 401 when unauthenticated | profile update contract or phoneNumber validation changes |
 | accountRegistry (findAccountByEmail/findAccountById/isEmailRegistered) | integration | tests/integration/account-registry.test.js | cross-collection lookup by email (Manager/Driver/SuperAdmin/User), role-scoped lookup by id, `select` passthrough, cross-collection email uniqueness incl. `excludeId` | account-schema split changes (new account type added/removed, lookup signature changes) |
 | scripts/migrate-account-schemas.js dedup rule | unit (no DB) | tests/integration/migrate-account-schemas.test.js | `selectCanonicalSuperAdmin`: no/one/many super-admins, canonical-email preference, case-insensitive match, earliest-created fallback; `stripRole` | dedup rule or migration script logic changes |
@@ -36,6 +36,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
+| /api/notifications/:id, /:id/read, DELETE /:id ownership | integration | tests/integration/notifications.test.js | GET/PUT(read)/DELETE on another user's notification → 404, no mutation; same operations on the caller's own notification succeed | notification ownership/authorization logic changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
 ## QR Attendance

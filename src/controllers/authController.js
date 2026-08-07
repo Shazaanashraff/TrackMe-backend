@@ -594,6 +594,7 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
     user.passwordReset = {
       otpHash: hashToken(otp),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      attempts: 0,
       resetTokenHash: null,
       resetTokenExpiresAt: null
     };
@@ -632,7 +633,7 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const otp = String(req.body.otp || '').trim();
 
     const account = await findAccountByEmail(normalizedEmail, {
-      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.attempts +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
     const user = account?.doc;
 
@@ -650,7 +651,26 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
       });
     }
 
+    const MAX_OTP_ATTEMPTS = 5;
+
     if (hashToken(otp) !== user.passwordReset.otpHash) {
+      const attempts = (user.passwordReset.attempts || 0) + 1;
+
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        // Too many wrong guesses — invalidate the code outright so further
+        // attempts fail even though it hasn't expired yet.
+        user.passwordReset = {
+          otpHash: null,
+          expiresAt: null,
+          attempts: 0,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null
+        };
+      } else {
+        user.passwordReset.attempts = attempts;
+      }
+      await user.save();
+
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP code'
@@ -661,6 +681,7 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     user.passwordReset = {
       otpHash: null,
       expiresAt: null,
+      attempts: 0,
       resetTokenHash: hashToken(resetToken),
       resetTokenExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     };
