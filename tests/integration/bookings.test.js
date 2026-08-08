@@ -161,4 +161,48 @@ describe('Bookings Integration - POST /api/bookings', () => {
 
     expect(res.status).toBe(201);
   });
+
+  test('returns 409 with only the overlapping seat on a partial overlap ([3,4] when only 4 is taken)', async () => {
+    const takenPayload = bookingPayload([14]);
+    const taken = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(takenPayload);
+    expect(taken.status).toBe(201);
+
+    const overlap = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(bookingPayload([13, 14]));
+
+    expect(overlap.status).toBe(409);
+    expect(overlap.body.conflictingSeats).toEqual([14]);
+    expect(overlap.body.conflictingSeats).not.toContain(13);
+
+    // Seat 13 must still be free — the whole request was rejected, not partially applied.
+    const retry = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(bookingPayload([13]));
+    expect(retry.status).toBe(201);
+  });
+
+  test('the same seat on a different journeyDate is not a conflict', async () => {
+    const dayOnePayload = bookingPayload([20]);
+    const dayOne = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(dayOnePayload);
+    expect(dayOne.status).toBe(201);
+
+    const dayTwoPayload = bookingPayload([20]);
+    dayTwoPayload.journeyDate = '2030-01-16T08:00:00.000Z';
+    const dayTwo = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', `Bearer ${token}`)
+      .send(dayTwoPayload);
+
+    expect(dayTwo.status).toBe(201);
+    expect(dayTwo.body.booking.seatNumbers).toContain(20);
+  });
 });
