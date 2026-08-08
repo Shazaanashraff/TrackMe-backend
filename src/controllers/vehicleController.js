@@ -276,12 +276,12 @@ exports.planJourney = async (req, res, next) => {
 exports.getMyVehicle = async (req, res, next) => {
   try {
     const vehicle = await Vehicle.findOne({ driverId: req.user._id, isDeleted: false })
-      .populate('driverId', 'name email');
+      .populate('driverId', 'name email isPrivate');
 
     if (!vehicle) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No vehicle assigned to this driver' 
+      return res.status(404).json({
+        success: false,
+        message: 'No vehicle assigned to this driver'
       });
     }
 
