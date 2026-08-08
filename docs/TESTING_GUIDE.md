@@ -19,10 +19,11 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Routes and Buses
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| /api/routes CRUD | integration | tests/integration/admin/routes.test.js | create, update, toggle, delete | route schema or admin rules change |
+| POST /api/routes | integration | tests/integration/routes-creation.test.js | admin/manager happy path; non-admin and unauthenticated refused; duplicate routeId; missing/invalid required fields; invalid serviceType | route creation contract or admin-role gating changes |
 | GET /api/routes/stats/overview | integration | tests/integration/route-stats.test.js | totalRoutes/activeRoutes/inactiveRoutes counts and avgDistance/avgEstimatedTime over non-deleted routes (single `$facet` aggregation, not 4 separate queries) | stats calculation or response shape changes |
-| /api/bus CRUD | integration | tests/integration/shared/buses.test.js | create, update, maintenance, delete | bus schema or status rules change |
-| /api/bus/routes + /api/bus/route/:id | integration | tests/integration/shared/bus-reads.test.js | list + filter | filtering rules change |
+| POST /api/vehicle/register | integration | tests/integration/vehicle-registration.test.js | driver happy path; non-driver and unauthenticated refused; duplicate vehicleId/numberPlate; unknown routeId; serviceType/route mismatch; missing/invalid required fields | vehicle registration contract or driver-role gating changes |
+| GET /api/vehicle/list/all?serviceType= | integration | tests/integration/vehicle-registration.test.js | filters to the requested serviceType; an invalid filter value is ignored (unfiltered results) | serviceType filtering logic changes |
+| GET /api/vehicle/routes | integration | tests/integration/list-pagination-cap.test.js | oversized limit clamped to 100; no limit/page keeps the full-list default | pagination/limit logic changes |
 | /api/bus/stops + /api/bus/routes/plan | integration + unit | tests/integration/journey-plan.test.js | stop list, direct A→B matching, direction filter, no-match, validation; geo helpers | journey-matching or geo logic changes |
 | Page-size caps: GET /api/vehicle/list/all, GET /api/vehicle/routes, GET /api/vehicle-reviews/vehicle/:id | integration | tests/integration/list-pagination-cap.test.js | an oversized requested `limit` is clamped to 100 on all three; no limit/page param keeps each endpoint's pre-existing default (10 for the vehicle list, full list for routes and reviews) | list endpoint pagination or page-size limits change |
 | /api/places/* (autocomplete, details, reverse) | integration | tests/integration/places-proxy.test.js | input guards, 503 no-key, no key leak, reverse coord validation, reverse name derivation: Google address_components (road/POI > town) + OSM structured + fallback | proxy guards or reverse-geocode name logic change |
