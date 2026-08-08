@@ -24,6 +24,7 @@ const transitRoutes = require('./routes/transitRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
+const driverAccountRoutes = require('./routes/driverAccountRoutes');
 
 // Initialize Express app
 const app = express();
@@ -91,6 +92,9 @@ app.use('/api/transit', transitRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/driver/boarding', driverBoardingRoutes);
+// Mounted after the more specific driver routers above; this one owns what is
+// left under /api/driver, so a new sub-router must be added before it.
+app.use('/api/driver', driverAccountRoutes);
 
 // Health check endpoint (services receiving requests = keep-alive friendly)
 app.get('/health', (req, res) => {
