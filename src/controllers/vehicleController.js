@@ -496,9 +496,22 @@ exports.updateMaintenanceStatus = async (req, res, next) => {
 
     const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false });
     if (!vehicle) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Vehicle not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found'
+      });
+    }
+
+    // Same ownership rule as updateVehicle: driver own vehicle, manager assigned
+    // vehicles, super-admin all — this endpoint had no check at all before.
+    if (
+      String(vehicle.driverId) !== String(req.user._id) &&
+      !(req.user.role === 'admin' && vehicle.managerId && String(vehicle.managerId) === String(req.user._id)) &&
+      req.user.role !== 'super-admin'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this vehicle'
       });
     }
 
