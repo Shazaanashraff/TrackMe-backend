@@ -15,6 +15,19 @@ function dayTripId(vehicleId, at = new Date()) {
   return `${vehicleId}#${at.toISOString().slice(0, 10)}`;
 }
 
+// A buggy GPS reading or tampered request could otherwise store a boarding
+// event at an impossible location. Out-of-range values are dropped (treated
+// the same as absent) rather than rejecting the whole scan, since lat/lng are
+// optional on this endpoint.
+function validCoordinate(value, min, max, label) {
+  if (typeof value !== 'number') return null;
+  if (value < min || value > max) {
+    console.warn(`[boardingController] Discarding out-of-range boarding-scan ${label}: ${value}`);
+    return null;
+  }
+  return value;
+}
+
 function eventPayload(event) {
   return {
     eventId: String(event._id),
@@ -92,8 +105,8 @@ exports.scanBoarding = async (req, res, next) => {
       routeId: vehicle.routeId,
       driverId: req.user._id,
       type,
-      lat: typeof lat === 'number' ? lat : null,
-      lng: typeof lng === 'number' ? lng : null,
+      lat: validCoordinate(lat, -90, 90, 'lat'),
+      lng: validCoordinate(lng, -180, 180, 'lng'),
       tripId,
       source: 'QR'
     });

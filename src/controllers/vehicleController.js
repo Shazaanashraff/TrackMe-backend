@@ -152,8 +152,21 @@ exports.getAllRoutes = async (req, res, next) => {
       filter.serviceType = String(serviceType).toUpperCase();
     }
 
-    const routes = await Route.find(filter)
+    let query = Route.find(filter)
       .select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
+
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full list, same as before. A caller that does ask for a page gets one
+    // capped at MAX_LIMIT, so a huge requested page size can't force the server
+    // to load an unbounded amount of data.
+    const MAX_LIMIT = 100;
+    if (req.query.page !== undefined || req.query.limit !== undefined) {
+      const page = Math.max(parseInt(req.query.page) || 1, 1);
+      const limit = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
+      query = query.skip((page - 1) * limit).limit(limit);
+    }
+
+    const routes = await query;
 
     res.status(200).json({
       success: true,
@@ -434,8 +447,9 @@ exports.deleteVehicle = async (req, res, next) => {
 // @route   GET /api/vehicle/list/all
 exports.getAllVehicles = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const MAX_LIMIT = 100;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 10, MAX_LIMIT);
     const skip = (page - 1) * limit;
 
     const filter = { isDeleted: false };
@@ -482,9 +496,22 @@ exports.updateMaintenanceStatus = async (req, res, next) => {
 
     const vehicle = await Vehicle.findOne({ vehicleId, isDeleted: false });
     if (!vehicle) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Vehicle not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found'
+      });
+    }
+
+    // Same ownership rule as updateVehicle: driver own vehicle, manager assigned
+    // vehicles, super-admin all — this endpoint had no check at all before.
+    if (
+      String(vehicle.driverId) !== String(req.user._id) &&
+      !(req.user.role === 'admin' && vehicle.managerId && String(vehicle.managerId) === String(req.user._id)) &&
+      req.user.role !== 'super-admin'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this vehicle'
       });
     }
 

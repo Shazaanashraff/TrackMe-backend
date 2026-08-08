@@ -67,6 +67,7 @@ const applyAccountFields = (schema, { emailOptional = false } = {}) => {
     passwordReset: {
       otpHash: { type: String, default: null, select: false },
       expiresAt: { type: Date, default: null, select: false },
+      attempts: { type: Number, default: 0, select: false },
       resetTokenHash: { type: String, default: null, select: false },
       resetTokenExpiresAt: { type: Date, default: null, select: false }
     },

@@ -34,6 +34,12 @@ const toMillis = (expiresIn) => {
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+// Password reset enables full account takeover if intercepted, so its OTP window
+// is shorter than email verification's — a defense-in-depth control on top of the
+// attempt lockout (see verifyPasswordResetOtp).
+const PASSWORD_RESET_OTP_EXPIRY_MS = 5 * 60 * 1000;
+const EMAIL_VERIFICATION_OTP_EXPIRY_MS = 10 * 60 * 1000;
+
 const sendVerificationEmail = async (to, otp) => {
   if (!process.env.RESEND_API_KEY) return false;
 
@@ -123,7 +129,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
             <p>We received a request to reset your TrackMe password.</p>
           </div>
           
-          <p>Use this code to reset your password (valid for 10 minutes):</p>
+          <p>Use this code to reset your password (valid for 5 minutes):</p>
           
           <div class="code-box">
             <div class="code">${otp}</div>
@@ -234,7 +240,7 @@ exports.register = async (req, res, next) => {
       isEmailVerified: false,
       emailVerification: {
         otpHash,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
       }
     });
 
@@ -593,7 +599,8 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.passwordReset = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_OTP_EXPIRY_MS),
+      attempts: 0,
       resetTokenHash: null,
       resetTokenExpiresAt: null
     };
@@ -607,18 +614,30 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       emailSent = false;
     }
 
-    const response = {
-      success: true,
-      message: emailSent
-        ? 'If this email is registered, an OTP has been sent.'
-        : 'Email service unavailable. Use development OTP in non-production environments.'
-    };
-
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
-      response.developmentOtp = otp;
+    if (emailSent) {
+      return res.status(200).json({
+        success: true,
+        message: 'If this email is registered, an OTP has been sent.'
+      });
     }
 
-    return res.status(200).json(response);
+    if (process.env.NODE_ENV !== 'production') {
+      // Dev/test fallback — no email provider configured, but the flow must
+      // still be completable, so hand back the OTP directly.
+      return res.status(200).json({
+        success: true,
+        message: 'Email service unavailable. Use development OTP in non-production environments.',
+        developmentOtp: otp
+      });
+    }
+
+    // Production and the email genuinely failed to send, with no fallback
+    // available — the client needs to know this didn't work rather than sit
+    // waiting for an email that's never coming.
+    return res.status(502).json({
+      success: false,
+      message: 'We could not send the reset email right now. Please try again shortly.'
+    });
   } catch (error) {
     next(error);
   }
@@ -632,7 +651,7 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const otp = String(req.body.otp || '').trim();
 
     const account = await findAccountByEmail(normalizedEmail, {
-      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.attempts +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
     const user = account?.doc;
 
@@ -650,7 +669,26 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
       });
     }
 
+    const MAX_OTP_ATTEMPTS = 5;
+
     if (hashToken(otp) !== user.passwordReset.otpHash) {
+      const attempts = (user.passwordReset.attempts || 0) + 1;
+
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        // Too many wrong guesses — invalidate the code outright so further
+        // attempts fail even though it hasn't expired yet.
+        user.passwordReset = {
+          otpHash: null,
+          expiresAt: null,
+          attempts: 0,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null
+        };
+      } else {
+        user.passwordReset.attempts = attempts;
+      }
+      await user.save();
+
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP code'
@@ -661,12 +699,20 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     user.passwordReset = {
       otpHash: null,
       expiresAt: null,
+      attempts: 0,
       resetTokenHash: hashToken(resetToken),
       resetTokenExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     };
 
     await user.save();
 
+    // `resetToken` is a short-lived (10-min) bearer secret that resetPasswordWithToken
+    // accepts in place of a password — treat it with the same care as a password.
+    // Never log this response body (or this request's — resetPasswordWithToken's
+    // `resetToken` param) in request/response logging, error tracking, or analytics
+    // middleware. This service has no such middleware today (no morgan/winston/pino,
+    // and no request-logging in src/middleware/) — if one is added later, make sure
+    // it excludes or redacts these two endpoints' bodies before shipping it.
     return res.status(200).json({
       success: true,
       message: 'OTP verified successfully',
@@ -966,7 +1012,7 @@ exports.resendVerificationOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.emailVerification = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
     };
     await user.save();
 

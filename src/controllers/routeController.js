@@ -2,6 +2,13 @@ const Route = require('../models/Route');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
+// A super-admin may edit any route. A manager may only edit a route they own
+// (managerId set on create) — a route with no manager owner (super-admin
+// created) is super-admin-only.
+const isRouteOwner = (user, route) =>
+  user.role === 'super-admin' ||
+  (user.role === 'admin' && !!route.managerId && route.managerId.toString() === user._id.toString());
+
 // @desc    Create a new route (admin only)
 // @route   POST /api/routes
 exports.createRoute = async (req, res, next) => {
@@ -35,7 +42,10 @@ exports.createRoute = async (req, res, next) => {
       stopsCount: normalizedStops.length,
       stops: normalizedStops,
       qrEnabled: !!qrEnabled,
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      // Only a Manager account owns a route; a super-admin-created route has no
+      // single manager owner and stays editable by any super-admin only.
+      managerId: req.user.role === 'admin' ? req.user._id : null
     });
 
     res.status(201).json({
@@ -132,15 +142,19 @@ exports.updateRoute = async (req, res, next) => {
       delete updateData.estimatedTime;
     }
 
+    const existing = await Route.findOne({ routeId, isDeleted: false });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, existing)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
     const route = await Route.findOneAndUpdate(
       { routeId, isDeleted: false },
       { ...updateData },
       { new: true, runValidators: true }
     );
-
-    if (!route) {
-      return res.status(404).json({ success: false, message: 'Route not found' });
-    }
 
     res.status(200).json({
       success: true,
@@ -228,6 +242,9 @@ exports.toggleRouteStatus = async (req, res, next) => {
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
+    if (!isRouteOwner(req.user, route)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
 
     route.isActive = !route.isActive;
     await route.save();
@@ -247,19 +264,22 @@ exports.toggleRouteStatus = async (req, res, next) => {
 exports.getRoutesStats = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
-    const totalRoutes = await Route.countDocuments({ isDeleted: false });
-    const activeRoutes = await Route.countDocuments({ isDeleted: false, isActive: true });
+    const [stats] = await Route.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          active: [{ $match: { isActive: true } }, { $count: 'count' }],
+          averages: [
+            { $group: { _id: null, avgDistance: { $avg: '$distance' }, avgEstimatedTime: { $avg: '$estimatedTime' } } }
+          ]
+        }
+      }
+    ]);
+
+    const totalRoutes = stats.total[0]?.count || 0;
+    const activeRoutes = stats.active[0]?.count || 0;
     const inactiveRoutes = totalRoutes - activeRoutes;
-
-    const avgDistance = await Route.aggregate([
-      { $match: { isDeleted: false } },
-      { $group: { _id: null, avg: { $avg: '$distance' } } }
-    ]);
-
-    const avgEstimatedTime = await Route.aggregate([
-      { $match: { isDeleted: false } },
-      { $group: { _id: null, avg: { $avg: '$estimatedTime' } } }
-    ]);
 
     res.status(200).json({
       success: true,
@@ -267,8 +287,8 @@ exports.getRoutesStats = async (req, res, next) => {
         totalRoutes,
         activeRoutes,
         inactiveRoutes,
-        avgDistance: avgDistance[0]?.avg || 0,
-        avgEstimatedTime: avgEstimatedTime[0]?.avg || 0
+        avgDistance: stats.averages[0]?.avgDistance || 0,
+        avgEstimatedTime: stats.averages[0]?.avgEstimatedTime || 0
       }
     });
   } catch (error) {

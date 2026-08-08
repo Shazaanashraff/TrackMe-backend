@@ -45,6 +45,14 @@ const createBooking = async (req, res) => {
       totalPrice
     } = req.body;
 
+    const { end: journeyEndOfDay } = getStartAndEndOfDay(journeyDate);
+    if (Number.isNaN(journeyEndOfDay.getTime())) {
+      return res.status(400).json({ message: 'Invalid journeyDate' });
+    }
+    if (journeyEndOfDay.getTime() < Date.now()) {
+      return res.status(400).json({ message: 'journeyDate cannot be in the past' });
+    }
+
     // Verify vehicle exists
     const vehicle = await Vehicle.findById(vehicleId);
     if (!vehicle) {
