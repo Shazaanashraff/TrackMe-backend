@@ -36,7 +36,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Bookings and ETA
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| POST /api/bookings | integration | tests/integration/bookings.test.js | valid booking → 201; missing required fields → 400; unauthenticated → 401; seat conflict → 409; past `journeyDate` → 400; today's `journeyDate` still accepted | booking rules or journeyDate validation change |
+| POST /api/bookings | integration | tests/integration/bookings.test.js | valid booking → 201; missing required fields → 400; unauthenticated → 401; seat conflict → 409; past `journeyDate` → 400; today's `journeyDate` still accepted; partial seat overlap → 409 naming only the taken seat(s), the rest of the request stays bookable; same seat on a different `journeyDate` is not a conflict | booking rules or journeyDate validation change |
 | /api/eta/* | integration | tests/integration/user/eta.test.js | ETA calculations | ETA logic changes |
 
 ## Notifications
@@ -44,6 +44,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 |---|---|---|---|---|
 | /api/notifications | integration | tests/integration/shared/notifications.test.js | list, read, delete | notification schema changes |
 | /api/notifications/:id, /:id/read, DELETE /:id ownership | integration | tests/integration/notifications.test.js | GET/PUT(read)/DELETE on another user's notification → 404, no mutation; same operations on the caller's own notification succeed | notification ownership/authorization logic changes |
+| GET /api/notifications/count/unread | integration | tests/integration/notifications.test.js | returns 0 for a caller with no notifications; scoped to the caller — only counts their own `isRead:false` notifications, ignoring another user's unread and the caller's own read ones | unread-count query or scoping changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 
 ## QR Attendance
@@ -51,7 +52,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 |---|---|---|---|---|
 | qrToken utils: signQr/verifyQr (account-scoped) | unit | tests/integration/qr-attendance.test.js | signQr payload is `{ sub: userId, ver: qrTokenVersion, jti }`; verifyQr resolves valid; rejects garbage/tampered, expired, stale version (after rotate), inactive/missing user | token payload shape or verification logic changes |
 | POST /api/qr/issue, POST /api/qr/rotate | integration | tests/integration/qr-attendance.test.js | issue returns one account-scoped token with no route gate (works even with zero route relationships); rotate bumps the caller's own qrTokenVersion, invalidating prior tokens | issue/rotate contract changes |
-| POST /api/driver/boarding/scan | integration | tests/integration/qr-attendance.test.js | 403 non-driver; 401 invalid/expired/stale token; 404 bus not assigned to driver; 403 when the bus's route has `qrEnabled:false`; auto-toggle BOARD→ALIGHT; debounces duplicate same-type scan within the window; dispatches push; out-of-range lat/lng discarded (stored as null) instead of the whole scan being rejected; valid lat/lng stored unchanged | scan logic, toggle/debounce, route-gating, or coordinate-range validation changes |
+| POST /api/driver/boarding/scan | integration | tests/integration/qr-attendance.test.js | 403 non-driver; 401 invalid/expired/stale token; 404 bus not assigned to driver; 403 when the bus's route has `qrEnabled:false`; auto-toggle BOARD→ALIGHT; debounces duplicate same-type scan within the window; dispatches push; out-of-range lat/lng discarded (stored as null) instead of the whole scan being rejected; valid lat/lng stored unchanged; debounce boundary — a prior same-type event timestamped 1s inside the window still debounces, 1s outside does not; a rider with events open on two different `tripId`s keeps auto-toggle state independent per trip; an explicit `tripId: null` falls back to the per-vehicle per-day default | scan logic, toggle/debounce, route-gating, coordinate-range, or tripId-scoping changes |
 | PATCH /api/manager/routes/:routeId/qr | integration | tests/integration/qr-attendance.test.js | owning manager toggles `qrEnabled` on/off, scan endpoint reflects it immediately; 403 for a manager who doesn't own the route | route QR toggle endpoint or ownership scoping changes |
 | GET /api/attendance/student/:studentId, GET /api/manager/attendance | integration | tests/integration/qr-attendance.test.js | rider reads own history + summary; 403 non-manager reading another rider; manager per-student rollup scoped to owned routes; empty rollup for a manager with no routes | attendance read/authorization or rollup logic changes |
 | POST /api/notifications/device-token | integration | tests/integration/qr-attendance.test.js | registers a token idempotently (no duplicates in `pushTokens`); 400 missing token | device-token contract changes |
