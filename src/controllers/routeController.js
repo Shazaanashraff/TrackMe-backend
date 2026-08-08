@@ -2,6 +2,13 @@ const Route = require('../models/Route');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
+// A super-admin may edit any route. A manager may only edit a route they own
+// (managerId set on create) — a route with no manager owner (super-admin
+// created) is super-admin-only.
+const isRouteOwner = (user, route) =>
+  user.role === 'super-admin' ||
+  (user.role === 'admin' && !!route.managerId && route.managerId.toString() === user._id.toString());
+
 // @desc    Create a new route (admin only)
 // @route   POST /api/routes
 exports.createRoute = async (req, res, next) => {
@@ -35,7 +42,10 @@ exports.createRoute = async (req, res, next) => {
       stopsCount: normalizedStops.length,
       stops: normalizedStops,
       qrEnabled: !!qrEnabled,
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      // Only a Manager account owns a route; a super-admin-created route has no
+      // single manager owner and stays editable by any super-admin only.
+      managerId: req.user.role === 'admin' ? req.user._id : null
     });
 
     res.status(201).json({
@@ -132,15 +142,19 @@ exports.updateRoute = async (req, res, next) => {
       delete updateData.estimatedTime;
     }
 
+    const existing = await Route.findOne({ routeId, isDeleted: false });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, existing)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
     const route = await Route.findOneAndUpdate(
       { routeId, isDeleted: false },
       { ...updateData },
       { new: true, runValidators: true }
     );
-
-    if (!route) {
-      return res.status(404).json({ success: false, message: 'Route not found' });
-    }
 
     res.status(200).json({
       success: true,
@@ -227,6 +241,9 @@ exports.toggleRouteStatus = async (req, res, next) => {
     const route = await Route.findOne({ routeId, isDeleted: false });
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, route)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
     }
 
     route.isActive = !route.isActive;
