@@ -808,6 +808,26 @@ exports.completeAccountSetup = async (req, res, next) => {
   }
 };
 
+// @desc    Read the signed-in account
+// @route   GET /api/auth/me
+// @access  Private
+// Details like a driver's phone number are set by their manager, on another
+// device, so the copy a client stored at sign-in goes stale with no event to
+// tell it. This lets a client re-read itself rather than making people sign out
+// and back in to see their own record.
+exports.getMe = async (req, res, next) => {
+  try {
+    // `protect` has already loaded the account document and stamped its role,
+    // so this is the same shape login hands back, from the same source.
+    return res.status(200).json({
+      success: true,
+      user: userPayload(req.user, req.user.role)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Update user profile
 // @route   PUT /api/auth/profile
 // @access  Private

@@ -13,6 +13,7 @@ const {
 	resetPasswordWithToken,
 	validateAccountSetup,
 	completeAccountSetup,
+	getMe,
 	updateProfile,
 	updateAvatar
 } = require('../controllers/authController');
@@ -66,6 +67,9 @@ router.post('/account-setup/complete', validateAccountSetupComplete, handleValid
 
 // POST /api/auth/logout
 router.post('/logout', protect, logout);
+
+// GET /api/auth/me
+router.get('/me', protect, getMe);
 
 // PUT /api/auth/profile
 router.put('/profile', protect, updateProfile);
