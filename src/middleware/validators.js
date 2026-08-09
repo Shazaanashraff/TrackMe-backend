@@ -417,3 +417,14 @@ exports.validateVehicleObjectId = [
   param('vehicleId')
     .isMongoId().withMessage('Invalid vehicle id')
 ];
+
+exports.validateVehicleRequestId = [
+  param('requestId')
+    .isMongoId().withMessage('Invalid request id')
+];
+
+exports.validateManagerIdQuery = [
+  query('managerId')
+    .optional()
+    .isMongoId().withMessage('Invalid manager id')
+];

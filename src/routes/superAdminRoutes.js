@@ -25,7 +25,9 @@ const {
   validateManagerStatus,
   validateManagerPasswordReset,
   validateAssignVehicles,
-  validateCreateOrganization
+  validateCreateOrganization,
+  validateVehicleRequestId,
+  validateManagerIdQuery
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireSuperAdmin } = require('../middleware/auth');
@@ -35,9 +37,9 @@ router.use(protect, requireSuperAdmin);
 router.get('/dashboard', getSuperAdminDashboard);
 router.get('/operations', getOperationsOverview);
 router.get('/operations/:managerId', validateManagerId, handleValidationErrors, getManagerVehicleDetails);
-router.get('/vehicle-requests', getPendingVehicleRequests);
-router.patch('/vehicle-requests/:requestId/review', reviewVehicleRequest);
-router.get('/audit-logs', getAuditLogs);
+router.get('/vehicle-requests', validateManagerIdQuery, handleValidationErrors, getPendingVehicleRequests);
+router.patch('/vehicle-requests/:requestId/review', validateVehicleRequestId, handleValidationErrors, reviewVehicleRequest);
+router.get('/audit-logs', validateManagerIdQuery, handleValidationErrors, getAuditLogs);
 
 router.get('/organizations', getOrganizations);
 router.post('/organizations', validateCreateOrganization, handleValidationErrors, createOrganization);
