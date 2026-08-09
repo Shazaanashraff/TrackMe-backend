@@ -4,6 +4,7 @@ const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
+const ManagerAuditLog = require('../../src/models/ManagerAuditLog');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // Number plates are Sri Lankan and are stored canonically, so the same plate
@@ -233,5 +234,45 @@ describe('PUT /api/manager/vehicles/:vehicleId', () => {
 
     expect(res.status).toBe(200);
     expect((await Vehicle.findById(vehicle._id)).numberPlate).toBe('PF-2327');
+  });
+
+  it('rejects an empty body and writes no audit log entry (issue #43)', async () => {
+    const vehicle = await makeVehicle();
+    const before = await ManagerAuditLog.countDocuments({
+      entityType: 'VEHICLE', entityId: vehicle.vehicleId, action: 'VEHICLE_EDITED'
+    });
+
+    const res = await request(app).put(`/api/manager/vehicles/${vehicle.vehicleId}`).set(...auth()).send({});
+
+    expect(res.status).toBe(400);
+    const after = await ManagerAuditLog.countDocuments({
+      entityType: 'VEHICLE', entityId: vehicle.vehicleId, action: 'VEHICLE_EDITED'
+    });
+    expect(after).toBe(before);
+  });
+
+  // The findOne-check-then-save in updateManagerVehicle isn't atomic (issue #42):
+  // two updates racing onto the same brand-new plate can both pass the pre-check
+  // before either save() lands, so the unique index is the real backstop. Either
+  // the pre-check or the save()'s catch(11000) branch can end up producing the
+  // loser's 409 depending on exact timing, but the loser must always get the same
+  // friendly conflict message either way — never a raw duplicate-key error.
+  it('returns a friendly 409 (not a raw duplicate-key error) when two updates race onto the same plate (issue #42)', async () => {
+    const vehicleA = await makeVehicle();
+    const vehicleB = await makeVehicle();
+    const racedPlate = `NP-${8000 + seq}`;
+
+    const [resA, resB] = await Promise.all([
+      request(app).put(`/api/manager/vehicles/${vehicleA.vehicleId}`).set(...auth()).send({ numberPlate: racedPlate }),
+      request(app).put(`/api/manager/vehicles/${vehicleB.vehicleId}`).set(...auth()).send({ numberPlate: racedPlate })
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const loser = resA.status === 409 ? resA : resB;
+    expect(loser.body.success).toBe(false);
+    expect(loser.body.message).toMatch(/already (on vehicle|belongs to)/i);
+    expect(loser.body.message).not.toMatch(/E11000|duplicate key/i);
   });
 });

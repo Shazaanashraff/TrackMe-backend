@@ -172,8 +172,13 @@ exports.getManagerVehicleById = async (req, res, next) => {
 };
 
 exports.updateManagerVehicle = async (req, res, next) => {
+  // Declared outside the try so the catch block can use them to rebuild the
+  // same friendly conflict message the pre-check path returns, when a
+  // concurrent request wins the race between that check and this save().
+  let vehicle;
+  let updateData;
   try {
-    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
 
     if (!vehicle) {
       return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
@@ -188,11 +193,15 @@ exports.updateManagerVehicle = async (req, res, next) => {
       });
     }
 
-    const updateData = {};
+    updateData = {};
     for (const key of MANAGER_EDITABLE_FIELDS) {
       if (req.body[key] !== undefined) {
         updateData[key] = req.body[key];
       }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ success: false, message: 'No editable fields provided' });
     }
 
     if (updateData.serviceType) {
@@ -277,6 +286,19 @@ exports.updateManagerVehicle = async (req, res, next) => {
       data: vehicle
     });
   } catch (error) {
+    // The findOne-then-save above isn't atomic — a concurrent request can pass
+    // plateConflict's check before either save() lands, so the unique index is
+    // the real guard and can still throw here. Turn that into the same friendly
+    // 409 the pre-check path returns, instead of a raw duplicate-key 500/400.
+    if (error.code === 11000 && updateData?.numberPlate) {
+      const conflict = await plateConflict(updateData.numberPlate, {
+        managerId: req.user._id,
+        excludeId: vehicle?._id
+      });
+      if (conflict) {
+        return res.status(conflict.status).json({ success: false, message: conflict.message });
+      }
+    }
     next(error);
   }
 };
