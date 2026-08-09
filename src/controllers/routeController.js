@@ -1,4 +1,5 @@
 const Route = require('../models/Route');
+const ManagerAuditLog = require('../models/ManagerAuditLog');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -8,6 +9,21 @@ const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const isRouteOwner = (user, route) =>
   user.role === 'super-admin' ||
   (user.role === 'admin' && !!route.managerId && route.managerId.toString() === user._id.toString());
+
+// A route with no manager owner (super-admin created) has no manager audit
+// trail to attach to — only log when an owning manager exists.
+const writeRouteAuditLog = async ({ user, route, action, metadata }) => {
+  if (!route.managerId) return;
+  await ManagerAuditLog.create({
+    managerId: route.managerId,
+    actorId: user._id,
+    actorRole: user.role,
+    action,
+    entityType: 'ROUTE',
+    entityId: route.routeId,
+    metadata
+  });
+};
 
 // @desc    Create a new route (admin only)
 // @route   POST /api/routes
@@ -156,6 +172,13 @@ exports.updateRoute = async (req, res, next) => {
       { new: true, runValidators: true }
     );
 
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_UPDATED',
+      metadata: { fields: Object.keys(updateData) }
+    });
+
     res.status(200).json({
       success: true,
       message: 'Route updated successfully',
@@ -172,6 +195,14 @@ exports.deleteRoute = async (req, res, next) => {
   try {
     const { routeId } = req.params;
 
+    const existing = await Route.findOne({ routeId, isDeleted: false });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, existing)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
     const route = await Route.findOneAndUpdate(
       { routeId, isDeleted: false },
       { isDeleted: true, isActive: false },
@@ -181,6 +212,13 @@ exports.deleteRoute = async (req, res, next) => {
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
+
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_DELETED',
+      metadata: null
+    });
 
     res.status(200).json({
       success: true,
@@ -248,6 +286,13 @@ exports.toggleRouteStatus = async (req, res, next) => {
 
     route.isActive = !route.isActive;
     await route.save();
+
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_STATUS_TOGGLED',
+      metadata: { isActive: route.isActive }
+    });
 
     res.status(200).json({
       success: true,
