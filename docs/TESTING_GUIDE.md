@@ -2,6 +2,11 @@
 
 This guide maps backend behaviors to tests and indicates when to update tests.
 
+## Error Handling
+| Item | Test type | Test file | Cases covered | Update when |
+|---|---|---|---|---|
+| middleware/errorHandler | unit (no DB) | tests/unit/errorHandler.test.js | a Mongoose `CastError` returns a clean 400 without echoing the raw invalid value; an unhandled (statusCode 500) error's message is masked to a generic string when `NODE_ENV=production`, but shown as-is outside production; a deliberate `ApiError` (statusCode < 500) always shows its own message, even in production | issue #65 — the production message-masking rule, or the CastError branch, changes |
+
 ## Auth
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
