@@ -20,7 +20,7 @@ const {
   validateVehicleId
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
-const { protect, requireDriver, optionalAuth } = require('../middleware/auth');
+const { protect, requireDriver, requireRoles, optionalAuth } = require('../middleware/auth');
 const { getRoutePath } = require('../controllers/routeGeometryController');
 const { getWalkPath } = require('../controllers/walkController');
 
@@ -57,8 +57,18 @@ router.get('/route/:routeId', optionalAuth, getVehiclesByRoute);
 // GET /api/vehicle/:vehicleId - Get single vehicle by ID
 router.get('/:vehicleId', validateVehicleId, handleValidationErrors, getVehicleById);
 
-// PUT /api/vehicle/:vehicleId - Update vehicle
-router.put('/:vehicleId', protect, validateUpdateVehicle, handleValidationErrors, updateVehicle);
+// PUT /api/vehicle/:vehicleId - Update vehicle. Fine-grained ownership (own vehicle
+// vs. assigned fleet vs. any) still lives in the controller; this middleware is the
+// defense-in-depth backstop that keeps a rider (or any future role) out regardless
+// of how that controller logic evolves.
+router.put(
+  '/:vehicleId',
+  protect,
+  requireRoles('driver', 'admin', 'super-admin'),
+  validateUpdateVehicle,
+  handleValidationErrors,
+  updateVehicle
+);
 
 // PATCH /api/vehicle/:vehicleId/maintenance - Update maintenance status
 router.patch('/:vehicleId/maintenance', protect, updateMaintenanceStatus);
