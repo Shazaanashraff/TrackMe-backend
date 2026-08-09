@@ -34,6 +34,13 @@ const toMillis = (expiresIn) => {
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+// Echoing an OTP in the response body is a dev/test convenience with no email
+// provider — it must never fire from a bare misconfiguration (NODE_ENV unset in a
+// staging/prod-like deploy), so it needs an explicit opt-in on top of the
+// non-production check, not the absence of a production flag alone.
+const shouldEchoDevOtp = () =>
+  process.env.ENABLE_DEV_OTP_ECHO === 'true' && process.env.NODE_ENV !== 'production';
+
 // Password reset enables full account takeover if intercepted, so its OTP window
 // is shorter than email verification's — a defense-in-depth control on top of the
 // attempt lockout (see verifyPasswordResetOtp).
@@ -261,7 +268,7 @@ exports.register = async (req, res, next) => {
       user: userPayload(user, 'user')
     };
 
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
+    if (!emailSent && shouldEchoDevOtp()) {
       response.developmentOtp = otp;
     }
 
@@ -621,7 +628,7 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       });
     }
 
-    if (process.env.NODE_ENV !== 'production') {
+    if (shouldEchoDevOtp()) {
       // Dev/test fallback — no email provider configured, but the flow must
       // still be completable, so hand back the OTP directly.
       return res.status(200).json({
@@ -1022,7 +1029,7 @@ exports.resendVerificationOtp = async (req, res, next) => {
     } catch (_) {}
 
     const response = { success: true, message: 'If unverified, a new code has been sent.' };
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
+    if (!emailSent && shouldEchoDevOtp()) {
       response.developmentOtp = otp;
     }
 

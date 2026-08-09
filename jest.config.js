@@ -7,4 +7,5 @@ module.exports = {
   // Integration tests share a single MongoDB; run serially to avoid cross-test races.
   maxWorkers: 1,
   forceExit: true,
+  setupFiles: ['<rootDir>/tests/jest.setup.js'],
 };
