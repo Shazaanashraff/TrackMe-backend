@@ -1,4 +1,5 @@
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
 const app = require('../../src/server');
 const Driver = require('../../src/models/Driver');
 const Manager = require('../../src/models/Manager');
@@ -80,6 +81,34 @@ describe('GET /api/auth/me', () => {
 
   it('401s without a token', async () => {
     const res = await request(app).get('/api/auth/me');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a token signed with a different algorithm than the pinned allowlist', async () => {
+    const forged = jwt.sign(
+      { id: driver._id, role: 'driver' },
+      process.env.JWT_SECRET,
+      { algorithm: 'HS384' }
+    );
+
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${forged}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an unsigned (alg: none) token', async () => {
+    const forged = jwt.sign(
+      { id: driver._id, role: 'driver' },
+      null,
+      { algorithm: 'none' }
+    );
+
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${forged}`);
+
     expect(res.status).toBe(401);
   });
 });

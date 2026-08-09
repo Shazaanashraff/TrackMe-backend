@@ -498,7 +498,7 @@ exports.googleSignIn = async (req, res, next) => {
 exports.refreshAccessToken = async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
-    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
     if (decoded.tokenType !== 'refresh') {
       return res.status(401).json({
