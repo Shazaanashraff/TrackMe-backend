@@ -2,16 +2,7 @@
 const BoardingEvent = require('../models/BoardingEvent');
 const Route = require('../models/Route');
 const User = require('../models/User');
-
-const DEFAULT_RANGE_DAYS = 30;
-
-function resolveRange(query) {
-  const to = query?.to ? new Date(query.to) : new Date();
-  const from = query?.from
-    ? new Date(query.from)
-    : new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
-  return { from, to };
-}
+const { resolveRange } = require('../utils/dateRange');
 
 // @desc    Per-student attendance rollup + ranking across the manager's own routes
 // @route   GET /api/manager/attendance?from&to[&routeId]

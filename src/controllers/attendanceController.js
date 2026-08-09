@@ -3,16 +3,7 @@
 const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
 const Vehicle = require('../models/Vehicle');
-
-const DEFAULT_RANGE_DAYS = 30;
-
-function resolveRange(query) {
-  const to = query?.to ? new Date(query.to) : new Date();
-  const from = query?.from
-    ? new Date(query.from)
-    : new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
-  return { from, to };
-}
+const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
   const summary = { totalBoard: 0, totalAlight: 0, byRoute: {} };

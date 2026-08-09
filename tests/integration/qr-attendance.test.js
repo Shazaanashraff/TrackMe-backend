@@ -549,6 +549,14 @@ describe('GET /api/attendance/student/:studentId', () => {
       .set('Authorization', `Bearer ${otherDriverToken}`);
     expect(res.status).toBe(403);
   });
+
+  it('400s an invalid "from" date instead of silently returning an empty result (issue #55)', async () => {
+    const res = await request(app)
+      .get(`/api/attendance/student/${riderId}?from=notadate`)
+      .set('Authorization', `Bearer ${riderToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
 });
 
 describe('GET /api/manager/attendance', () => {
@@ -577,6 +585,14 @@ describe('GET /api/manager/attendance', () => {
       .set('Authorization', `Bearer ${otherManagerToken}`);
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual([]);
+  });
+
+  it('400s an invalid "to" date instead of silently returning an empty rollup (issue #55)', async () => {
+    const res = await request(app)
+      .get('/api/manager/attendance?to=not-a-date')
+      .set('Authorization', `Bearer ${managerToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });
 
