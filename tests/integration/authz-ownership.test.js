@@ -265,6 +265,17 @@ describe('Bus (vehicle) edit ownership', () => {
     expect(stillOwned.vehicleName).toBe('Owned Bus');
   });
 
+  it('refuses a rider (role: user) at the route middleware layer, not just controller logic (issue #37)', async () => {
+    const res = await request(app).put(`/api/vehicle/${vehicleId}`)
+      .set('Authorization', `Bearer ${riderAToken}`)
+      .send({ vehicleName: 'Rider Should Never See This' });
+
+    expect(res.status).toBe(403);
+
+    const stillOwned = await Vehicle.findOne({ vehicleId });
+    expect(stillOwned.vehicleName).toBe('Owned Bus');
+  });
+
   it('lets the owning driver edit their own bus', async () => {
     const res = await request(app).put(`/api/vehicle/${vehicleId}`)
       .set('Authorization', `Bearer ${driverAToken}`)
