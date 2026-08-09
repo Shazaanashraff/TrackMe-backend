@@ -26,7 +26,7 @@ const setupSocket = (io) => {
 
     try {
       debugLog('🔐 Verifying token with JWT_SECRET length:', process.env.JWT_SECRET?.length || 0);
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       debugLog('✅ Token verified. User ID:', decoded.id);
       socket.userId = decoded.id;
       socket.userRole = decoded.role;

@@ -14,7 +14,7 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const account = await findAccountById(decoded.id, decoded.role);
 
     if (!account) {
@@ -45,7 +45,7 @@ const optionalAuth = async (req, res, next) => {
     }
     if (!token) return next();
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const account = await findAccountById(decoded.id, decoded.role);
     if (account && account.doc.isActive !== false) {
       req.user = account.doc;

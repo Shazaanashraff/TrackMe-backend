@@ -39,7 +39,7 @@ async function verifyQr(token) {
   const secret = requireSecret();
   let decoded;
   try {
-    decoded = jwt.verify(token, secret);
+    decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
       return { valid: false, reason: 'EXPIRED' };
