@@ -8,6 +8,7 @@ const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const Booking = require('../../src/models/Booking');
 const BoardingEvent = require('../../src/models/BoardingEvent');
+const ManagerAuditLog = require('../../src/models/ManagerAuditLog');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 // Ownership/authorization boundaries with no regression coverage before this
@@ -89,13 +90,16 @@ describe('Route edit ownership', () => {
     ownRouteId = res.body.data.routeId;
   });
 
-  it('lets the owning manager edit their own route', async () => {
+  it('lets the owning manager edit their own route and writes an audit log entry', async () => {
     const res = await request(app).put(`/api/routes/${ownRouteId}`)
       .set('Authorization', `Bearer ${managerAToken}`)
       .send({ routeName: 'Renamed By Owner' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.routeName).toBe('Renamed By Owner');
+
+    const log = await ManagerAuditLog.findOne({ entityType: 'ROUTE', entityId: ownRouteId, action: 'ROUTE_UPDATED' });
+    expect(log).not.toBeNull();
   });
 
   it('refuses a different manager editing it (403)', async () => {
@@ -164,7 +168,7 @@ describe('Route toggle ownership', () => {
     expect(after.isActive).toBe(before.isActive);
   });
 
-  it('lets the owning manager toggle their own route', async () => {
+  it('lets the owning manager toggle their own route and writes an audit log entry', async () => {
     const before = await Route.findOne({ routeId: ownRouteId });
 
     const res = await request(app).patch(`/api/routes/${ownRouteId}/toggle`)
@@ -172,6 +176,58 @@ describe('Route toggle ownership', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.isActive).toBe(!before.isActive);
+
+    const log = await ManagerAuditLog.findOne({ entityType: 'ROUTE', entityId: ownRouteId, action: 'ROUTE_STATUS_TOGGLED' });
+    expect(log).not.toBeNull();
+  });
+});
+
+describe('Route delete ownership', () => {
+  let ownRouteId, otherRouteId;
+
+  beforeAll(async () => {
+    const res = await request(app).post('/api/routes')
+      .set('Authorization', `Bearer ${managerAToken}`)
+      .send({
+        routeId: `AUTHZ-DELETE-${Date.now()}`, routeName: 'Delete Route',
+        source: 'Colombo', destination: 'Jaffna', distance: 100, fare: 200, estimatedTime: 120
+      });
+    ownRouteId = res.body.data.routeId;
+
+    const managerB = await Manager.create({
+      name: 'Delete B', email: `mgrB-delete-${Date.now()}@t.com`, password: 'P@ssw0rd!',
+      isEmailVerified: true, isActive: true
+    });
+    const managerBToken = (await request(app).post('/api/auth/login')
+      .send({ email: managerB.email, password: 'P@ssw0rd!' })).body.accessToken;
+    const other = await request(app).post('/api/routes')
+      .set('Authorization', `Bearer ${managerBToken}`)
+      .send({
+        routeId: `AUTHZ-DELETE-OTHER-${Date.now()}`, routeName: 'Other Delete Route',
+        source: 'Colombo', destination: 'Trincomalee', distance: 100, fare: 200, estimatedTime: 120
+      });
+    otherRouteId = other.body.data.routeId;
+  });
+
+  it('refuses a different manager deleting a route they do not own (403)', async () => {
+    const res = await request(app).delete(`/api/routes/${otherRouteId}`)
+      .set('Authorization', `Bearer ${managerAToken}`);
+
+    expect(res.status).toBe(403);
+    const stillThere = await Route.findOne({ routeId: otherRouteId });
+    expect(stillThere.isDeleted).toBe(false);
+  });
+
+  it('lets the owning manager delete their own route and writes an audit log entry', async () => {
+    const res = await request(app).delete(`/api/routes/${ownRouteId}`)
+      .set('Authorization', `Bearer ${managerAToken}`);
+
+    expect(res.status).toBe(200);
+    const deleted = await Route.findOne({ routeId: ownRouteId });
+    expect(deleted.isDeleted).toBe(true);
+
+    const log = await ManagerAuditLog.findOne({ entityType: 'ROUTE', entityId: ownRouteId, action: 'ROUTE_DELETED' });
+    expect(log).not.toBeNull();
   });
 });
 
