@@ -1,4 +1,5 @@
 const DriverTrip = require('../models/DriverTrip');
+const Vehicle = require('../models/Vehicle');
 
 /**
  * GET /api/driver/trips
@@ -82,6 +83,28 @@ const logTrip = async (req, res) => {
       totalPassengers,
       totalDistance
     } = req.body;
+
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    // Only the vehicle's assigned driver (logging their own trip), the
+    // vehicle's managing manager, or a super-admin may log a trip for it —
+    // otherwise any authenticated account could fabricate a trip record
+    // (and downstream earnings/stats derived from it) for an arbitrary driver.
+    const isOwningDriver =
+      req.user.role === 'driver' &&
+      vehicle.driverId && vehicle.driverId.toString() === req.user._id.toString() &&
+      driverId === req.user._id.toString();
+    const isOwningManager =
+      req.user.role === 'admin' &&
+      vehicle.managerId && vehicle.managerId.toString() === req.user._id.toString();
+    const isSuperAdmin = req.user.role === 'super-admin';
+
+    if (!isOwningDriver && !isOwningManager && !isSuperAdmin) {
+      return res.status(403).json({ message: 'Not authorized to log a trip for this vehicle' });
+    }
 
     const tripId = `TRIP-${new Date().getTime()}-${vehicleId.slice(-4)}`;
 

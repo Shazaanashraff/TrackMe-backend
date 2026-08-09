@@ -62,7 +62,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 ## Driver Earnings
 | Item | Test type | Test file | Cases covered | Update when |
 |---|---|---|---|---|
-| /api/driver/trips/* | integration | tests/integration/driver/trips.test.js | history pagination, trip details, log trip | trip-log logic changes |
+| POST /api/driver/trips/log ownership | integration | tests/integration/driver-trip.test.js | a rider, an unassigned driver, a driver logging under another driver's id, and an unrelated manager are all refused 403; the vehicle's assigned driver, its managing manager, and a super-admin can each log a trip | trip-log ownership rule changes |
 
 ## Manager and Super Admin
 | Item | Test type | Test file | Cases covered | Update when |
