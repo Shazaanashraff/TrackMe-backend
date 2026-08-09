@@ -118,6 +118,27 @@ describe('Password reset OTP', () => {
     }
   });
 
+  it('does not echo the OTP outside production when ENABLE_DEV_OTP_ECHO is unset — no leak on a misconfigured NODE_ENV (issue #66)', async () => {
+    const email = await createUser();
+    const originalFlag = process.env.ENABLE_DEV_OTP_ECHO;
+    delete process.env.ENABLE_DEV_OTP_ECHO;
+
+    try {
+      // NODE_ENV is 'test' here (not production), so the old gate would have
+      // echoed the OTP. The explicit opt-in flag is what must now block it —
+      // absence of a production flag is no longer enough on its own.
+      const res = await request(app)
+        .post('/api/auth/forgot-password/request-otp')
+        .send({ email });
+
+      expect(res.status).toBe(502);
+      expect(res.body.success).toBe(false);
+      expect(res.body.developmentOtp).toBeUndefined();
+    } finally {
+      process.env.ENABLE_DEV_OTP_ECHO = originalFlag;
+    }
+  });
+
   it('still reports success=true for an unregistered email even when NODE_ENV is production (no enumeration signal)', async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
