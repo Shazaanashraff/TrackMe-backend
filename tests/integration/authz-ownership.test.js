@@ -16,8 +16,8 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 // to have no ownership check at all in the controller — fixed alongside these
 // tests rather than filed separately, per the issue's own instructions.
 
-let managerAToken, managerBId;
-let driverAToken, driverBToken, driverBId;
+let managerAToken, managerAId, managerBToken, managerBId;
+let driverAToken, driverAId, driverBToken, driverBId;
 let superAdminToken;
 let riderAToken, riderBToken, riderAId;
 
@@ -30,6 +30,7 @@ beforeAll(async () => {
     name: 'Owner Manager', email: `mgrA-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
     isEmailVerified: true, isActive: true
   });
+  managerAId = managerA._id;
   const managerB = await Manager.create({
     name: 'Other Manager', email: `mgrB-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
     isEmailVerified: true, isActive: true
@@ -40,6 +41,7 @@ beforeAll(async () => {
     name: 'Driver A', email: `drvA-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
     isEmailVerified: true, isActive: true
   });
+  driverAId = driverA._id;
   const driverB = await Driver.create({
     name: 'Driver B', email: `drvB-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
     isEmailVerified: true, isActive: true
@@ -65,6 +67,7 @@ beforeAll(async () => {
     .then((res) => res.body.accessToken);
 
   managerAToken = await login(managerA.email);
+  managerBToken = await login(managerB.email);
   driverAToken = await login(driverA.email);
   driverBToken = await login(driverB.email);
   superAdminToken = await login(superAdmin.email);
@@ -269,6 +272,50 @@ describe('Bus (vehicle) edit ownership', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.vehicleName).toBe('Renamed By Owner');
+  });
+
+  it('strips managerId/driverId/isDeleted from the owning driver\'s own update', async () => {
+    const res = await request(app).put(`/api/vehicle/${vehicleId}`)
+      .set('Authorization', `Bearer ${driverAToken}`)
+      .send({ vehicleName: 'Still Mine', managerId: managerBId, driverId: driverBId, isDeleted: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.vehicleName).toBe('Still Mine');
+
+    const stored = await Vehicle.findOne({ vehicleId });
+    expect(stored.managerId).toBeNull();
+    expect(stored.driverId.toString()).toBe(driverAId.toString());
+    expect(stored.isDeleted).toBe(false);
+  });
+
+  it('refuses an unrelated manager claiming an orphaned (managerId: null) bus', async () => {
+    const res = await request(app).put(`/api/vehicle/${vehicleId}`)
+      .set('Authorization', `Bearer ${managerBToken}`)
+      .send({ managerId: managerBId });
+
+    expect(res.status).toBe(403);
+    const stored = await Vehicle.findOne({ vehicleId });
+    expect(stored.managerId).toBeNull();
+  });
+
+  it('strips managerId from the owning manager\'s own update and writes an audit log entry', async () => {
+    const managerOwned = await Vehicle.create({
+      vehicleId: `AUTHZ-VEH-MGR-${Date.now()}`, vehicleName: 'Manager Owned Bus',
+      registrationNumber: `REGVM-${Date.now()}`, numberPlate: `CAB-${4000 + Math.floor(Math.random() * 999)}`,
+      routeId, driverId: driverBId, managerId: managerAId
+    });
+
+    const res = await request(app).put(`/api/vehicle/${managerOwned.vehicleId}`)
+      .set('Authorization', `Bearer ${managerAToken}`)
+      .send({ vehicleName: 'Still Owned By A', managerId: managerBId });
+
+    expect(res.status).toBe(200);
+    const stored = await Vehicle.findOne({ vehicleId: managerOwned.vehicleId });
+    expect(stored.vehicleName).toBe('Still Owned By A');
+    expect(stored.managerId.toString()).toBe(managerAId.toString());
+
+    const log = await ManagerAuditLog.findOne({ entityType: 'VEHICLE', entityId: managerOwned.vehicleId, action: 'VEHICLE_EDITED' });
+    expect(log).not.toBeNull();
   });
 });
 

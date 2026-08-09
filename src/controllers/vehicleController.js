@@ -1,11 +1,18 @@
 const mongoose = require('mongoose');
 const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
+const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 const { formatPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
 const { plateConflict } = require('../utils/vehiclePlateGuard');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
+// These fields transfer/erase fleet ownership rather than edit the vehicle's own
+// details. Only a super-admin may set them through the shared updateVehicle path —
+// a driver or manager (even the vehicle's own owner) reassigning managerId/driverId,
+// or clearing isDeleted, would let them hijack or orphan fleet ownership.
+const OWNERSHIP_FIELDS = ['managerId', 'driverId', 'isDeleted'];
 
 const parseBooleanQuery = (value) => {
   if (value === 'true') return true;
@@ -353,10 +360,14 @@ exports.updateVehicle = async (req, res, next) => {
       !(req.user.role === 'admin' && vehicle.managerId && vehicle.managerId.toString() === req.user._id.toString()) &&
       req.user.role !== 'super-admin'
     ) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized to update this vehicle' 
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this vehicle'
       });
+    }
+
+    if (req.user.role !== 'super-admin') {
+      OWNERSHIP_FIELDS.forEach((field) => delete updateData[field]);
     }
 
     if (updateData.serviceType) {
@@ -394,6 +405,18 @@ exports.updateVehicle = async (req, res, next) => {
 
     Object.assign(vehicle, updateData);
     await vehicle.save();
+
+    if ((req.user.role === 'admin' || req.user.role === 'super-admin') && vehicle.managerId) {
+      await ManagerAuditLog.create({
+        managerId: vehicle.managerId,
+        actorId: req.user._id,
+        actorRole: req.user.role,
+        action: 'VEHICLE_EDITED',
+        entityType: 'VEHICLE',
+        entityId: vehicle.vehicleId,
+        metadata: { fields: Object.keys(updateData) }
+      });
+    }
 
     res.status(200).json({
       success: true,
