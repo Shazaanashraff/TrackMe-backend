@@ -87,7 +87,14 @@ const requireUser = (req, res, next) => {
   }
 };
 
-const requireAdmin = requireRoles('admin', 'super-admin');
+// NOTE: the 'admin' role string identifies Manager profiles (see accountRegistry) — it is not
+// the super-admin role. Reach for requireSuperAdmin, never requireManagerOrAbove, when a route
+// must be restricted to super-admins only.
+// Manager-or-super-admin gate. Previously named `requireAdmin`, which read as "admin role only"
+// but actually granted both 'admin' (manager) and 'super-admin' — a footgun for anyone adding a
+// genuinely super-admin-only route and reaching for the strictest-sounding name.
+const requireManagerOrAbove = requireRoles('admin', 'super-admin');
+// Manager-only gate ('admin' role string == Manager profile).
 const requireManager = requireRoles('admin');
 const requireSuperAdmin = requireRoles('super-admin');
 
@@ -97,7 +104,7 @@ module.exports = {
   requireRoles,
   requireDriver,
   requireUser,
-  requireAdmin,
+  requireManagerOrAbove,
   requireManager,
   requireSuperAdmin
 };
