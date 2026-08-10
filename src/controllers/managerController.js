@@ -1,24 +1,26 @@
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Booking = require('../models/Booking');
-const LiveLocation = require('../models/LiveLocation');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
-const ManagerBusRequest = require('../models/ManagerBusRequest');
+const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const Route = require('../models/Route');
-const RouteChangeRequest = require('../models/RouteChangeRequest');
+const Organization = require('../models/Organization');
 const Driver = require('../models/Driver');
-const Identity = require('../models/Identity');
-const { findIdentityByEmail, findProfilesForIdentity } = require('../utils/identityRegistry');
-const { adminSetOrMailReset } = require('../utils/passwordReset');
+const { isEmailRegistered } = require('../utils/accountRegistry');
+const { formatPlate, isValidPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
+const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
+const { generateUniqueDriverCode } = require('../utils/driverCode');
+const { ensureDriverEnrollmentKey } = require('../utils/enrollmentKey');
+const { plateConflict } = require('../utils/vehiclePlateGuard');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
-const BUS_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const VEHICLE_TYPES = ['AC', 'NON-AC', 'DELUXE', 'SLEEPER'];
 
 const MANAGER_EDITABLE_FIELDS = [
-  'busName',
+  'vehicleName',
   'numberPlate',
   'registrationNumber',
-  'seatCapacity',
-  'busType',
+  'vehicleType',
   'serviceType',
   'bookingEnabled',
   'routeId',
@@ -38,9 +40,9 @@ const writeAuditLog = async ({ managerId, actorId, actorRole, action, entityType
   });
 };
 
-const getManagedBusByBusId = async (managerId, busId) => {
-  return Bus.findOne({
-    busId,
+const getManagedVehicleByVehicleId = async (managerId, vehicleId) => {
+  return Vehicle.findOne({
+    vehicleId,
     managerId,
     isDeleted: false
   });
@@ -50,33 +52,33 @@ exports.getManagerDashboard = async (req, res, next) => {
   try {
     const managerId = req.user._id;
 
-    const [fleetStats, bookingStats, pendingRequests] = await Promise.all([
-      Bus.aggregate([
+    const [fleetStats, bookingStats, pendingRequests, driverIds] = await Promise.all([
+      Vehicle.aggregate([
         { $match: { managerId, isDeleted: false } },
         {
           $group: {
             _id: null,
-            totalBuses: { $sum: 1 },
-            activeBuses: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
-            inactiveBuses: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
-            bookingEnabledBuses: { $sum: { $cond: [{ $eq: ['$bookingEnabled', true] }, 1, 0] } }
+            totalVehicles: { $sum: 1 },
+            activeVehicles: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+            inactiveVehicles: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
+            bookingEnabledVehicles: { $sum: { $cond: [{ $eq: ['$bookingEnabled', true] }, 1, 0] } }
           }
         }
       ]),
       Booking.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': managerId
+            'vehicleInfo.managerId': managerId
           }
         },
         {
@@ -93,17 +95,30 @@ exports.getManagerDashboard = async (req, res, next) => {
           }
         }
       ]),
-      ManagerBusRequest.countDocuments({ managerId, status: 'PENDING' })
+      ManagerVehicleRequest.countDocuments({ managerId, status: 'PENDING' }),
+      // Distinct drivers assigned across this manager's fleet — the headline metric
+      // for private (school/office) managers who run many vehicles + drivers.
+      Vehicle.distinct('driverId', { managerId, isDeleted: false, driverId: { $ne: null } })
     ]);
+
+    const serviceType = req.user.serviceType || 'PUBLIC';
+    let organizationName = null;
+    if (serviceType !== 'PUBLIC' && req.user.organization) {
+      const org = await Organization.findById(req.user.organization).select('name').lean();
+      organizationName = org?.name || null;
+    }
 
     return res.status(200).json({
       success: true,
       data: {
+        serviceType,
+        organizationName,
+        driverCount: driverIds.length,
         fleet: fleetStats[0] || {
-          totalBuses: 0,
-          activeBuses: 0,
-          inactiveBuses: 0,
-          bookingEnabledBuses: 0
+          totalVehicles: 0,
+          activeVehicles: 0,
+          inactiveVehicles: 0,
+          bookingEnabledVehicles: 0
         },
         bookings: bookingStats[0] || {
           totalBookings: 0,
@@ -119,32 +134,33 @@ exports.getManagerDashboard = async (req, res, next) => {
   }
 };
 
-exports.getManagerBuses = async (req, res, next) => {
+exports.getManagerVehicles = async (req, res, next) => {
   try {
-    const buses = await Bus.find({ managerId: req.user._id, isDeleted: false })
-      .populate('driverId', 'name email')
+    const vehicles = await Vehicle.find({ managerId: req.user._id, isDeleted: false })
+      .populate('driverId', 'name email driverCode')
+      .populate('organization', 'name serviceType')
       .sort({ createdAt: -1 })
       .lean();
 
     return res.status(200).json({
       success: true,
-      count: buses.length,
-      data: buses
+      count: vehicles.length,
+      data: vehicles
     });
   } catch (error) {
     next(error);
   }
 };
 
-exports.getManagerBusById = async (req, res, next) => {
+exports.getManagerVehicleById = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
 
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const populated = await Bus.findById(bus._id).populate('driverId', 'name email').lean();
+    const populated = await Vehicle.findById(vehicle._id).populate('driverId', 'name email').lean();
 
     return res.status(200).json({
       success: true,
@@ -155,12 +171,17 @@ exports.getManagerBusById = async (req, res, next) => {
   }
 };
 
-exports.updateManagerBus = async (req, res, next) => {
+exports.updateManagerVehicle = async (req, res, next) => {
+  // Declared outside the try so the catch block can use them to rebuild the
+  // same friendly conflict message the pre-check path returns, when a
+  // concurrent request wins the race between that check and this save().
+  let vehicle;
+  let updateData;
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
+    vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
 
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
     const incomingKeys = Object.keys(req.body || {});
@@ -172,11 +193,15 @@ exports.updateManagerBus = async (req, res, next) => {
       });
     }
 
-    const updateData = {};
+    updateData = {};
     for (const key of MANAGER_EDITABLE_FIELDS) {
       if (req.body[key] !== undefined) {
         updateData[key] = req.body[key];
       }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ success: false, message: 'No editable fields provided' });
     }
 
     if (updateData.serviceType) {
@@ -186,22 +211,27 @@ exports.updateManagerBus = async (req, res, next) => {
       }
     }
 
-    if (updateData.busType) {
-      updateData.busType = String(updateData.busType).toUpperCase();
-      if (!BUS_TYPES.includes(updateData.busType)) {
-        return res.status(400).json({ success: false, message: 'Invalid bus type' });
+    if (updateData.vehicleType) {
+      updateData.vehicleType = String(updateData.vehicleType).toUpperCase();
+      if (!VEHICLE_TYPES.includes(updateData.vehicleType)) {
+        return res.status(400).json({ success: false, message: 'Invalid vehicle type' });
       }
     }
 
     if (updateData.numberPlate) {
-      updateData.numberPlate = String(updateData.numberPlate).trim().toUpperCase();
-      const duplicate = await Bus.findOne({
-        numberPlate: updateData.numberPlate,
-        _id: { $ne: bus._id },
-        isDeleted: false
+      const formatted = formatPlate(updateData.numberPlate);
+      if (!formatted) {
+        return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
+      }
+      // Stored canonical, so the same plate typed any which way is one record.
+      updateData.numberPlate = formatted;
+
+      const conflict = await plateConflict(formatted, {
+        managerId: req.user._id,
+        excludeId: vehicle._id
       });
-      if (duplicate) {
-        return res.status(409).json({ success: false, message: 'Number plate already exists' });
+      if (conflict) {
+        return res.status(conflict.status).json({ success: false, message: conflict.message });
       }
     }
 
@@ -210,71 +240,105 @@ exports.updateManagerBus = async (req, res, next) => {
       // PRIVATE custom routes — never another manager's private route.
       const route = await Route.findOne({
         routeId: updateData.routeId,
-        isDeleted: false,
-        $or: [
-          { visibility: 'PUBLIC' },
-          { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
-        ]
+        isDeleted: false
       });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
       }
 
-      const effectiveServiceType = updateData.serviceType || bus.serviceType;
+      const effectiveServiceType = updateData.serviceType || vehicle.serviceType;
       if (route.serviceType && route.serviceType !== effectiveServiceType) {
         return res.status(400).json({
           success: false,
-          message: 'Bus service type must match route service type'
+          message: 'Vehicle service type must match route service type'
         });
       }
     }
 
     const before = {
-      busName: bus.busName,
-      numberPlate: bus.numberPlate,
-      registrationNumber: bus.registrationNumber,
-      seatCapacity: bus.seatCapacity,
-      busType: bus.busType,
-      serviceType: bus.serviceType,
-      bookingEnabled: bus.bookingEnabled,
-      routeId: bus.routeId,
-      isActive: bus.isActive,
-      maintenanceStatus: bus.maintenanceStatus
+      vehicleName: vehicle.vehicleName,
+      numberPlate: vehicle.numberPlate,
+      registrationNumber: vehicle.registrationNumber,
+      vehicleType: vehicle.vehicleType,
+      serviceType: vehicle.serviceType,
+      bookingEnabled: vehicle.bookingEnabled,
+      routeId: vehicle.routeId,
+      isActive: vehicle.isActive,
+      maintenanceStatus: vehicle.maintenanceStatus
     };
 
-    Object.assign(bus, updateData);
-    await bus.save();
+    Object.assign(vehicle, updateData);
+    await vehicle.save();
 
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_EDITED',
-      entityType: 'BUS',
-      entityId: bus.busId,
+      action: 'VEHICLE_EDITED',
+      entityType: 'VEHICLE',
+      entityId: vehicle.vehicleId,
       metadata: { before, after: updateData }
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Bus updated successfully',
-      data: bus
+      message: 'Vehicle updated successfully',
+      data: vehicle
     });
   } catch (error) {
+    // The findOne-then-save above isn't atomic — a concurrent request can pass
+    // plateConflict's check before either save() lands, so the unique index is
+    // the real guard and can still throw here. Turn that into the same friendly
+    // 409 the pre-check path returns, instead of a raw duplicate-key 500/400.
+    if (error.code === 11000 && updateData?.numberPlate) {
+      const conflict = await plateConflict(updateData.numberPlate, {
+        managerId: req.user._id,
+        excludeId: vehicle?._id
+      });
+      if (conflict) {
+        return res.status(conflict.status).json({ success: false, message: conflict.message });
+      }
+    }
     next(error);
   }
 };
 
-exports.createBusAccountRequest = async (req, res, next) => {
+// A vehicle carries the same organization as the drivers who drive it. The id
+// is enough on its own; the category is only used to catch a mismatch, since
+// the form offers both.
+async function resolveVehicleOrganization(body) {
+  const { organizationId, organizationCategory } = body || {};
+  if (!organizationId) return { organizationId: null, serviceType: null };
+
+  const organization = await Organization.findOne({
+    _id: organizationId,
+    isDeleted: false
+  }).lean();
+  if (!organization) {
+    return { error: { status: 400, message: 'Organization not found' } };
+  }
+
+  if (organizationCategory
+    && String(organizationCategory).toUpperCase() !== organization.serviceType) {
+    return {
+      error: { status: 400, message: 'Organization does not match the selected category' }
+    };
+  }
+
+  return { organizationId: organization._id, serviceType: organization.serviceType };
+}
+
+// A manager creates vehicles in their own fleet outright. This used to raise a
+// request for a super admin to approve, which left a new manager unable to add
+// anything at all until somebody else acted.
+exports.createManagerVehicle = async (req, res, next) => {
   try {
     const {
-      busId,
-      busName,
+      vehicleId,
+      vehicleName,
       numberPlate,
       routeId,
-      routeMode,
-      seatCapacity,
-      busType,
+      vehicleType,
       serviceType,
       bookingEnabled,
       driverName,
@@ -286,53 +350,84 @@ exports.createBusAccountRequest = async (req, res, next) => {
       reason
     } = req.body;
 
-    // CUSTOM = school/work shuttle whose driver records the route by driving it
-    // (no existing route to pick). The backend provisions a private, unnamed
-    // route for the bus at approval time instead of requiring a routeId here.
-    const normalizedRouteMode = String(routeMode || 'EXISTING').toUpperCase();
-    if (!['EXISTING', 'CUSTOM'].includes(normalizedRouteMode)) {
-      return res.status(400).json({ success: false, message: 'routeMode must be EXISTING or CUSTOM' });
-    }
-    const isCustomRoute = normalizedRouteMode === 'CUSTOM';
-
-    const normalizedBusId = String(busId || '').trim();
-    const normalizedNumberPlate = String(numberPlate || '').trim().toUpperCase();
-    const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedBusId}`).trim();
+    const normalizedVehicleId = String(vehicleId || '').trim();
+    // Canonical, so "PF- 2327" and "pf2327" are the same plate on the way in.
+    const normalizedNumberPlate = formatPlate(numberPlate) || String(numberPlate || '').trim().toUpperCase();
+    const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedVehicleId}`).trim();
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
 
-    if (!normalizedBusId || !normalizedNumberPlate || (!isCustomRoute && !normalizedRouteId) || !driverName || !normalizedEmail || !password) {
+    // A vehicle may be added to the fleet on its own and given a driver later,
+    // so the driver half of this form is optional. Naming a driver still means
+    // giving them a password.
+    const wantsDriver = Boolean(String(driverName || '').trim());
+
+    if (!normalizedVehicleId || !normalizedNumberPlate) {
       return res.status(400).json({
         success: false,
-        message: isCustomRoute
-          ? 'busId, numberPlate, driverName, driverEmail, and password are required'
-          : 'busId, numberPlate, routeId, driverName, driverEmail, and password are required'
+        message: 'vehicleId and numberPlate are required'
       });
     }
 
-    if (String(password).length < 8) {
+    if (wantsDriver && !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'A driver needs a password'
+      });
+    }
+
+    if (normalizedEmail && !EMAIL_REGEX.test(normalizedEmail)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address' });
+    }
+
+    if (password && String(password).length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
-    const existingBus = await Bus.findOne({
-      $or: [{ busId: normalizedBusId }, { registrationNumber: normalizedReg }, { numberPlate: normalizedNumberPlate }],
+    if (!isValidPlate(normalizedNumberPlate)) {
+      return res.status(400).json({ success: false, message: PLATE_FORMAT_MESSAGE });
+    }
+
+    const normalizedDriverPhone = String(driverPhoneNumber || '').trim();
+    if (normalizedDriverPhone && !isValidPhone(normalizedDriverPhone)) {
+      return res.status(400).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+    }
+
+    // The plate is checked on its own so the manager is told which vehicle
+    // holds it, rather than being handed a list of three things it might be.
+    const conflict = await plateConflict(normalizedNumberPlate, { managerId: req.user._id });
+    if (conflict) {
+      return res.status(conflict.status).json({ success: false, message: conflict.message });
+    }
+
+    const existingVehicle = await Vehicle.findOne({
+      $or: [{ vehicleId: normalizedVehicleId }, { registrationNumber: normalizedReg }],
       isDeleted: false
     });
-    if (existingBus) {
+    if (existingVehicle) {
       return res.status(409).json({
         success: false,
-        message: 'Bus ID, number plate, or registration number already exists'
+        message: 'Vehicle ID or registration number already exists'
       });
     }
 
-    // A rider (or manager) email is now perfectly valid here: approving the request
-    // attaches a driver role to that person's existing login rather than creating a
-    // second account. The only email we still refuse is a super-admin's, which must
-    // stay on its own dedicated login.
-    const existingIdentity = await findIdentityByEmail(normalizedEmail);
-    if (existingIdentity) {
-      const roles = (await findProfilesForIdentity(existingIdentity._id)).map((p) => p.role);
-      if (roles.includes('super-admin')) {
+    // An email already on a driver may only be reused when that driver belongs
+    // to this manager. Reusing anybody else's would hand their account over,
+    // since the request carries a new password.
+    let driver = null;
+    let reusedExistingDriver = false;
+    if (wantsDriver && normalizedEmail) {
+      const existingDriverAccount = await Driver.findOne({ email: normalizedEmail });
+      if (existingDriverAccount) {
+        if (String(existingDriverAccount.managerId || '') !== String(req.user._id)) {
+          return res.status(409).json({
+            success: false,
+            message: 'A driver with this email already exists'
+          });
+        }
+        driver = existingDriverAccount;
+        reusedExistingDriver = true;
+      } else if (await isEmailRegistered(normalizedEmail)) {
         return res.status(409).json({
           success: false,
           message: 'That email belongs to a super-admin account and cannot be used for a bus account'
@@ -340,15 +435,23 @@ exports.createBusAccountRequest = async (req, res, next) => {
       }
     }
 
+    // A route can be attached later, so it is only checked when one is given.
     let route = null;
-    if (!isCustomRoute) {
+    if (normalizedRouteId) {
       route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
       }
     }
 
-    const normalizedServiceType = String(serviceType || route?.serviceType || 'PUBLIC').toUpperCase();
+    const org = await resolveVehicleOrganization(req.body);
+    if (org.error) {
+      return res.status(org.error.status).json({ success: false, message: org.error.message });
+    }
+
+    const normalizedServiceType = String(
+      serviceType || org.serviceType || route?.serviceType || 'PUBLIC'
+    ).toUpperCase();
     if (!SERVICE_TYPES.includes(normalizedServiceType)) {
       return res.status(400).json({ success: false, message: 'Invalid service type' });
     }
@@ -356,106 +459,132 @@ exports.createBusAccountRequest = async (req, res, next) => {
     if (route?.serviceType && route.serviceType !== normalizedServiceType) {
       return res.status(400).json({
         success: false,
-        message: 'Bus service type must match route service type'
+        message: 'Vehicle service type must match route service type'
       });
     }
 
-    const pendingForBus = await ManagerBusRequest.findOne({
-      managerId: req.user._id,
-      busId: normalizedBusId,
-      status: 'PENDING',
-      type: 'CREATE_BUS_ACCOUNT'
-    });
+    // A manager owns their own fleet, so the vehicle is created here rather than
+    // queued for a super admin to approve. Its driver, if one was named, comes
+    // with it.
+    if (wantsDriver) {
+      const driverFields = {
+        name: String(driverName).trim(),
+        phoneNumber: normalizedDriverPhone,
+        nicNumber: String(driverNicNumber || '').trim(),
+        licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
+        password,
+        isActive: true,
+        isEmailVerified: true,
+        managerId: req.user._id,
+        organization: org.organizationId
+      };
 
-    if (pendingForBus) {
-      return res.status(409).json({
-        success: false,
-        message: 'A pending create request already exists for this bus ID'
-      });
-    }
-
-    const requestDoc = await ManagerBusRequest.create({
-      type: 'CREATE_BUS_ACCOUNT',
-      managerId: req.user._id,
-      busId: normalizedBusId,
-      reason: String(reason || '').trim(),
-      payload: {
-        routeMode: normalizedRouteMode,
-        bus: {
-          busId: normalizedBusId,
-          busName,
-          numberPlate: normalizedNumberPlate,
-          registrationNumber: normalizedReg,
-          // routeId is left unset for CUSTOM; the super admin approval step
-          // provisions a private route and fills this in before Bus.create.
-          routeId: isCustomRoute ? undefined : normalizedRouteId,
-          seatCapacity,
-          busType: busType || 'AC',
-          serviceType: normalizedServiceType,
-          bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true
-        },
-        driver: {
-          name: String(driverName).trim(),
-          email: normalizedEmail,
-          phoneNumber: String(driverPhoneNumber || '').trim(),
-          nicNumber: String(driverNicNumber || '').trim(),
-          licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
-          password
-        }
+      if (driver) {
+        Object.assign(driver, driverFields);
+        if (!driver.driverCode) driver.driverCode = await generateUniqueDriverCode(Driver);
+        await driver.save();
+      } else {
+        driver = await Driver.create({
+          ...driverFields,
+          // Left off entirely rather than stored blank, so the sparse unique index
+          // does not treat two email-less drivers as duplicates.
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
+          driverCode: await generateUniqueDriverCode(Driver)
+        });
       }
-    });
+    }
+
+    let vehicle;
+    try {
+      vehicle = await Vehicle.create({
+        vehicleId: normalizedVehicleId,
+        // Named after its plate unless the manager gave it a name.
+        vehicleName: String(vehicleName || '').trim() || normalizedNumberPlate,
+        numberPlate: normalizedNumberPlate,
+        registrationNumber: normalizedReg,
+        routeId: normalizedRouteId,
+        vehicleType: vehicleType || 'AC',
+        serviceType: normalizedServiceType,
+        organization: org.organizationId,
+        bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true,
+        managerId: req.user._id,
+        driverId: driver ? driver._id : null,
+        isActive: true,
+        isDeleted: false
+      });
+    } catch (error) {
+      // A driver with no vehicle is a half-provisioned account nobody asked
+      // for, so a brand new one goes back if the vehicle will not save.
+      if (driver && !reusedExistingDriver) await Driver.deleteOne({ _id: driver._id });
+      throw error;
+    }
+
+    const enrollmentKey = driver ? await ensureDriverEnrollmentKey(driver._id) : null;
 
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_CREATE_REQUESTED',
-      entityType: 'BUS_REQUEST',
-      entityId: requestDoc._id.toString(),
+      action: 'VEHICLE_CREATED',
+      entityType: 'VEHICLE',
+      entityId: vehicle.vehicleId,
       metadata: {
-        busId: normalizedBusId,
-        routeId: normalizedRouteId
+        vehicleId: normalizedVehicleId,
+        routeId: normalizedRouteId,
+        driverId: driver ? String(driver._id) : null,
+        reason: String(reason || '').trim()
       }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Bus creation request submitted for super admin approval',
-      data: requestDoc
+      message: driver ? 'Vehicle created' : 'Vehicle created. Add a driver to put it on the road.',
+      data: {
+        vehicle,
+        driver: driver
+          ? {
+            _id: driver._id,
+            name: driver.name,
+            email: driver.email || '',
+            driverCode: driver.driverCode || null
+          }
+          : null
+      },
+      enrollmentKey
     });
   } catch (error) {
     next(error);
   }
 };
 
-exports.requestBusDelete = async (req, res, next) => {
+exports.requestVehicleDelete = async (req, res, next) => {
   try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const existingPendingDelete = await ManagerBusRequest.findOne({
+    const existingPendingDelete = await ManagerVehicleRequest.findOne({
       managerId: req.user._id,
-      busId: bus.busId,
-      type: 'DELETE_BUS',
+      vehicleId: vehicle.vehicleId,
+      type: 'DELETE_VEHICLE',
       status: 'PENDING'
     });
     if (existingPendingDelete) {
-      return res.status(409).json({ success: false, message: 'A pending delete request already exists for this bus' });
+      return res.status(409).json({ success: false, message: 'A pending delete request already exists for this vehicle' });
     }
 
-    const requestDoc = await ManagerBusRequest.create({
-      type: 'DELETE_BUS',
+    const requestDoc = await ManagerVehicleRequest.create({
+      type: 'DELETE_VEHICLE',
       managerId: req.user._id,
-      busId: bus.busId,
+      vehicleId: vehicle.vehicleId,
       reason: String(req.body?.reason || '').trim(),
       payload: {
-        busSnapshot: {
-          busId: bus.busId,
-          busName: bus.busName,
-          registrationNumber: bus.registrationNumber,
-          routeId: bus.routeId
+        vehicleSnapshot: {
+          vehicleId: vehicle.vehicleId,
+          vehicleName: vehicle.vehicleName,
+          registrationNumber: vehicle.registrationNumber,
+          routeId: vehicle.routeId
         }
       }
     });
@@ -464,15 +593,15 @@ exports.requestBusDelete = async (req, res, next) => {
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'BUS_DELETE_REQUESTED',
-      entityType: 'BUS_REQUEST',
+      action: 'VEHICLE_DELETE_REQUESTED',
+      entityType: 'VEHICLE_REQUEST',
       entityId: requestDoc._id.toString(),
-      metadata: { busId: bus.busId }
+      metadata: { vehicleId: vehicle.vehicleId }
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Bus deletion request submitted for super admin approval',
+      message: 'Vehicle deletion request submitted for super admin approval',
       data: requestDoc
     });
   } catch (error) {
@@ -482,7 +611,7 @@ exports.requestBusDelete = async (req, res, next) => {
 
 exports.getMyRequests = async (req, res, next) => {
   try {
-    const requests = await ManagerBusRequest.find({ managerId: req.user._id })
+    const requests = await ManagerVehicleRequest.find({ managerId: req.user._id })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -496,180 +625,59 @@ exports.getMyRequests = async (req, res, next) => {
   }
 };
 
-exports.resetBusAccountPassword = async (req, res, next) => {
+exports.resetVehicleAccountPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
     if (!password || String(password).length < 8) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
 
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
+    const vehicle = await getManagedVehicleByVehicleId(req.user._id, req.params.vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found for this manager' });
     }
 
-    const driver = await Driver.findById(bus.driverId);
+    const driver = await Driver.findById(vehicle.driverId).select('+password');
     if (!driver) {
-      return res.status(404).json({ success: false, message: 'Driver account not found for this bus' });
+      return res.status(404).json({ success: false, message: 'Driver account not found for this vehicle' });
     }
 
-    const identity = await Identity.findById(driver.identityId).select('+password');
-    if (!identity) {
-      return res.status(404).json({ success: false, message: 'Login not found for this driver' });
-    }
-
+    // Drivers sign in with a driver code + password stored directly on their own
+    // account, not through the shared Identity login, so a manager may reset it
+    // outright — there's no other app session that a rewrite could hijack.
+    driver.password = password;
     driver.isEmailVerified = true;
     driver.isActive = true;
     await driver.save();
 
-    // A manager may only set the password while this login is still provisional — i.e.
-    // it was created for the driver and they have never used it. Once the driver has
-    // signed in the credential is theirs, and the same login may also open their
-    // passenger account, so overwriting it would be an account takeover. In that case
-    // we mail them a reset code instead of writing anything.
-    const { written, emailSent, otp } = await adminSetOrMailReset(identity, password);
-
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: written ? 'BUS_ACCOUNT_PASSWORD_RESET' : 'BUS_ACCOUNT_PASSWORD_RESET_EMAILED',
-      entityType: 'BUS_ACCOUNT',
-      entityId: bus.busId,
-      metadata: { driverId: driver._id, passwordWritten: written }
+      action: 'VEHICLE_ACCOUNT_PASSWORD_RESET',
+      entityType: 'VEHICLE_ACCOUNT',
+      entityId: vehicle.vehicleId,
+      metadata: { driverId: driver._id }
     });
-
-    const response = {
-      success: true,
-      passwordWritten: written,
-      passwordResetEmailSent: !written,
-      message: written
-        ? 'Bus account password updated successfully'
-        : 'This driver has already signed in, so their password cannot be overwritten. A reset code has been emailed to them.'
-    };
-
-    if (!written && !emailSent && process.env.NODE_ENV !== 'production') {
-      response.developmentOtp = otp;
-    }
-
-    return res.status(200).json(response);
-  } catch (error) {
-    next(error);
-  }
-};
-
-exports.getManagerBusLocation = async (req, res, next) => {
-  try {
-    const bus = await getManagedBusByBusId(req.user._id, req.params.busId);
-    if (!bus) {
-      return res.status(404).json({ success: false, message: 'Bus not found for this manager' });
-    }
-
-    const minutes = Number(req.query.minutes) || 15;
-    const allowedMinutes = [15, 30, 60];
-    const windowMinutes = allowedMinutes.includes(minutes) ? minutes : 15;
-    const startTime = new Date(Date.now() - windowMinutes * 60 * 1000);
-
-    const [latest, history] = await Promise.all([
-      LiveLocation.findOne({ busId: bus.busId }).sort({ timestamp: -1 }).lean(),
-      LiveLocation.find({ busId: bus.busId, timestamp: { $gte: startTime } })
-        .sort({ timestamp: 1 })
-        .lean()
-    ]);
 
     return res.status(200).json({
       success: true,
-      data: {
-        bus: {
-          busId: bus.busId,
-          busName: bus.busName,
-          routeId: bus.routeId
-        },
-        latest,
-        history,
-        windowMinutes
-      }
+      message: 'Vehicle account password updated successfully'
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    List this manager's driver-recorded custom routes
-// @route   GET /api/manager/custom-routes?status=PENDING_NAMING|ACTIVE
-exports.getManagerCustomRoutes = async (req, res, next) => {
-  try {
-    const filter = { managerId: req.user._id, origin: 'RECORDED', isDeleted: false };
-
-    const status = String(req.query.status || '').toUpperCase();
-    if (['ACTIVE', 'PENDING_NAMING'].includes(status)) {
-      filter.status = status;
-    }
-
-    const routes = await Route.find(filter).sort({ createdAt: -1 }).lean();
-
-    return res.status(200).json({ success: true, count: routes.length, data: routes });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Name a driver-recorded custom route, activating it for reuse
-// @route   PATCH /api/manager/custom-routes/:routeId/name
-exports.nameCustomRoute = async (req, res, next) => {
-  try {
-    const routeName = String(req.body?.routeName || '').trim();
-    if (!routeName) {
-      return res.status(400).json({ success: false, message: 'routeName is required' });
-    }
-
-    const route = await Route.findOne({
-      routeId: req.params.routeId,
-      managerId: req.user._id,
-      origin: 'RECORDED',
-      isDeleted: false
-    });
-    if (!route) {
-      return res.status(404).json({ success: false, message: 'Custom route not found for this manager' });
-    }
-
-    if (!route.pathPolyline) {
-      return res.status(409).json({ success: false, message: 'Route has not been recorded yet' });
-    }
-
-    route.routeName = routeName;
-    route.status = 'ACTIVE';
-    await route.save();
-
-    await writeAuditLog({
-      managerId: req.user._id,
-      actorId: req.user._id,
-      actorRole: 'admin',
-      action: 'CUSTOM_ROUTE_NAMED',
-      entityType: 'ROUTE',
-      entityId: route.routeId,
-      metadata: { routeName }
-    });
-
-    return res.status(200).json({ success: true, message: 'Route named and activated', data: route });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Routes available for this manager to assign to a bus: public routes
+// @desc    Routes available for this manager to assign to a vehicle: public routes
 //          plus this manager's own named (ACTIVE) private custom routes.
 // @route   GET /api/manager/routes
 exports.getManagerAssignableRoutes = async (req, res, next) => {
   try {
     const routes = await Route.find({
       isDeleted: false,
-      isActive: true,
-      $or: [
-        { visibility: 'PUBLIC' },
-        { visibility: 'PRIVATE', managerId: req.user._id, status: 'ACTIVE' }
-      ]
-    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops visibility');
+      isActive: true
+    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
 
     return res.status(200).json({ success: true, count: routes.length, data: routes });
   } catch (error) {
@@ -677,78 +685,39 @@ exports.getManagerAssignableRoutes = async (req, res, next) => {
   }
 };
 
-// @desc    List this manager's route-change requests (off-route flags / driver updates)
-// @route   GET /api/manager/route-change-requests?status=PENDING
-exports.getManagerRouteChangeRequests = async (req, res, next) => {
+// @desc    Toggle QR attendance for one of this manager's own routes.
+// @route   PATCH /api/manager/routes/:routeId/qr
+// Moved here when private routes were removed — QR attendance is independent of
+// route privacy and works on public routes, which is what most riders use.
+exports.updateRouteQr = async (req, res, next) => {
   try {
-    const filter = { managerId: req.user._id };
-
-    const status = String(req.query.status || '').toUpperCase();
-    if (['PENDING', 'RESOLVED'].includes(status)) {
-      filter.status = status;
+    const route = await Route.findOne({
+      routeId: String(req.params.routeId).toUpperCase(),
+      managerId: req.user._id,
+      isDeleted: false
+    });
+    if (!route) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
     }
 
-    const requests = await RouteChangeRequest.find(filter)
-      .populate('currentRouteId', 'routeId routeName pathPolyline stops distance')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    return res.status(200).json({ success: true, count: requests.length, data: requests });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Resolve a route-change request: keep the current route, or adopt
-//          the driver-recorded candidate as the route's new geometry.
-// @route   PATCH /api/manager/route-change-requests/:id/resolve
-exports.resolveRouteChangeRequest = async (req, res, next) => {
-  try {
-    const resolution = String(req.body?.resolution || '').toUpperCase();
-    if (!['KEEP_OLD', 'ADOPT_NEW'].includes(resolution)) {
-      return res.status(400).json({ success: false, message: 'resolution must be KEEP_OLD or ADOPT_NEW' });
-    }
-
-    const changeRequest = await RouteChangeRequest.findOne({ _id: req.params.id, managerId: req.user._id });
-    if (!changeRequest) {
-      return res.status(404).json({ success: false, message: 'Route change request not found' });
-    }
-
-    // Idempotent: a request already resolved (e.g. by a concurrent action) is
-    // returned as-is rather than reprocessed.
-    if (changeRequest.status === 'RESOLVED') {
-      return res.status(200).json({ success: true, message: 'Already resolved', data: changeRequest });
-    }
-
-    if (resolution === 'ADOPT_NEW') {
-      const route = await Route.findById(changeRequest.currentRouteId);
-      if (!route) {
-        return res.status(404).json({ success: false, message: 'The route this request refers to no longer exists' });
-      }
-      route.pathPolyline = changeRequest.candidate.pathPolyline;
-      if (changeRequest.candidate.stops?.length) {
-        route.stops = changeRequest.candidate.stops;
-        route.stopsCount = changeRequest.candidate.stops.length;
-      }
-      route.distance = changeRequest.candidate.distance;
-      await route.save();
-    }
-
-    changeRequest.status = 'RESOLVED';
-    changeRequest.resolution = resolution;
-    await changeRequest.save();
+    route.qrEnabled = !!(req.body || {}).qrEnabled;
+    await route.save();
 
     await writeAuditLog({
       managerId: req.user._id,
       actorId: req.user._id,
       actorRole: 'admin',
-      action: 'ROUTE_CHANGE_REQUEST_RESOLVED',
-      entityType: 'ROUTE_CHANGE_REQUEST',
-      entityId: changeRequest._id.toString(),
-      metadata: { resolution }
+      action: 'ROUTE_QR_UPDATED',
+      entityType: 'ROUTE',
+      entityId: route.routeId,
+      metadata: { qrEnabled: route.qrEnabled }
     });
 
-    return res.status(200).json({ success: true, message: 'Route change request resolved', data: changeRequest });
+    return res.status(200).json({
+      success: true,
+      message: 'Route QR attendance updated',
+      data: { routeId: route.routeId, qrEnabled: route.qrEnabled }
+    });
   } catch (error) {
     next(error);
   }

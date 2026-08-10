@@ -6,14 +6,14 @@ test('manager controller exports expected handlers', () => {
 
   const expected = [
     'getManagerDashboard',
-    'getManagerBuses',
-    'getManagerBusById',
-    'updateManagerBus',
-    'createBusAccountRequest',
-    'requestBusDelete',
+    'getManagerVehicles',
+    'getManagerVehicleById',
+    'updateManagerVehicle',
+    'createManagerVehicle',
+    'requestVehicleDelete',
     'getMyRequests',
-    'resetBusAccountPassword',
-    'getManagerBusLocation'
+    'resetVehicleAccountPassword',
+    'getManagerAssignableRoutes'
   ];
 
   for (const key of expected) {
@@ -25,8 +25,8 @@ test('super-admin controller exports approval and audit handlers', () => {
   const superAdminController = require('../src/controllers/superAdminController');
 
   const expected = [
-    'getPendingBusRequests',
-    'reviewBusRequest',
+    'getPendingVehicleRequests',
+    'reviewVehicleRequest',
     'getAuditLogs'
   ];
 

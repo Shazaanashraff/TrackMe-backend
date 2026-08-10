@@ -1,0 +1,98 @@
+[
+  {
+    "type": "SCHOOL",
+    "name": "Royal College Colombo",
+    "pin": "627712",
+    "manager": "manager.sch.royal@shuttle.trackme.lk"
+  },
+  {
+    "type": "SCHOOL",
+    "name": "Ananda College",
+    "pin": "298550",
+    "manager": "manager.sch.ananda@shuttle.trackme.lk"
+  },
+  {
+    "type": "SCHOOL",
+    "name": "Visakha Vidyalaya",
+    "pin": "940161",
+    "manager": "manager.sch.visakha@shuttle.trackme.lk"
+  },
+  {
+    "type": "SCHOOL",
+    "name": "D. S. Senanayake College",
+    "pin": "300291",
+    "manager": "manager.sch.dss@shuttle.trackme.lk"
+  },
+  {
+    "type": "SCHOOL",
+    "name": "Ladies' College",
+    "pin": "754593",
+    "manager": "manager.sch.ladies@shuttle.trackme.lk"
+  },
+  {
+    "type": "SCHOOL",
+    "name": "S. Thomas' College",
+    "pin": "020679",
+    "manager": "manager.sch.sthomas@shuttle.trackme.lk"
+  },
+  {
+    "type": "UNIVERSITY",
+    "name": "University of Colombo",
+    "pin": "863888",
+    "manager": "manager.uni.colombo@shuttle.trackme.lk"
+  },
+  {
+    "type": "UNIVERSITY",
+    "name": "University of Moratuwa",
+    "pin": "930260",
+    "manager": "manager.uni.moratuwa@shuttle.trackme.lk"
+  },
+  {
+    "type": "UNIVERSITY",
+    "name": "University of Sri Jayewardenepura",
+    "pin": "387344",
+    "manager": "manager.uni.jpura@shuttle.trackme.lk"
+  },
+  {
+    "type": "UNIVERSITY",
+    "name": "SLIIT Malabe Campus",
+    "pin": "195381",
+    "manager": "manager.uni.sliit@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "John Keells Holdings",
+    "pin": "012877",
+    "manager": "manager.off.jkh@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "MAS Holdings",
+    "pin": "378524",
+    "manager": "manager.off.mas@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "Dialog Axiata",
+    "pin": "536855",
+    "manager": "manager.off.dialog@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "Commercial Bank of Ceylon",
+    "pin": "941136",
+    "manager": "manager.off.combank@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "WSO2",
+    "pin": "866206",
+    "manager": "manager.off.wso2@shuttle.trackme.lk"
+  },
+  {
+    "type": "OFFICE",
+    "name": "Brandix Lanka",
+    "pin": "202901",
+    "manager": "manager.off.brandix@shuttle.trackme.lk"
+  }
+]

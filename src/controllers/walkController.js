@@ -12,7 +12,7 @@ const FIELD_MASK = 'routes.polyline.encodedPolyline,routes.distanceMeters,routes
 const secs = (v) => (typeof v === 'string' ? Number(v.replace('s', '')) || 0 : 0);
 
 // @desc  Walking polyline from (fromLat,fromLng) to (toLat,toLng)
-// @route GET /api/bus/walk
+// @route GET /api/vehicle/walk
 exports.getWalkPath = async (req, res) => {
   const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
   if (!key) {

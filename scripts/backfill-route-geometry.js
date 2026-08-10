@@ -2,8 +2,8 @@
  * Backfill accurate road geometry for Western-Province-scoped routes.
  *
  * For each WP route (both endpoints inside the WP box) we ask Google Transit which
- * buses serve origin->destination, find the leg whose line number matches the route
- * number, and store THAT bus's real encoded polyline on route.pathPolyline. This is
+ * vehicles serve origin->destination, find the leg whose line number matches the route
+ * number, and store THAT vehicle's real encoded polyline on route.pathPolyline. This is
  * genuine geometry (not a geocoded guess). Routes Google doesn't cover are left
  * empty (no invented line). Re-runnable: only fills routes that are still empty, so
  * repeated passes catch Google's non-deterministic matches.
@@ -28,7 +28,7 @@ async function transitLegs(from, to, key) {
     destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
     travelMode: 'TRANSIT',
     computeAlternativeRoutes: true,
-    transitPreferences: { allowedTravelModes: ['BUS'], ...extra },
+    transitPreferences: { allowedTravelModes: ['VEHICLE'], ...extra },
   });
   const variants = [bodyFor({}), bodyFor({ routingPreference: 'LESS_WALKING' })];
   const legs = [];

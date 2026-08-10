@@ -1,8 +1,8 @@
 /**
- * Seed Western Province bus routes (dummy data).
+ * Seed Western Province vehicle routes (dummy data).
  *
  * Route numbers, names and distances are derived from the
- * "Information of Bus Routes in Western Province - Year 2020" dataset.
+ * "Information of Vehicle Routes in Western Province - Year 2020" dataset.
  * Stops and coordinates are realistic dummy values for the Colombo /
  * Gampaha / Kalutara area so the live map and route list have data to show.
  *

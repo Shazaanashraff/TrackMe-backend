@@ -2,7 +2,7 @@
 // super-admin) into four separate collections (SuperAdmin, Manager, Driver, User),
 // and resolves any duplicate super-admin accounts along the way.
 //
-// Preserves each account's original _id, so every existing reference (Bus.managerId,
+// Preserves each account's original _id, so every existing reference (Vehicle.managerId,
 // Route.managerId, ManagerAuditLog.managerId, etc.) keeps resolving correctly without
 // needing to touch those documents — only the Mongoose `ref:` metadata changed in code.
 //

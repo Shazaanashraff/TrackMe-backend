@@ -1,13 +1,13 @@
 const Manager = require('../models/Manager');
 const Driver = require('../models/Driver');
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const Booking = require('../models/Booking');
-const BusReview = require('../models/BusReview');
+const VehicleReview = require('../models/VehicleReview');
 const Route = require('../models/Route');
-const ManagerBusRequest = require('../models/ManagerBusRequest');
+const Organization = require('../models/Organization');
+const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const Identity = require('../models/Identity');
-const { createProvisionalCustomRoute } = require('../utils/customRoute');
 const {
   findIdentityByEmail,
   findProfilesForIdentity,
@@ -17,6 +17,23 @@ const {
   SuperAdminIsolationError
 } = require('../utils/identityRegistry');
 const { adminSetOrMailReset } = require('../utils/passwordReset');
+const { allRequestedIdsFound } = require('../utils/idValidation');
+const {
+  listOrganizations,
+  createOrganization: createOrganizationRecord,
+  publicOrganization
+} = require('../utils/organizations');
+
+const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
+// Roster status the super admin sees. INACTIVE (deactivated) takes precedence;
+// otherwise a manager who was invited but hasn't set a password yet is INVITED,
+// and everyone else (incl. pre-invite/seeded managers) is ACTIVE.
+const managerStatus = (manager) => {
+  if (manager.isActive === false) return 'INACTIVE';
+  if (manager.invitedAt && !manager.activatedAt) return 'INVITED';
+  return 'ACTIVE';
+};
 
 const sanitizeManager = (manager) => ({
   _id: manager._id,
@@ -24,14 +41,57 @@ const sanitizeManager = (manager) => ({
   email: manager.email,
   role: 'admin',
   isActive: manager.isActive !== false,
+  status: managerStatus(manager),
+  invitedAt: manager.invitedAt || null,
+  activatedAt: manager.activatedAt || null,
+  province: manager.province || '',
+  serviceType: manager.serviceType || 'PUBLIC',
+  // organization may be a populated doc, a raw ObjectId, or null.
+  organization:
+    manager.organization && manager.organization._id
+      ? { _id: manager.organization._id, name: manager.organization.name }
+      : null,
   createdAt: manager.createdAt,
   updatedAt: manager.updatedAt
 });
 
+// Validates a manager's service/organization pairing. Returns { organization }
+// (the resolved Organization doc or null) on success, or { error } with an HTTP
+// status + message. PUBLIC managers must have no organization; the private service
+// types must reference an existing organization of the matching service type.
+const resolveManagerService = async (serviceType, organizationId) => {
+  if (!MANAGER_SERVICE_TYPES.includes(serviceType)) {
+    return { error: { status: 400, message: 'Invalid service type' } };
+  }
+
+  if (serviceType === 'PUBLIC') {
+    return { organization: null };
+  }
+
+  if (!organizationId) {
+    return { error: { status: 400, message: 'An organization is required for this service type' } };
+  }
+
+  const organization = await Organization.findOne({ _id: organizationId, isDeleted: false });
+  if (!organization) {
+    return { error: { status: 404, message: 'Organization not found' } };
+  }
+  if (organization.serviceType !== serviceType) {
+    return { error: { status: 400, message: 'Organization does not match the selected service type' } };
+  }
+  return { organization };
+};
+
 exports.createManager = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, serviceType = 'PUBLIC', organizationId = null } = req.body;
     const normalizedEmail = email.toLowerCase().trim();
+
+    const resolved = await resolveManagerService(serviceType, organizationId);
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+    }
+    const resolvedOrganizationId = resolved.organization ? resolved.organization._id : null;
 
     const existingIdentity = await findIdentityByEmail(normalizedEmail);
 
@@ -45,8 +105,16 @@ exports.createManager = async (req, res, next) => {
         isEmailVerified: true,
         isProvisional: true,
         role: 'admin',
-        fields: { name: name.trim(), isActive: true, isEmailVerified: true }
+        fields: {
+          name: name.trim(),
+          isActive: true,
+          isEmailVerified: true,
+          serviceType,
+          organization: resolvedOrganizationId,
+          activatedAt: new Date()
+        }
       });
+      await manager.populate('organization', 'name serviceType');
 
       return res.status(201).json({
         success: true,
@@ -60,7 +128,7 @@ exports.createManager = async (req, res, next) => {
     if (profiles.some((p) => p.role === 'admin')) {
       return res.status(409).json({
         success: false,
-        message: 'A manager with this email already exists'
+        message: 'This email is already registered to a different account type.'
       });
     }
 
@@ -71,8 +139,17 @@ exports.createManager = async (req, res, next) => {
     const { doc: manager } = await attachProfile({
       identityId: existingIdentity._id,
       role: 'admin',
-      fields: { name: name.trim(), isActive: true, isEmailVerified: true }
+      fields: {
+        name: name.trim(),
+        isActive: true,
+        isEmailVerified: true,
+        serviceType,
+        organization: resolvedOrganizationId,
+        activatedAt: new Date()
+      }
     });
+
+    await manager.populate('organization', 'name serviceType');
 
     return res.status(201).json({
       success: true,
@@ -113,6 +190,7 @@ exports.getManagers = async (req, res, next) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNumber)
+        .populate('organization', 'name serviceType')
         .lean(),
       Manager.countDocuments(filter)
     ]);
@@ -134,37 +212,39 @@ exports.getManagers = async (req, res, next) => {
 
 exports.getManagerById = async (req, res, next) => {
   try {
-    const manager = await Manager.findById(req.params.managerId).lean();
+    const manager = await Manager.findById(req.params.managerId)
+      .populate('organization', 'name serviceType')
+      .lean();
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
     const [fleetCounts, bookingKpis, reviewKpis] = await Promise.all([
-      Bus.aggregate([
+      Vehicle.aggregate([
         { $match: { managerId: manager._id, isDeleted: false } },
         {
           $group: {
             _id: null,
-            totalBuses: { $sum: 1 },
-            activeBuses: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
-            inactiveBuses: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } }
+            totalVehicles: { $sum: 1 },
+            activeVehicles: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+            inactiveVehicles: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } }
           }
         }
       ]),
       Booking.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': manager._id
+            'vehicleInfo.managerId': manager._id
           }
         },
         {
@@ -181,20 +261,20 @@ exports.getManagerById = async (req, res, next) => {
           }
         }
       ]),
-      BusReview.aggregate([
+      VehicleReview.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': manager._id
+            'vehicleInfo.managerId': manager._id
           }
         },
         {
@@ -211,7 +291,7 @@ exports.getManagerById = async (req, res, next) => {
       success: true,
       data: {
         manager: sanitizeManager(manager),
-        fleet: fleetCounts[0] || { totalBuses: 0, activeBuses: 0, inactiveBuses: 0 },
+        fleet: fleetCounts[0] || { totalVehicles: 0, activeVehicles: 0, inactiveVehicles: 0 },
         bookingKpis: bookingKpis[0] || { totalBookings: 0, confirmedBookings: 0, cancelledBookings: 0, totalRevenue: 0 },
         reviewKpis: {
           reviewCount: reviewKpis[0]?.reviewCount || 0,
@@ -226,7 +306,7 @@ exports.getManagerById = async (req, res, next) => {
 
 exports.updateManager = async (req, res, next) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, serviceType, organizationId } = req.body;
 
     const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
@@ -262,9 +342,23 @@ exports.updateManager = async (req, res, next) => {
       manager.email = nextEmail;
     }
 
+    // Re-resolve service/organization when the service type is being changed.
+    if (serviceType !== undefined) {
+      const resolved = await resolveManagerService(
+        serviceType,
+        organizationId !== undefined ? organizationId : (manager.organization || null)
+      );
+      if (resolved.error) {
+        return res.status(resolved.error.status).json({ success: false, message: resolved.error.message });
+      }
+      manager.serviceType = serviceType;
+      manager.organization = resolved.organization ? resolved.organization._id : null;
+    }
+
     if (name) manager.name = name.trim();
 
     await manager.save();
+    await manager.populate('organization', 'name serviceType');
 
     return res.status(200).json({
       success: true,
@@ -298,6 +392,43 @@ exports.updateManagerStatus = async (req, res, next) => {
   }
 };
 
+// Hard-deletes a manager account. Gated on the manager already being
+// deactivated so the super admin always takes the reversible step (deactivate)
+// before the irreversible one. Vehicles the manager owned are unassigned rather
+// than deleted — they return to the pool for another manager to pick up.
+exports.deleteManager = async (req, res, next) => {
+  try {
+    const manager = await Manager.findById(req.params.managerId);
+    if (!manager) {
+      return res.status(404).json({ success: false, message: 'Manager not found' });
+    }
+
+    if (manager.isActive !== false) {
+      return res.status(409).json({
+        success: false,
+        message: 'Deactivate this manager before deleting the account'
+      });
+    }
+
+    const { modifiedCount } = await Vehicle.updateMany(
+      { managerId: manager._id },
+      { $set: { managerId: null } }
+    );
+
+    await manager.deleteOne();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Manager deleted successfully',
+      data: { _id: manager._id, unassignedVehicles: modifiedCount }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Super-admin-triggered password reset. The super admin sets the new password
+// directly and hands it to the manager out of band — no emailed link.
 exports.resetManagerPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
@@ -336,31 +467,31 @@ exports.resetManagerPassword = async (req, res, next) => {
   }
 };
 
-exports.assignBusesToManager = async (req, res, next) => {
+exports.assignVehiclesToManager = async (req, res, next) => {
   try {
-    const { busIds } = req.body;
+    const { vehicleIds } = req.body;
 
     const manager = await Manager.findById(req.params.managerId);
     if (!manager) {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    const buses = await Bus.find({ _id: { $in: busIds }, isDeleted: false });
-    if (buses.length !== busIds.length) {
+    const vehicles = await Vehicle.find({ _id: { $in: vehicleIds }, isDeleted: false });
+    if (!allRequestedIdsFound(vehicleIds, vehicles)) {
       return res.status(400).json({
         success: false,
-        message: 'One or more bus IDs are invalid'
+        message: 'One or more vehicle IDs are invalid'
       });
     }
 
-    await Bus.updateMany(
-      { _id: { $in: busIds } },
+    await Vehicle.updateMany(
+      { _id: { $in: vehicleIds } },
       { $set: { managerId: manager._id } }
     );
 
     return res.status(200).json({
       success: true,
-      message: 'Buses assigned to manager successfully'
+      message: 'Vehicles assigned to manager successfully'
     });
   } catch (error) {
     next(error);
@@ -369,7 +500,7 @@ exports.assignBusesToManager = async (req, res, next) => {
 
 exports.getSuperAdminDashboard = async (req, res, next) => {
   try {
-    const [managerCounts, busCounts, bookingSummary, reviewSummary] = await Promise.all([
+    const [managerCounts, vehicleCounts, bookingSummary, reviewSummary] = await Promise.all([
       Manager.aggregate([
         {
           $group: {
@@ -380,15 +511,15 @@ exports.getSuperAdminDashboard = async (req, res, next) => {
           }
         }
       ]),
-      Bus.aggregate([
+      Vehicle.aggregate([
         { $match: { isDeleted: false } },
         {
           $group: {
             _id: null,
-            totalBuses: { $sum: 1 },
-            activeBuses: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
-            inactiveBuses: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
-            maintenanceBuses: {
+            totalVehicles: { $sum: 1 },
+            activeVehicles: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+            inactiveVehicles: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } },
+            maintenanceVehicles: {
               $sum: { $cond: [{ $eq: ['$maintenanceStatus', 'MAINTENANCE'] }, 1, 0] }
             }
           }
@@ -410,7 +541,7 @@ exports.getSuperAdminDashboard = async (req, res, next) => {
           }
         }
       ]),
-      BusReview.aggregate([
+      VehicleReview.aggregate([
         { $match: { isDeleted: false } },
         {
           $group: {
@@ -426,7 +557,7 @@ exports.getSuperAdminDashboard = async (req, res, next) => {
       success: true,
       data: {
         managers: managerCounts[0] || { totalManagers: 0, activeManagers: 0, inactiveManagers: 0 },
-        buses: busCounts[0] || { totalBuses: 0, activeBuses: 0, inactiveBuses: 0, maintenanceBuses: 0 },
+        vehicles: vehicleCounts[0] || { totalVehicles: 0, activeVehicles: 0, inactiveVehicles: 0, maintenanceVehicles: 0 },
         bookings: bookingSummary[0] || { totalBookings: 0, confirmedBookings: 0, cancelledBookings: 0, totalRevenue: 0 },
         reviews: {
           totalReviews: reviewSummary[0]?.totalReviews || 0,
@@ -449,36 +580,36 @@ exports.getOperationsOverview = async (req, res, next) => {
     const managerIds = managers.map((manager) => manager._id);
 
     const [fleetByManager, bookingsByManager, reviewsByManager] = await Promise.all([
-      Bus.aggregate([
+      Vehicle.aggregate([
         { $match: { isDeleted: false, managerId: { $in: managerIds } } },
         {
           $group: {
             _id: '$managerId',
-            totalBuses: { $sum: 1 },
-            activeBuses: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
-            inactiveBuses: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } }
+            totalVehicles: { $sum: 1 },
+            activeVehicles: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+            inactiveVehicles: { $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] } }
           }
         }
       ]),
       Booking.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': { $in: managerIds }
+            'vehicleInfo.managerId': { $in: managerIds }
           }
         },
         {
           $group: {
-            _id: '$busInfo.managerId',
+            _id: '$vehicleInfo.managerId',
             totalBookings: { $sum: 1 },
             confirmedBookings: { $sum: { $cond: [{ $eq: ['$status', 'CONFIRMED'] }, 1, 0] } },
             cancelledBookings: { $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] } },
@@ -490,25 +621,25 @@ exports.getOperationsOverview = async (req, res, next) => {
           }
         }
       ]),
-      BusReview.aggregate([
+      VehicleReview.aggregate([
         {
           $lookup: {
-            from: 'buses',
-            localField: 'busId',
+            from: 'vehicles',
+            localField: 'vehicleId',
             foreignField: '_id',
-            as: 'busInfo'
+            as: 'vehicleInfo'
           }
         },
-        { $unwind: '$busInfo' },
+        { $unwind: '$vehicleInfo' },
         {
           $match: {
             isDeleted: false,
-            'busInfo.managerId': { $in: managerIds }
+            'vehicleInfo.managerId': { $in: managerIds }
           }
         },
         {
           $group: {
-            _id: '$busInfo.managerId',
+            _id: '$vehicleInfo.managerId',
             averageRating: { $avg: '$rating' },
             reviewCount: { $sum: 1 }
           }
@@ -522,9 +653,9 @@ exports.getOperationsOverview = async (req, res, next) => {
 
     const data = managers.map((manager) => {
       const fleet = fleetMap.get(String(manager._id)) || {
-        totalBuses: 0,
-        activeBuses: 0,
-        inactiveBuses: 0
+        totalVehicles: 0,
+        activeVehicles: 0,
+        inactiveVehicles: 0
       };
       const booking = bookingMap.get(String(manager._id)) || {
         totalBookings: 0,
@@ -561,7 +692,7 @@ exports.getOperationsOverview = async (req, res, next) => {
   }
 };
 
-exports.getManagerBusDetails = async (req, res, next) => {
+exports.getManagerVehicleDetails = async (req, res, next) => {
   try {
     const manager = await Manager.findById(req.params.managerId)
       .select('name email isActive createdAt')
@@ -571,19 +702,19 @@ exports.getManagerBusDetails = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
-    const buses = await Bus.find({ managerId: manager._id, isDeleted: false })
+    const vehicles = await Vehicle.find({ managerId: manager._id, isDeleted: false })
       .populate('driverId', 'name email')
       .sort({ createdAt: -1 })
       .lean();
 
-    const busIds = buses.map((bus) => bus._id);
+    const vehicleIds = vehicles.map((vehicle) => vehicle._id);
 
-    const [bookingByBus, reviewByBus] = await Promise.all([
+    const [bookingByVehicle, reviewByVehicle] = await Promise.all([
       Booking.aggregate([
-        { $match: { isDeleted: false, busId: { $in: busIds } } },
+        { $match: { isDeleted: false, vehicleId: { $in: vehicleIds } } },
         {
           $group: {
-            _id: '$busId',
+            _id: '$vehicleId',
             totalBookings: { $sum: 1 },
             confirmedBookings: { $sum: { $cond: [{ $eq: ['$status', 'CONFIRMED'] }, 1, 0] } },
             cancelledBookings: { $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] } },
@@ -595,11 +726,11 @@ exports.getManagerBusDetails = async (req, res, next) => {
           }
         }
       ]),
-      BusReview.aggregate([
-        { $match: { isDeleted: false, busId: { $in: busIds } } },
+      VehicleReview.aggregate([
+        { $match: { isDeleted: false, vehicleId: { $in: vehicleIds } } },
         {
           $group: {
-            _id: '$busId',
+            _id: '$vehicleId',
             averageRating: { $avg: '$rating' },
             reviewCount: { $sum: 1 }
           }
@@ -607,23 +738,23 @@ exports.getManagerBusDetails = async (req, res, next) => {
       ])
     ]);
 
-    const bookingMap = new Map(bookingByBus.map((item) => [String(item._id), item]));
-    const reviewMap = new Map(reviewByBus.map((item) => [String(item._id), item]));
+    const bookingMap = new Map(bookingByVehicle.map((item) => [String(item._id), item]));
+    const reviewMap = new Map(reviewByVehicle.map((item) => [String(item._id), item]));
 
-    const busDetails = buses.map((bus) => {
-      const booking = bookingMap.get(String(bus._id)) || {
+    const vehicleDetails = vehicles.map((vehicle) => {
+      const booking = bookingMap.get(String(vehicle._id)) || {
         totalBookings: 0,
         confirmedBookings: 0,
         cancelledBookings: 0,
         totalRevenue: 0
       };
-      const review = reviewMap.get(String(bus._id)) || {
+      const review = reviewMap.get(String(vehicle._id)) || {
         averageRating: 0,
         reviewCount: 0
       };
 
       return {
-        ...bus,
+        ...vehicle,
         bookingMetrics: booking,
         reviewMetrics: {
           averageRating: Number((review.averageRating || 0).toFixed(2)),
@@ -636,7 +767,7 @@ exports.getManagerBusDetails = async (req, res, next) => {
       success: true,
       data: {
         manager,
-        buses: busDetails
+        vehicles: vehicleDetails
       }
     });
   } catch (error) {
@@ -644,13 +775,13 @@ exports.getManagerBusDetails = async (req, res, next) => {
   }
 };
 
-exports.getPendingBusRequests = async (req, res, next) => {
+exports.getPendingVehicleRequests = async (req, res, next) => {
   try {
     const status = String(req.query.status || 'PENDING').toUpperCase();
     const type = String(req.query.type || 'ALL').toUpperCase();
     const managerId = req.query.managerId ? String(req.query.managerId) : '';
     const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
-    const validTypes = ['CREATE_BUS_ACCOUNT', 'DELETE_BUS', 'ALL'];
+    const validTypes = ['CREATE_VEHICLE_ACCOUNT', 'DELETE_VEHICLE', 'ALL'];
     const effectiveStatus = validStatuses.includes(status) ? status : 'PENDING';
     const effectiveType = validTypes.includes(type) ? type : 'ALL';
 
@@ -665,7 +796,7 @@ exports.getPendingBusRequests = async (req, res, next) => {
       filter.managerId = managerId;
     }
 
-    const requests = await ManagerBusRequest.find(filter)
+    const requests = await ManagerVehicleRequest.find(filter)
       .populate('managerId', 'name email')
       .populate('decisionBy', 'name email')
       .sort({ createdAt: -1 })
@@ -681,7 +812,7 @@ exports.getPendingBusRequests = async (req, res, next) => {
   }
 };
 
-exports.reviewBusRequest = async (req, res, next) => {
+exports.reviewVehicleRequest = async (req, res, next) => {
   try {
     const { requestId } = req.params;
     const { decision, note } = req.body;
@@ -691,7 +822,7 @@ exports.reviewBusRequest = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'decision must be APPROVE or REJECT' });
     }
 
-    const requestDoc = await ManagerBusRequest.findById(requestId);
+    const requestDoc = await ManagerVehicleRequest.findById(requestId);
     if (!requestDoc) {
       return res.status(404).json({ success: false, message: 'Request not found' });
     }
@@ -711,12 +842,12 @@ exports.reviewBusRequest = async (req, res, next) => {
         managerId: requestDoc.managerId,
         actorId: req.user._id,
         actorRole: 'super-admin',
-        action: 'BUS_REQUEST_REJECTED',
-        entityType: 'BUS_REQUEST',
+        action: 'VEHICLE_REQUEST_REJECTED',
+        entityType: 'VEHICLE_REQUEST',
         entityId: requestDoc._id.toString(),
         metadata: {
           type: requestDoc.type,
-          busId: requestDoc.busId,
+          vehicleId: requestDoc.vehicleId,
           note: requestDoc.decisionNote
         }
       });
@@ -728,40 +859,31 @@ exports.reviewBusRequest = async (req, res, next) => {
       });
     }
 
-    if (requestDoc.type === 'CREATE_BUS_ACCOUNT') {
-      const busPayload = requestDoc.payload?.bus || {};
+    if (requestDoc.type === 'CREATE_VEHICLE_ACCOUNT') {
+      const vehiclePayload = requestDoc.payload?.vehicle || {};
       const driverPayload = requestDoc.payload?.driver || {};
-      if (!busPayload.numberPlate && busPayload.registrationNumber) {
-        busPayload.numberPlate = String(busPayload.registrationNumber).toUpperCase();
+      if (!vehiclePayload.numberPlate && vehiclePayload.registrationNumber) {
+        vehiclePayload.numberPlate = String(vehiclePayload.registrationNumber).toUpperCase();
       }
-      if (!busPayload.registrationNumber && busPayload.busId) {
-        busPayload.registrationNumber = `AUTO-${busPayload.busId}`;
-      }
-
-      const isCustomRoute = requestDoc.payload?.routeMode === 'CUSTOM';
-      if (isCustomRoute) {
-        const provisionalRoute = await createProvisionalCustomRoute({
-          managerId: requestDoc.managerId,
-          serviceType: busPayload.serviceType
-        });
-        busPayload.routeId = provisionalRoute.routeId;
-      } else {
-        const route = await Route.findOne({ routeId: busPayload.routeId, isDeleted: false });
-        if (!route) {
-          return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
-        }
+      if (!vehiclePayload.registrationNumber && vehiclePayload.vehicleId) {
+        vehiclePayload.registrationNumber = `AUTO-${vehiclePayload.vehicleId}`;
       }
 
-      const duplicateBus = await Bus.findOne({
+      const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
+      if (!route) {
+        return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
+      }
+
+      const duplicateVehicle = await Vehicle.findOne({
         $or: [
-          { busId: busPayload.busId },
-          { registrationNumber: busPayload.registrationNumber },
-          { numberPlate: busPayload.numberPlate }
+          { vehicleId: vehiclePayload.vehicleId },
+          { registrationNumber: vehiclePayload.registrationNumber },
+          { numberPlate: vehiclePayload.numberPlate }
         ],
         isDeleted: false
       });
-      if (duplicateBus) {
-        return res.status(409).json({ success: false, message: 'Cannot approve request: bus already exists' });
+      if (duplicateVehicle) {
+        return res.status(409).json({ success: false, message: 'Cannot approve request: vehicle already exists' });
       }
 
       const driverEmail = String(driverPayload.email || '').toLowerCase();
@@ -822,8 +944,8 @@ exports.reviewBusRequest = async (req, res, next) => {
         }
       }
 
-      await Bus.create({
-        ...busPayload,
+      await Vehicle.create({
+        ...vehiclePayload,
         managerId: requestDoc.managerId,
         driverId: driver._id,
         isActive: true,
@@ -831,15 +953,15 @@ exports.reviewBusRequest = async (req, res, next) => {
       });
     }
 
-    if (requestDoc.type === 'DELETE_BUS') {
-      const bus = await Bus.findOne({ busId: requestDoc.busId, managerId: requestDoc.managerId, isDeleted: false });
-      if (!bus) {
-        return res.status(404).json({ success: false, message: 'Cannot approve delete: bus not found' });
+    if (requestDoc.type === 'DELETE_VEHICLE') {
+      const vehicle = await Vehicle.findOne({ vehicleId: requestDoc.vehicleId, managerId: requestDoc.managerId, isDeleted: false });
+      if (!vehicle) {
+        return res.status(404).json({ success: false, message: 'Cannot approve delete: vehicle not found' });
       }
 
-      bus.isDeleted = true;
-      bus.isActive = false;
-      await bus.save();
+      vehicle.isDeleted = true;
+      vehicle.isActive = false;
+      await vehicle.save();
     }
 
     requestDoc.status = 'APPROVED';
@@ -852,12 +974,12 @@ exports.reviewBusRequest = async (req, res, next) => {
       managerId: requestDoc.managerId,
       actorId: req.user._id,
       actorRole: 'super-admin',
-      action: 'BUS_REQUEST_APPROVED',
-      entityType: 'BUS_REQUEST',
+      action: 'VEHICLE_REQUEST_APPROVED',
+      entityType: 'VEHICLE_REQUEST',
       entityId: requestDoc._id.toString(),
       metadata: {
         type: requestDoc.type,
-        busId: requestDoc.busId,
+        vehicleId: requestDoc.vehicleId,
         note: requestDoc.decisionNote
       }
     });
@@ -917,6 +1039,41 @@ exports.getAuditLogs = async (req, res, next) => {
       success: true,
       count: logs.length,
       data: logs
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    List organizations, optionally filtered by service type
+// @route   GET /api/super-admin/organizations?serviceType=SCHOOL
+exports.getOrganizations = async (req, res, next) => {
+  try {
+    const organizations = await listOrganizations(req.query.serviceType);
+    return res.status(200).json({ success: true, count: organizations.length, data: organizations });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create a new organization (school / university / office)
+// @route   POST /api/super-admin/organizations
+exports.createOrganization = async (req, res, next) => {
+  try {
+    const result = await createOrganizationRecord({
+      name: req.body?.name,
+      serviceType: req.body?.serviceType,
+      createdBy: req.user?._id || null
+    });
+
+    if (result.error) {
+      return res.status(result.error.status).json({ success: false, message: result.error.message });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Organization created successfully',
+      data: publicOrganization(result.organization)
     });
   } catch (error) {
     next(error);

@@ -53,6 +53,16 @@ exports.errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Handle Mongoose CastError (e.g. a malformed ObjectId in a route/query param) —
+  // without this branch it falls through to the generic 500 below, which leaks the
+  // raw invalid value in err.message.
+  if (err.name === 'CastError') {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid ${err.path}`
+    });
+  }
+
   // Handle JWT errors
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
@@ -68,8 +78,18 @@ exports.errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Unrecognized errors default to 500, and their message is whatever the
+  // underlying driver/runtime produced (Mongo connection errors, raw TypeErrors,
+  // etc.) — never echo that to the client in production. Deliberate ApiErrors
+  // (statusCode < 500) carry an intentional, safe-to-show message and are unaffected.
+  const isUnhandledInternalError = statusCode >= 500;
+  const safeMessage =
+    isUnhandledInternalError && process.env.NODE_ENV === 'production'
+      ? 'Internal Server Error'
+      : message;
+
   res.status(statusCode).json({
     success: false,
-    message
+    message: safeMessage
   });
 };

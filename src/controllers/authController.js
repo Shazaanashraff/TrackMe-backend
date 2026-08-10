@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
-const { findAccountById, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
+const Manager = require('../models/Manager');
+const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
 const {
   findIdentityByEmail,
   findProfilesForIdentity,
@@ -14,6 +15,7 @@ const {
   VALID_AUDIENCES
 } = require('../utils/identityRegistry');
 const { sendPasswordResetOtpEmail } = require('../utils/passwordReset');
+const { looksLikeDriverCode, normalizeDriverCode } = require('../utils/driverCode');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -54,6 +56,19 @@ const toMillis = (expiresIn) => {
 };
 
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
+// Echoing an OTP in the response body is a dev/test convenience with no email
+// provider — it must never fire from a bare misconfiguration (NODE_ENV unset in a
+// staging/prod-like deploy), so it needs an explicit opt-in on top of the
+// non-production check, not the absence of a production flag alone.
+const shouldEchoDevOtp = () =>
+  process.env.ENABLE_DEV_OTP_ECHO === 'true' && process.env.NODE_ENV !== 'production';
+
+// Password reset enables full account takeover if intercepted, so its OTP window
+// is shorter than email verification's — a defense-in-depth control on top of the
+// attempt lockout (see verifyPasswordResetOtp).
+const PASSWORD_RESET_OTP_EXPIRY_MS = 5 * 60 * 1000;
+const EMAIL_VERIFICATION_OTP_EXPIRY_MS = 10 * 60 * 1000;
 
 const sendVerificationEmail = async (to, otp) => {
   if (!process.env.RESEND_API_KEY) return false;
@@ -143,11 +158,21 @@ const issueTokensForUser = async (user, role) => {
 const userPayload = (user, role, identity = null) => ({
   _id: user._id,
   name: user.name,
-  email: identity?.email || user.email,
+  email: identity?.email || user.email || '',
+  // Drivers sign in with this and it is shown in their profile; absent on
+  // every other role.
+  ...(user.driverCode ? { driverCode: user.driverCode } : {}),
   phoneNumber: user.phoneNumber,
   avatarUrl: user.avatarUrl || '',
   role,
-  isEmailVerified: identity ? identity.isEmailVerified : user.isEmailVerified
+  isEmailVerified: identity ? identity.isEmailVerified : user.isEmailVerified,
+  // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Buses").
+  // Always present for managers; harmless (PUBLIC/null) for other roles.
+  serviceType: user.serviceType || 'PUBLIC',
+  organization:
+    user.organization && user.organization.name
+      ? { _id: user.organization._id, name: user.organization.name }
+      : null
 });
 
 // Email verification is only enforced for riders. Every other role is created by an
@@ -285,7 +310,7 @@ exports.register = async (req, res, next) => {
       user: userPayload(user, 'user', identity)
     };
 
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
+    if (!emailSent && shouldEchoDevOtp()) {
       response.developmentOtp = otp;
     }
 
@@ -373,13 +398,55 @@ exports.verifyEmail = async (req, res, next) => {
 // @route   POST /api/auth/login
 exports.login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    const normalizedEmail = String(email).trim().toLowerCase();
+    // Drivers sign in with either their driver code or an email, so the field is
+    // an identifier. `email` is still accepted for every existing caller.
+    const { email, identifier, password } = req.body;
+    const rawIdentifier = String(identifier ?? email ?? '').trim();
+    const isDriverCode = looksLikeDriverCode(rawIdentifier);
+    const normalizedIdentifier = isDriverCode
+      ? normalizeDriverCode(rawIdentifier)
+      : rawIdentifier.toLowerCase();
 
-    if (!normalizedEmail || !password) {
+    if (!normalizedIdentifier || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email and password'
+        message: 'Please provide an email or driver ID and a password'
+      });
+    }
+
+    const badCredentials = isDriverCode
+      ? 'Invalid driver ID or password'
+      : 'Invalid email or password';
+
+    // Driver-code sign-in bypasses the Identity system entirely: the driver code
+    // and password live directly on the Driver document, since a driver may have
+    // no email at all. See accountFields.js / docs/modules/AUTH.md.
+    if (isDriverCode) {
+      const account = await findAccountByDriverCode(normalizedIdentifier, { select: '+password' });
+      if (!account) {
+        return res.status(401).json({ success: false, message: badCredentials });
+      }
+      const { doc: user, role } = account;
+
+      const isMatch = await user.comparePassword(password);
+      if (!isMatch) {
+        return res.status(401).json({ success: false, message: badCredentials });
+      }
+
+      if (user.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          message: 'Account has been deactivated. Contact super admin.'
+        });
+      }
+
+      const tokens = await issueTokensForUser(user, role);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        ...tokens,
+        user: userPayload(user, role)
       });
     }
 
@@ -391,12 +458,12 @@ exports.login = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'audience is required' });
     }
 
-    const identity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+    const identity = await findIdentityByEmail(normalizedIdentifier, { select: '+password' });
 
     if (!identity) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: badCredentials
       });
     }
 
@@ -412,7 +479,7 @@ exports.login = async (req, res, next) => {
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: badCredentials
       });
     }
 
@@ -443,7 +510,7 @@ exports.login = async (req, res, next) => {
         success: false,
         message: 'Please verify your email before logging in',
         requiresVerification: true,
-        email: normalizedEmail
+        email: user.email
       });
     }
 
@@ -587,7 +654,7 @@ exports.googleSignIn = async (req, res, next) => {
 exports.refreshAccessToken = async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
-    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
     if (decoded.tokenType !== 'refresh') {
       return res.status(401).json({
@@ -694,7 +761,8 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     identity.passwordReset = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_OTP_EXPIRY_MS),
+      attempts: 0,
       resetTokenHash: null,
       resetTokenExpiresAt: null
     };
@@ -708,18 +776,30 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       emailSent = false;
     }
 
-    const response = {
-      success: true,
-      message: emailSent
-        ? 'If this email is registered, an OTP has been sent.'
-        : 'Email service unavailable. Use development OTP in non-production environments.'
-    };
-
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
-      response.developmentOtp = otp;
+    if (emailSent) {
+      return res.status(200).json({
+        success: true,
+        message: 'If this email is registered, an OTP has been sent.'
+      });
     }
 
-    return res.status(200).json(response);
+    if (shouldEchoDevOtp()) {
+      // Dev/test fallback — no email provider configured, but the flow must
+      // still be completable, so hand back the OTP directly.
+      return res.status(200).json({
+        success: true,
+        message: 'Email service unavailable. Use development OTP in non-production environments.',
+        developmentOtp: otp
+      });
+    }
+
+    // Production and the email genuinely failed to send, with no fallback
+    // available — the client needs to know this didn't work rather than sit
+    // waiting for an email that's never coming.
+    return res.status(502).json({
+      success: false,
+      message: 'We could not send the reset email right now. Please try again shortly.'
+    });
   } catch (error) {
     next(error);
   }
@@ -733,7 +813,7 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     const otp = String(req.body.otp || '').trim();
 
     const identity = await findIdentityByEmail(normalizedEmail, {
-      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
+      select: '+passwordReset.otpHash +passwordReset.expiresAt +passwordReset.attempts +passwordReset.resetTokenHash +passwordReset.resetTokenExpiresAt'
     });
 
     if (!identity || !identity.passwordReset?.otpHash || !identity.passwordReset?.expiresAt) {
@@ -750,7 +830,26 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
       });
     }
 
+    const MAX_OTP_ATTEMPTS = 5;
+
     if (hashToken(otp) !== identity.passwordReset.otpHash) {
+      const attempts = (identity.passwordReset.attempts || 0) + 1;
+
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        // Too many wrong guesses — invalidate the code outright so further
+        // attempts fail even though it hasn't expired yet.
+        identity.passwordReset = {
+          otpHash: null,
+          expiresAt: null,
+          attempts: 0,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null
+        };
+      } else {
+        identity.passwordReset.attempts = attempts;
+      }
+      await identity.save();
+
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP code'
@@ -761,12 +860,20 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
     identity.passwordReset = {
       otpHash: null,
       expiresAt: null,
+      attempts: 0,
       resetTokenHash: hashToken(resetToken),
       resetTokenExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     };
 
     await identity.save();
 
+    // `resetToken` is a short-lived (10-min) bearer secret that resetPasswordWithToken
+    // accepts in place of a password — treat it with the same care as a password.
+    // Never log this response body (or this request's — resetPasswordWithToken's
+    // `resetToken` param) in request/response logging, error tracking, or analytics
+    // middleware. This service has no such middleware today (no morgan/winston/pino,
+    // and no request-logging in src/middleware/) — if one is added later, make sure
+    // it excludes or redacts these two endpoints' bodies before shipping it.
     return res.status(200).json({
       success: true,
       message: 'OTP verified successfully',
@@ -830,6 +937,100 @@ exports.resetPasswordWithToken = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Password reset successful. Please login with your new password.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Look up an account by its (raw) invite/reset token, enforcing expiry. Returns
+// the user with the setup + password fields selected, or null if the token is
+// unknown/expired. Shared by the validate + complete endpoints below.
+const findUserBySetupToken = async (rawToken, extraSelect = '') => {
+  const token = String(rawToken || '').trim();
+  if (!token) return null;
+
+  const user = await Manager.findOne({ 'accountSetup.tokenHash': hashToken(token) }).select(
+    `+accountSetup.tokenHash +accountSetup.expiresAt${extraSelect ? ` ${extraSelect}` : ''}`
+  );
+
+  if (!user || !user.accountSetup?.expiresAt) return null;
+  if (user.accountSetup.expiresAt.getTime() < Date.now()) return null;
+  return user;
+};
+
+// @desc    Validate an invite/reset link and reveal whose account it's for
+// @route   POST /api/auth/account-setup/validate
+exports.validateAccountSetup = async (req, res, next) => {
+  try {
+    const user = await findUserBySetupToken(req.body.token);
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'This link is invalid or has expired. Ask your super admin to resend it.'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      email: user.email,
+      name: user.name,
+      // INVITE = never set a password yet; RESET = already active, changing it.
+      purpose: user.activatedAt ? 'RESET' : 'INVITE'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Set a password via an invite/reset link (manager chooses their own)
+// @route   POST /api/auth/account-setup/complete
+exports.completeAccountSetup = async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+    const user = await findUserBySetupToken(
+      token,
+      '+password +refreshToken.tokenHash +refreshToken.expiresAt'
+    );
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'This link is invalid or has expired. Ask your super admin to resend it.'
+      });
+    }
+
+    user.password = password;
+    if (!user.activatedAt) user.activatedAt = new Date();
+    // Consume the token and drop any existing sessions so the new password is the
+    // only way in.
+    user.accountSetup = { tokenHash: null, expiresAt: null };
+    user.refreshToken = { tokenHash: null, expiresAt: null };
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password set successfully. You can now sign in.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Read the signed-in account
+// @route   GET /api/auth/me
+// @access  Private
+// Details like a driver's phone number are set by their manager, on another
+// device, so the copy a client stored at sign-in goes stale with no event to
+// tell it. This lets a client re-read itself rather than making people sign out
+// and back in to see their own record.
+exports.getMe = async (req, res, next) => {
+  try {
+    // `protect` has already loaded the account document and stamped its role,
+    // so this is the same shape login hands back, from the same source.
+    return res.status(200).json({
+      success: true,
+      user: userPayload(req.user, req.user.role)
     });
   } catch (error) {
     next(error);
@@ -973,7 +1174,7 @@ exports.resendVerificationOtp = async (req, res, next) => {
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     identity.emailVerification = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
     };
     await identity.save();
 
@@ -983,7 +1184,7 @@ exports.resendVerificationOtp = async (req, res, next) => {
     } catch (_) {}
 
     const response = { success: true, message: 'If unverified, a new code has been sent.' };
-    if (!emailSent && process.env.NODE_ENV !== 'production') {
+    if (!emailSent && shouldEchoDevOtp()) {
       response.developmentOtp = otp;
     }
 

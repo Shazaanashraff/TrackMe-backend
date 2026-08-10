@@ -29,8 +29,8 @@
     "valid": {"from": "stop-1", "to": "stop-2", "departure": "2026-05-22T12:00:00Z"},
     "invalid": {"from": "", "to": 123}
   },
-  "driverEarnings": [
-    {"id": "earning-1", "driverId": "driver-1", "amount": 100.5, "currency": "LKR"}
+  "driverTrips": [
+    {"id": "trip-1", "driverId": "driver-1", "routeId": "route-1", "journeyDate": "2026-05-22T12:00:00Z"}
   ],
   "edgeCases": {
     "oversizeString": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",

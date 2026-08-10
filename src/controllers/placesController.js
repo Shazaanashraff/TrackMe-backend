@@ -123,27 +123,43 @@ exports.placeDetails = async (req, res) => {
   }
 };
 
-// Picks the most specific human-readable label from Google Geocoding results.
-// A dragged pin almost always sits on a road or at a named place, so prefer a
-// POI/premise/road name over the broad sublocality/town. Mirrors osmShortName so
-// both providers yield the same precise-name behaviour (the Google path used to
-// just take formatted_address.split(',')[0], which is often a plus-code or town).
+// Picks an accurate human-readable label from Google Geocoding results. Reverse
+// geocoding returns POIs/establishments within a radius, so preferring those (an
+// earlier version did) mislabels a point with a nearby vehicle stop or building —
+// e.g. a pin in Kolonnawa reading "Gothatuwa Vehicle Stop". Instead we build the real
+// "Road, Suburb" the point sits on, which is what's actually accurate, and only
+// fall back to the town or a cleaned address segment (never a Plus Code).
 function googleShortName(results) {
-  const typeRank = [
-    'point_of_interest', 'establishment', 'premise', 'route',
-    'neighborhood', 'sublocality', 'sublocality_level_1', 'locality',
-  ];
-  // Scan results most-specific first; within each, pick the highest-ranked component.
-  for (const want of typeRank) {
+  const compOf = (r, types) =>
+    (r.address_components || []).find((c) => (c.types || []).some((t) => types.includes(t)))?.long_name || null;
+  const pick = (types) => {
     for (const r of results) {
-      for (const c of r.address_components || []) {
-        if ((c.types || []).includes(want)) return c.long_name;
-      }
+      const v = compOf(r, types);
+      if (v) return v;
     }
-  }
-  // Fall back to the first segment of the top result's formatted address.
+    return null;
+  };
+  // The road the point actually sits on is the result whose OWN type is 'route' (a
+  // road segment). Google's most-specific result is usually the nearest street
+  // ADDRESS, whose route component can be an adjacent road (e.g. a point on
+  // Pathanwatta Rd reading "Bopatta Rd" from the nearest house). Prefer the route
+  // result so we match the road you're really on.
+  const routeResult = results.find((r) => (r.types || []).includes('route'));
+  const road =
+    (routeResult && (compOf(routeResult, ['route']) || (routeResult.formatted_address || '').split(',')[0].trim())) ||
+    pick(['route']);
+  const area = pick(['sublocality_level_1', 'sublocality', 'neighborhood', 'locality']);
+  if (road && area && road !== area) return `${road}, ${area}`;
+  if (road) return road;
+  if (area) return area;
+  // Last resort: first non-Plus-Code segment of the top result's formatted address.
+  const isPlusCode = (s) => /^[23456789CFGHJMPQRVWX]{4,}\+[23456789CFGHJMPQRVWX]+/i.test(s);
   const top = results[0];
-  return top?.formatted_address ? top.formatted_address.split(',')[0].trim() : null;
+  if (top?.formatted_address) {
+    const segs = top.formatted_address.split(',').map((s) => s.trim()).filter(Boolean);
+    return segs.find((s) => !isPlusCode(s)) || segs[0] || null;
+  }
+  return null;
 }
 
 // Google Geocoding API reverse lookup. Returns a formatted address, or null when
@@ -203,7 +219,7 @@ async function osmReverse(lat, lng) {
   url.searchParams.set('lon', String(lng));
   url.searchParams.set('zoom', '18');
   url.searchParams.set('addressdetails', '1');
-  const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (bus-tracking app)' } });
+  const gRes = await fetch(url, { headers: { 'User-Agent': 'TrackMe/1.0 (vehicle-tracking app)' } });
   if (!gRes.ok) return null;
   const json = await gRes.json();
   if (!json.display_name) return null;
@@ -263,3 +279,6 @@ exports.reverseGeocode = async (req, res) => {
     res.status(500).json({ success: false, message: 'Reverse geocode error.' });
   }
 };
+
+// Exported for unit tests.
+exports._googleShortName = googleShortName;

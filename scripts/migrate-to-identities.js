@@ -7,7 +7,7 @@
 // kind of account. See docs/modules/AUTH.md.
 //
 // Preserves every account document's original `_id`, so all existing references
-// (Bus.driverId, Bus.managerId, Route.managerId, RouteMembership.userId,
+// (Vehicle.driverId, Vehicle.managerId, Route.managerId, DriverEnrollment.userId,
 // ManagerAuditLog.managerId, …) keep resolving untouched — same guarantee the earlier
 // migrate-account-schemas.js made.
 //

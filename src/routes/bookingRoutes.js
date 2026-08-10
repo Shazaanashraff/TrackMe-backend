@@ -9,7 +9,7 @@ router.post(
   '/',
   protect,
   [
-    body('busId').isMongoId().withMessage('Valid busId required'),
+    body('vehicleId').isMongoId().withMessage('Valid vehicleId required'),
     body('routeId').isMongoId().withMessage('Valid routeId required'),
     body('seatNumbers').isArray({ min: 1 }).withMessage('At least one seat required'),
     body('journeyDate').isISO8601().withMessage('Valid journeyDate required'),
@@ -19,11 +19,11 @@ router.post(
   bookingController.createBooking
 );
 
-// Get available seats for a bus
-router.get('/bus/:busId/available-seats', protect, bookingController.getAvailableSeats);
+// Get available seats for a vehicle
+router.get('/vehicle/:vehicleId/available-seats', protect, bookingController.getAvailableSeats);
 
-// Get bookings for a specific bus (driver view)
-router.get('/bus/:busId/bookings', protect, bookingController.getBusBookings);
+// Get bookings for a specific vehicle (driver view)
+router.get('/vehicle/:vehicleId/bookings', protect, bookingController.getVehicleBookings);
 
 // Get user's bookings
 router.get('/user/my-bookings', protect, bookingController.getUserBookings);
