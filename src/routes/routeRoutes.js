@@ -16,13 +16,12 @@ const {
   validateRouteId
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
-const { protect, requireAdmin } = require('../middleware/auth');
+const { protect, requireManagerOrAbove } = require('../middleware/auth');
 
-// Admin only routes with basic protect middleware
-// In production, add role-based middleware like requireAdmin
+// Manager-or-super-admin routes with basic protect middleware
 
 // POST /api/routes - Create new route (admin)
-router.post('/', protect, requireAdmin, validateCreateRoute, handleValidationErrors, createRoute);
+router.post('/', protect, requireManagerOrAbove, validateCreateRoute, handleValidationErrors, createRoute);
 
 // GET /api/routes - Get all routes (with filters)
 router.get('/', getAllRoutes);
@@ -34,12 +33,12 @@ router.get('/stats/overview', getRoutesStats);
 router.get('/:routeId', validateRouteId, handleValidationErrors, getRouteById);
 
 // PUT /api/routes/:routeId - Update route (admin)
-router.put('/:routeId', protect, requireAdmin, validateUpdateRoute, handleValidationErrors, updateRoute);
+router.put('/:routeId', protect, requireManagerOrAbove, validateUpdateRoute, handleValidationErrors, updateRoute);
 
 // PATCH /api/routes/:routeId/toggle - Toggle route status
-router.patch('/:routeId/toggle', protect, requireAdmin, toggleRouteStatus);
+router.patch('/:routeId/toggle', protect, requireManagerOrAbove, toggleRouteStatus);
 
 // DELETE /api/routes/:routeId - Delete route (admin)
-router.delete('/:routeId', protect, requireAdmin, deleteRoute);
+router.delete('/:routeId', protect, requireManagerOrAbove, deleteRoute);
 
 module.exports = router;
