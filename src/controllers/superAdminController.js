@@ -774,8 +774,26 @@ exports.reviewVehicleRequest = async (req, res, next) => {
     }
 
     if (requestDoc.type === 'CREATE_VEHICLE_ACCOUNT') {
-      const vehiclePayload = requestDoc.payload?.vehicle || {};
+      const rawVehiclePayload = requestDoc.payload?.vehicle || {};
       const driverPayload = requestDoc.payload?.driver || {};
+
+      // The manager's original request payload is never re-validated against a
+      // field whitelist here — pick only the fields Vehicle.create() should
+      // ever accept from a manager-submitted request, so an unexpected field
+      // stashed in the payload (e.g. isDeleted, managerId, isActive) can't be
+      // written verbatim on approval.
+      const vehiclePayload = {
+        vehicleId: rawVehiclePayload.vehicleId,
+        vehicleName: rawVehiclePayload.vehicleName,
+        numberPlate: rawVehiclePayload.numberPlate,
+        registrationNumber: rawVehiclePayload.registrationNumber,
+        routeId: rawVehiclePayload.routeId,
+        vehicleType: rawVehiclePayload.vehicleType,
+        serviceType: rawVehiclePayload.serviceType,
+        bookingEnabled: rawVehiclePayload.bookingEnabled,
+        seatCapacity: rawVehiclePayload.seatCapacity,
+        organization: rawVehiclePayload.organization
+      };
       if (!vehiclePayload.numberPlate && vehiclePayload.registrationNumber) {
         vehiclePayload.numberPlate = String(vehiclePayload.registrationNumber).toUpperCase();
       }
