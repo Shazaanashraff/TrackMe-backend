@@ -736,22 +736,42 @@ exports.reviewVehicleRequest = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'decision must be APPROVE or REJECT' });
     }
 
-    const requestDoc = await ManagerVehicleRequest.findById(requestId);
+    // Atomically claim the PENDING request before doing any review side
+    // effects: the findById-then-save this replaced left a gap between
+    // reading status and writing it, letting two concurrent reviews of the
+    // same request both pass the PENDING check and both call Vehicle.create().
+    // A status:'PENDING' filter on the update means only one concurrent call
+    // can ever flip it away from PENDING; the loser gets a clean 400 instead
+    // of racing into the side effects below. If the APPROVE branch's own
+    // validation fails afterward, the claim is released back to PENDING so
+    // the request stays reviewable.
+    const decidedNote = String(note || '').trim();
+    const requestDoc = await ManagerVehicleRequest.findOneAndUpdate(
+      { _id: requestId, status: 'PENDING' },
+      {
+        $set: {
+          status: normalizedDecision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          decisionBy: req.user._id,
+          decisionNote: decidedNote,
+          decidedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+
     if (!requestDoc) {
-      return res.status(404).json({ success: false, message: 'Request not found' });
+      const exists = await ManagerVehicleRequest.exists({ _id: requestId });
+      return res.status(exists ? 400 : 404).json({
+        success: false,
+        message: exists ? 'Request already reviewed' : 'Request not found'
+      });
     }
 
-    if (requestDoc.status !== 'PENDING') {
-      return res.status(400).json({ success: false, message: 'Request already reviewed' });
-    }
+    const releaseClaim = () => ManagerVehicleRequest.findByIdAndUpdate(requestDoc._id, {
+      $set: { status: 'PENDING', decisionBy: null, decisionNote: '', decidedAt: null }
+    });
 
     if (normalizedDecision === 'REJECT') {
-      requestDoc.status = 'REJECTED';
-      requestDoc.decisionBy = req.user._id;
-      requestDoc.decisionNote = String(note || '').trim();
-      requestDoc.decidedAt = new Date();
-      await requestDoc.save();
-
       await ManagerAuditLog.create({
         managerId: requestDoc.managerId,
         actorId: req.user._id,
@@ -803,6 +823,7 @@ exports.reviewVehicleRequest = async (req, res, next) => {
 
       const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
       if (!route) {
+        await releaseClaim();
         return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
       }
 
@@ -815,6 +836,7 @@ exports.reviewVehicleRequest = async (req, res, next) => {
         isDeleted: false
       });
       if (duplicateVehicle) {
+        await releaseClaim();
         return res.status(409).json({ success: false, message: 'Cannot approve request: vehicle already exists' });
       }
 
@@ -823,6 +845,7 @@ exports.reviewVehicleRequest = async (req, res, next) => {
       if (!driver) {
         const takenByOtherAccountType = await isEmailRegistered(driverEmail);
         if (takenByOtherAccountType) {
+          await releaseClaim();
           return res.status(409).json({ success: false, message: 'Cannot approve request: driver email belongs to another account type' });
         }
 
@@ -858,6 +881,7 @@ exports.reviewVehicleRequest = async (req, res, next) => {
     if (requestDoc.type === 'DELETE_VEHICLE') {
       const vehicle = await Vehicle.findOne({ vehicleId: requestDoc.vehicleId, managerId: requestDoc.managerId, isDeleted: false });
       if (!vehicle) {
+        await releaseClaim();
         return res.status(404).json({ success: false, message: 'Cannot approve delete: vehicle not found' });
       }
 
@@ -865,12 +889,6 @@ exports.reviewVehicleRequest = async (req, res, next) => {
       vehicle.isActive = false;
       await vehicle.save();
     }
-
-    requestDoc.status = 'APPROVED';
-    requestDoc.decisionBy = req.user._id;
-    requestDoc.decisionNote = String(note || '').trim();
-    requestDoc.decidedAt = new Date();
-    await requestDoc.save();
 
     await ManagerAuditLog.create({
       managerId: requestDoc.managerId,
