@@ -8,6 +8,7 @@ const Organization = require('../models/Organization');
 const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { isEmailRegistered } = require('../utils/accountRegistry');
+const { allRequestedIdsFound } = require('../utils/idValidation');
 const {
   listOrganizations,
   createOrganization: createOrganizationRecord,
@@ -390,7 +391,7 @@ exports.assignVehiclesToManager = async (req, res, next) => {
     }
 
     const vehicles = await Vehicle.find({ _id: { $in: vehicleIds }, isDeleted: false });
-    if (vehicles.length !== vehicleIds.length) {
+    if (!allRequestedIdsFound(vehicleIds, vehicles)) {
       return res.status(400).json({
         success: false,
         message: 'One or more vehicle IDs are invalid'
