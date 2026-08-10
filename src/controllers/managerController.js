@@ -643,8 +643,12 @@ exports.resetVehicleAccountPassword = async (req, res, next) => {
     }
 
     driver.password = password;
+    // A password reset genuinely implies the account is now reachable, so
+    // verifying it is a real side effect of this action. Reactivating it is
+    // not: isActive was set false by a deliberate choice (a manager's own
+    // driver-deactivation, or in the future a super-admin's), and this
+    // endpoint has nothing to do with that decision — never override it.
     driver.isEmailVerified = true;
-    driver.isActive = true;
     await driver.save();
 
     await writeAuditLog({
