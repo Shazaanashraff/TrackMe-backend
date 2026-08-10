@@ -1,11 +1,15 @@
-// Fixed-window rate limiter keyed by the normalized email in req.body.email.
-// In-memory only (single-instance deployment, same pattern as other in-memory
-// bookkeeping in this service) — not shared across processes.
-function createEmailRateLimiter({ windowMs, max, message }) {
+const defaultKeyExtractor = (req) => String(req.body?.email || '').trim().toLowerCase();
+
+// Fixed-window rate limiter keyed by the normalized email in req.body.email
+// (or by keyExtractor, when a caller needs a different request field —
+// e.g. login's `identifier`, which accepts a driver code as well as an
+// email). In-memory only (single-instance deployment, same pattern as other
+// in-memory bookkeeping in this service) — not shared across processes.
+function createEmailRateLimiter({ windowMs, max, message, keyExtractor = defaultKeyExtractor }) {
   const buckets = new Map();
 
   return (req, res, next) => {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = keyExtractor(req);
     if (!email) return next();
 
     const now = Date.now();

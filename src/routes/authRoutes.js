@@ -47,6 +47,21 @@ const passwordResetRequestRateLimit = createEmailRateLimiter({
 	message: 'Too many password reset requests for this email. Please wait before trying again.'
 });
 
+// Login has no OTP-style attempt lockout of its own, so an unbounded number of
+// password guesses were possible against any single account. Keyed the same
+// way login itself resolves its caller, so an email and a driver code don't
+// share a bucket. A wider window and higher ceiling than the OTP limiters
+// above — legitimate users retry a mistyped password more than they retry an
+// OTP request — but still throttles a realistic brute-force attempt.
+const LOGIN_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX = Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX) || 10;
+const loginRateLimit = createEmailRateLimiter({
+	windowMs: LOGIN_RATE_LIMIT_WINDOW_MS,
+	max: LOGIN_RATE_LIMIT_MAX,
+	message: 'Too many login attempts for this account. Please wait before trying again.',
+	keyExtractor: (req) => String(req.body?.identifier ?? req.body?.email ?? '').trim().toLowerCase()
+});
+
 // POST /api/auth/register
 router.post('/register', validateRegister, handleValidationErrors, register);
 
@@ -57,7 +72,7 @@ router.post('/verify-email', validateVerifyEmail, handleValidationErrors, verify
 router.post('/resend-verification-otp', resendVerificationRateLimit, resendVerificationOtp);
 
 // POST /api/auth/login
-router.post('/login', validateLogin, handleValidationErrors, login);
+router.post('/login', validateLogin, handleValidationErrors, loginRateLimit, login);
 
 // POST /api/auth/google
 router.post('/google', validateGoogleSignIn, handleValidationErrors, googleSignIn);
