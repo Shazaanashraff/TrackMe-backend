@@ -888,6 +888,12 @@ exports.reviewVehicleRequest = async (req, res, next) => {
       vehicle.isDeleted = true;
       vehicle.isActive = false;
       await vehicle.save();
+
+      // The vehicle's driver has nothing left to drive — leaving their account
+      // active is an orphaned live login with no vehicle behind it.
+      if (vehicle.driverId) {
+        await Driver.findByIdAndUpdate(vehicle.driverId, { $set: { isActive: false } });
+      }
     }
 
     await ManagerAuditLog.create({
