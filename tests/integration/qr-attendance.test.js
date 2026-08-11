@@ -2,13 +2,12 @@ const request = require('supertest');
 const app = require('../../src/server');
 const jwt = require('jsonwebtoken');
 const User = require('../../src/models/User');
-const Manager = require('../../src/models/Manager');
-const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const BoardingEvent = require('../../src/models/BoardingEvent');
 const { signQr, verifyQr } = require('../../src/utils/qrToken');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createRider, createDriver } = require('./factories');
 
 // QR Attendance — see docs/features/qr-attendance/QR_SYSTEM.md and
 // todos/complete/001-qr-attendance-foundation.md. The QR pass is account-scoped
@@ -27,11 +26,6 @@ jest.mock('expo-server-sdk', () => {
   return { Expo, __mockSendPushNotificationsAsync: sendPushNotificationsAsync };
 });
 
-async function loginAs(email, password) {
-  const res = await request(app).post('/api/auth/login').send({ email, password });
-  return res.body.accessToken;
-}
-
 let managerToken, managerId;
 let otherManagerToken;
 let riderToken, riderId;
@@ -43,39 +37,24 @@ beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
 
-  const manager = await Manager.create({
-    name: 'QR Manager', email: `qr-mgr-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  managerId = manager._id;
-  managerToken = await loginAs(manager.email, 'P@ssw0rd!');
+  const manager = await createManager({ name: 'QR Manager' });
+  managerId = manager.id;
+  managerToken = manager.token;
 
-  const otherManager = await Manager.create({
-    name: 'QR Other Manager', email: `qr-mgr2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  otherManagerToken = await loginAs(otherManager.email, 'P@ssw0rd!');
+  ({ token: otherManagerToken } = await createManager({ name: 'QR Other Manager' }));
 
-  const rider = await User.create({
-    name: 'QR Rider', email: `qr-rider-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'user', isEmailVerified: true, isActive: true,
-    pushTokens: ['ExponentPushToken[abc123]']
+  const rider = await createRider({
+    name: 'QR Rider',
+    fields: { pushTokens: ['ExponentPushToken[abc123]'] }
   });
-  riderId = rider._id;
-  riderToken = await loginAs(rider.email, 'P@ssw0rd!');
+  riderId = rider.id;
+  riderToken = rider.token;
 
-  const driver = await Driver.create({
-    name: 'QR Driver', email: `qr-drv-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  driverId = driver._id;
-  driverToken = await loginAs(driver.email, 'P@ssw0rd!');
+  const driver = await createDriver({ name: 'QR Driver' });
+  driverId = driver.id;
+  driverToken = driver.token;
 
-  const otherDriver = await Driver.create({
-    name: 'QR Other Driver', email: `qr-drv2-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  otherDriverToken = await loginAs(otherDriver.email, 'P@ssw0rd!');
+  ({ token: otherDriverToken } = await createDriver({ name: 'QR Other Driver' }));
 
   route = await Route.create({
     routeId: `QR-${Date.now()}`.toUpperCase(),
@@ -91,7 +70,7 @@ beforeAll(async () => {
     registrationNumber: `REG-${Date.now()}`,
     numberPlate: `PLT-${Date.now()}`,
     routeId: route.routeId,
-    driverId: driver._id,
+    driverId,
     seatCapacity: 40,
     managerId
   });
