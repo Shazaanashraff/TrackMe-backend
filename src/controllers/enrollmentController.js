@@ -45,13 +45,26 @@ const isThrottled = (userId) => (attemptState(userId)?.count || 0) >= MAX_FAILED
 // Exposed so tests can start from a clean slate rather than sharing counters.
 const resetAttempts = () => failedAttempts.clear();
 
-const driverSummary = (driver, organization, vehicle) => ({
+// `includeContact` gates the driver's personal phone number. A PENDING passenger has
+// submitted a key but the manager has not approved them yet, so redeeming a key must not
+// by itself hand out the number. The field is still present, as null, so the client's
+// shape does not change between states.
+const driverSummary = (driver, organization, vehicle, includeContact = false) => ({
   _id: driver._id,
   name: driver.name,
   driverCode: driver.driverCode || null,
+  phoneNumber: includeContact ? driver.phoneNumber || null : null,
   organization: publicOrganization(organization),
   vehicle: vehicle
-    ? { _id: vehicle._id, vehicleId: vehicle.vehicleId, numberPlate: vehicle.numberPlate }
+    ? {
+        _id: vehicle._id,
+        vehicleId: vehicle.vehicleId,
+        numberPlate: vehicle.numberPlate,
+        // The route the driver's vehicle runs. An enrollment is keyed to a driver, so
+        // this is the only thing that ties it back to a route — the passenger app needs
+        // it to tell whether the route it is showing is one the passenger is enrolled on.
+        routeId: vehicle.routeId || null
+      }
     : null
 });
 
@@ -61,7 +74,9 @@ const enrollmentSummary = (enrollment, driver, organization, vehicle) => ({
   requiredApproval: enrollment.requiredApproval,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
-  driver: driver ? driverSummary(driver, organization, vehicle) : null
+  driver: driver
+    ? driverSummary(driver, organization, vehicle, enrollment.status === 'ACTIVE')
+    : null
 });
 
 // @route POST /api/enrollments/redeem
@@ -97,7 +112,7 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
       driver.organization
         ? Organization.findById(driver.organization).select('name serviceType').lean()
         : null,
-      Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate').lean(),
+      Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
       DriverEnrollment.findOne({ userId, driverId: driver._id })
     ]);
 
@@ -170,7 +185,7 @@ exports.getMyEnrollments = async (req, res, next) => {
 
     const driverIds = enrollments.map((item) => item.driverId);
     const drivers = await Driver.find({ _id: { $in: driverIds } })
-      .select('name driverCode organization isActive')
+      .select('name driverCode organization isActive phoneNumber')
       .lean();
 
     const orgIds = drivers.map((d) => d.organization).filter(Boolean);
@@ -178,7 +193,7 @@ exports.getMyEnrollments = async (req, res, next) => {
       orgIds.length
         ? Organization.find({ _id: { $in: orgIds } }).select('name serviceType').lean()
         : [],
-      Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId').lean()
+      Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate routeId driverId').lean()
     ]);
 
     const driverById = new Map(drivers.map((d) => [String(d._id), d]));
