@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const connectDB = require('./config/db');
@@ -96,13 +97,21 @@ app.use('/api/driver/boarding', driverBoardingRoutes);
 // left under /api/driver, so a new sub-router must be added before it.
 app.use('/api/driver', driverAccountRoutes);
 
-// Health check endpoint (services receiving requests = keep-alive friendly)
+// Health check endpoint (services receiving requests = keep-alive friendly).
+// mode/dbName let the Developer page's sandbox badge reflect what the server actually
+// connected to, rather than trusting the client-side toggle (see DEVELOPER_MODE_PLAN.md
+// safety rail 6) — a client-side bug can never make prod look like sandbox this way.
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  const dbName = mongoose.connection?.name || null;
+  const mode = dbName && dbName.toLowerCase().includes('sandbox') ? 'sandbox' : 'primary';
+
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    isReady: startupState.bootstrapComplete
+    isReady: startupState.bootstrapComplete,
+    mode,
+    dbName
   });
 });
 

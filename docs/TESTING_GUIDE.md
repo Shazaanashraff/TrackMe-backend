@@ -129,3 +129,6 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | join-route / route:get-recent-locations membership + revoke kick (Private Routes) | ws integration | tests/integration/ws/private-routes-visibility.test.js | ACTIVE member allowed on both events; non-member denied on both; revoking membership emits route:access-revoked to the route room | membership-based socket gating or revoke-kick behavior changes |
 | user route subscription | ws integration | tests/integration/ws/user-route.test.js | join/leave/receive | rooming rules change |
 | manager bus tracking | ws integration | tests/integration/ws/manager-track.test.js | join/leave/receive | manager role rules change |
+
+Regenerate the auto-generated catalog (`npm run devkit:catalog` from the repo root) whenever a
+test is added or renamed, so `tools/devkit/docs/TEST_CATALOG.md`'s gap report stays honest.

@@ -23,6 +23,36 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-11 — Developer Mode Phase 1: sandbox backend + seed script + /health mode
+- **Branch:** feat/developer-mode-sandbox
+- **Modules touched:** sandbox (new) — [docs/modules/SANDBOX.md](modules/SANDBOX.md)
+- **What changed:**
+  - `dev:sandbox` script (`nodemon --require dotenv/config src/server.js
+    dotenv_config_path=.env.sandbox`) + `.env.sandbox.example` — a second backend process on
+    `:5001` against a `*_sandbox` database, sharing dev's `JWT_SECRET`.
+  - `scripts/seed-sandbox.js`: wipes and reseeds the sandbox database through
+    `createIdentityWithProfile`/`Driver.create` (same paths the real app uses), with a hard
+    DB-name guard (`process.exit(1)` unless the connected database name contains `sandbox`).
+    Creates the sandbox superadmin with a `_id` mirrored from the dev superadmin, so a dev-issued
+    JWT authenticates on both backends.
+  - `GET /health` now reports `mode` (`sandbox`/`primary`) and `dbName` from the live Mongo
+    connection, not from config — see safety rail 6 in `DEVELOPER_MODE_PLAN.md`.
+  - `@babel/parser` added as an explicit devDependency (used by `tools/devkit/catalog/`'s static
+    test extraction, at the umbrella root).
+- **Why:** manual CRUD verification had no safe place to happen against real dev data. See
+  `DEVELOPER_MODE_PLAN.md` at the repo root.
+- **Contract impact:** `/health` response gains two fields; additive, no existing consumer reads
+  a fixed key set from it.
+- **Tests:** none added for this module in Phase 1 (locked decision — see
+  `docs/modules/SANDBOX.md` §10); the guard and seed flow were verified by hand against a real
+  `trackme_sandbox` database during implementation.
+- **Docs updated:** docs/modules/SANDBOX.md (new), docs/README.md, docs/QA_UPDATE_TRIGGERS.md,
+  CLAUDE.md ("Running" + new non-negotiable).
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-05 — Notification cleanup endpoint was missing its admin guard
 - **Branch:** feat/driver-on-board-roster
 - **Modules touched:** notifications — [docs/modules/NOTIFICATIONS.md](modules/NOTIFICATIONS.md)

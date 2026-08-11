@@ -14,6 +14,8 @@ cross-cutting reference.
   reset, profile/avatar, the four-collection account model and role guards.
 - **[modules/PRIVATE_ROUTES.md](modules/PRIVATE_ROUTES.md)** — room key (AES-GCM + HMAC), lockout,
   join approval, membership, socket enforcement.
+- **[modules/SANDBOX.md](modules/SANDBOX.md)** — Developer Mode's second backend process +
+  disposable database, seed script, `/health` mode reporting.
 
 The rest exist as **stubs** — the code ships, the doc doesn't yet. Each names its source files
 and must be filled in from the template as part of the next change touching it:
@@ -29,6 +31,8 @@ and must be filled in from the template as part of the next change touching it:
 - **[guides/ADDING_A_TEST.md](guides/ADDING_A_TEST.md)** — which layer, the serial-Mongo rules,
   and the mandatory authz cases.
 - **[guides/RELEASING.md](guides/RELEASING.md)** — Render auto-deploy, migrations, tags, rollback.
+- **[guides/WORKING_AN_ISSUE.md](guides/WORKING_AN_ISSUE.md)** — issue → regression tests → PR →
+  merge, for agents and manual sessions alike.
 - **[guides/_MODULE_TEMPLATE.md](guides/_MODULE_TEMPLATE.md)** — copy to start a module doc.
 
 ## Testing
