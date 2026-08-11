@@ -1,11 +1,11 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
 const ManagerVehicleRequest = require('../../src/models/ManagerVehicleRequest');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, authHeader } = require('./factories');
 
 // A manager owns their own fleet, so POST /api/manager/vehicle-accounts creates
 // the vehicle and its driver outright. It used to raise a request for a super
@@ -24,17 +24,13 @@ beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   await Driver.syncIndexes();
 
-  const manager = await Manager.create({
-    name: 'Fleet Owner', email: `mgr-veh-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  managerId = manager._id;
+  const manager = await createManager({ name: 'Fleet Owner' });
+  managerId = manager.id;
+  managerToken = manager.token;
 
-  const other = await Manager.create({
-    name: 'Other Owner', email: `mgr-other-veh-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  otherManagerId = other._id;
+  // Only ever referenced as somebody else's managerId, so it never signs in.
+  const other = await createManager({ name: 'Other Owner', signIn: false });
+  otherManagerId = other.id;
 
   const route = await Route.create({
     routeId: `VEH-R-${Date.now()}`,
@@ -46,11 +42,6 @@ beforeAll(async () => {
     estimatedTime: 90
   });
   routeId = route.routeId;
-
-  const res = await request(app).post('/api/auth/login').send({
-    email: manager.email, password: 'P@ssw0rd!'
-  });
-  managerToken = res.body.accessToken;
 });
 
 afterAll(async () => {
@@ -58,7 +49,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${managerToken}`];
+const auth = () => authHeader(managerToken);
 
 let seq = 0;
 const newVehicle = (overrides = {}) => ({
