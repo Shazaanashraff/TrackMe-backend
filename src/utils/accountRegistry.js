@@ -12,10 +12,26 @@ const ACCOUNTS = [
   { role: 'super-admin', model: SuperAdmin },
   { role: 'admin', model: Manager },
   { role: 'driver', model: Driver },
-  { role: 'user', model: User }
+  // The only role a person may hold several of: one account holder plus the rider
+  // profiles they manage (a parent and their children, an office and its staff).
+  // `loginFilter` is what "the profile this person signs in as" means for such a
+  // role — without it, a lookup by identityId alone returns an arbitrary profile
+  // in MongoDB natural order, which could hand a parent their child's session.
+  //
+  // Expressed as "not MANAGED" rather than "is PRIMARY" on purpose: `$ne` also
+  // matches documents with no `profileKind` at all, so every rider written before
+  // the field existed still resolves as the account holder. That is what lets this
+  // filter ship ahead of the schema change and the backfill without an outage.
+  { role: 'user', model: User, loginFilter: { profileKind: { $ne: 'MANAGED' } } }
 ];
 
 const modelForRole = (role) => ACCOUNTS.find((entry) => entry.role === role)?.model || null;
+
+// The extra criteria that narrow "every profile with this identityId" down to the
+// single one that role signs in as. Empty for the three roles that can only ever
+// hold one profile per identity, so callers can spread it unconditionally.
+const loginFilterForRole = (role) =>
+  ACCOUNTS.find((entry) => entry.role === role)?.loginFilter || {};
 
 // Drivers can sign in with their permanent driver code instead of an email; many
 // have no email at all, and (unlike the other three account types) they have no
@@ -69,6 +85,7 @@ const isEmailRegistered = async (email, { excludeId, excludeRole } = {}) => {
 module.exports = {
   ACCOUNTS,
   modelForRole,
+  loginFilterForRole,
   findAccountByDriverCode,
   findAccountById,
   isEmailRegistered

@@ -1,5 +1,5 @@
 const Identity = require('../models/Identity');
-const { ACCOUNTS, modelForRole } = require('./accountRegistry');
+const { ACCOUNTS, modelForRole, loginFilterForRole } = require('./accountRegistry');
 
 // Resolves one person (an `Identity`) to the role profiles they hold.
 //
@@ -80,13 +80,17 @@ const findIdentityByEmail = async (email, { select } = {}) => {
   return query;
 };
 
-// Every profile this identity holds, in ACCOUNTS precedence order.
+// The profile this identity **signs in as** for each role it holds, in ACCOUNTS
+// precedence order. For `user` that means the PRIMARY profile only: the managed
+// rider profiles an account holder has added are not logins, so they must never
+// be what login, registration or a role check resolves to. Use
+// `findHouseholdProfiles` when you want all of them.
 const findProfilesForIdentity = async (identityId, { select } = {}) => {
   if (!identityId) return [];
 
   const found = await Promise.all(
     ACCOUNTS.map(async ({ role, model }) => {
-      let query = model.findOne({ identityId });
+      let query = model.findOne({ identityId, ...loginFilterForRole(role) });
       if (select) query = query.select(select);
       const doc = await query;
       return doc ? { doc, role, model } : null;
@@ -94,6 +98,27 @@ const findProfilesForIdentity = async (identityId, { select } = {}) => {
   );
 
   return found.filter(Boolean);
+};
+
+// Every rider profile on this identity — the account holder plus everyone they
+// manage — PRIMARY first, then oldest to newest so the switcher's order is stable.
+// This is the household: the unit that household-scoped reads (the map, push
+// tokens, notifications) operate over.
+const findHouseholdProfiles = async (identityId, { includeInactive = false } = {}) => {
+  if (!identityId) return [];
+
+  const filter = { identityId };
+  if (!includeInactive) filter.isActive = { $ne: false };
+
+  const profiles = await modelForRole('user').find(filter).sort({ createdAt: 1 });
+
+  // Ordered in JS rather than by the query: sorting on `profileKind` would put
+  // MANAGED first, since 'M' sorts before 'P'. A household is a handful of
+  // documents, so this costs nothing and says what it means.
+  return [
+    ...profiles.filter((p) => p.profileKind !== 'MANAGED'),
+    ...profiles.filter((p) => p.profileKind === 'MANAGED')
+  ];
 };
 
 const rolesForIdentity = async (identityId) =>
@@ -127,14 +152,21 @@ const attachProfile = async ({ identityId, role, fields = {} }) => {
 
   assertShareable(await rolesForIdentity(identityId), role);
 
-  const existing = await model.findOne({ identityId });
+  // Scoped the same way as findProfilesForIdentity: for `user` this asks "does
+  // this person already have an account-holder profile", not "do they have any
+  // rider profile at all". Without the filter, a parent with children would look
+  // like they already had a rider role and the real profile would never be created.
+  const existing = await model.findOne({ identityId, ...loginFilterForRole(role) });
   if (existing) return { doc: existing, role, model, created: false };
 
   const doc = await model.create({
     ...fields,
     identityId,
     // Mirrors Identity.email so `userPayload` and admin lists keep working unchanged.
-    email: identity.email
+    email: identity.email,
+    // Stated rather than left to the schema default: this profile is the login,
+    // and a silent default is how a second PRIMARY would slip in unnoticed.
+    ...(role === 'user' ? { profileKind: 'PRIMARY' } : {})
   });
 
   return { doc, role, model, created: true };
@@ -165,7 +197,10 @@ const createIdentityWithProfile = async ({
   const doc = await model.create({
     ...fields,
     identityId: identity._id,
-    email: normalizedEmail
+    email: normalizedEmail,
+    // See attachProfile: the first rider profile on a new identity is always the
+    // account holder, and saying so beats relying on the schema default.
+    ...(role === 'user' ? { profileKind: 'PRIMARY' } : {})
   });
 
   return { identity, doc, role, model, created: true };
@@ -192,6 +227,7 @@ module.exports = {
   assertShareable,
   findIdentityByEmail,
   findProfilesForIdentity,
+  findHouseholdProfiles,
   rolesForIdentity,
   hasSuperAdminProfile,
   resolveProfileForAudience,
