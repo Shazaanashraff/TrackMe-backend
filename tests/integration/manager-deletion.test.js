@@ -1,10 +1,10 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const SuperAdmin = require('../../src/models/SuperAdmin');
 const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createSuperAdmin, authHeader } = require('./factories');
 
 // Deleting a manager is irreversible, so the endpoint is gated on the manager
 // already being deactivated — the reversible step always comes first. Vehicles the
@@ -17,17 +17,7 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Super Admin',
-    email: `sa-del-${Date.now()}@test.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true,
-  });
-  const res = await request(app)
-    .post('/api/auth/login')
-    .send({ email: superAdmin.email, password: 'P@ssw0rd!' });
-  superAdminToken = res.body.accessToken;
+  ({ token: superAdminToken } = await createSuperAdmin({ name: 'Super Admin' }));
 });
 
 afterAll(async () => {
@@ -35,7 +25,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${superAdminToken}`];
+const auth = () => authHeader(superAdminToken);
 
 let seq = 0;
 const makeManager = (isActive) =>
