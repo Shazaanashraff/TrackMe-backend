@@ -1,10 +1,9 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
-const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Organization = require('../../src/models/Organization');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createDriver } = require('./factories');
 
 // The manager dashboard is service-aware: it returns the manager's serviceType,
 // their organization name (private services), and a driverCount so the WebAdmin
@@ -18,13 +17,14 @@ beforeAll(async () => {
   await clearTestDb();
 
   const org = await Organization.create({ name: 'Royal College', serviceType: 'SCHOOL' });
-  manager = await Manager.create({
-    name: 'School Mgr', email: `school-mgr-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true, serviceType: 'SCHOOL', organization: org._id
+  // signIn: false — the first test below exercises the login endpoint itself.
+  manager = await createManager({
+    name: 'School Mgr', password: 'P@ssw0rd!', signIn: false,
+    fields: { serviceType: 'SCHOOL', organization: org._id }
   });
 
-  const d1 = await Driver.create({ name: 'D1', email: `d1-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
-  const d2 = await Driver.create({ name: 'D2', email: `d2-${Date.now()}@t.com`, password: 'Driver@123', isEmailVerified: true, isActive: true });
+  const { doc: d1 } = await createDriver({ name: 'D1' });
+  const { doc: d2 } = await createDriver({ name: 'D2' });
 
   const baseVehicle = (n, driverId) => ({
     vehicleId: `SVH-${Date.now()}-${n}`,
@@ -32,7 +32,7 @@ beforeAll(async () => {
     registrationNumber: `REG-${Date.now()}-${n}`,
     numberPlate: `NP-${Date.now()}-${n}`,
     routeId: `R-${n}`,
-    managerId: manager._id,
+    managerId: manager.id,
     driverId,
     seatCapacity: 20,
     vehicleType: 'NON-AC',

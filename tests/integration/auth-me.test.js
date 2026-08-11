@@ -2,44 +2,28 @@ const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const app = require('../../src/server');
 const Driver = require('../../src/models/Driver');
-const Manager = require('../../src/models/Manager');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createDriver } = require('./factories');
 
 // GET /api/auth/me. A driver's name and phone number are maintained by their
 // manager, so the copy a client stored at sign-in goes stale with nothing to
 // announce it. This is how a client re-reads itself.
 
-const stamp = Date.now();
 let driverToken;
 let driver;
-
-const login = (identifier, password) =>
-  request(app).post('/api/auth/login').send({ identifier, password });
 
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const manager = await Manager.create({
-    name: 'Me Manager',
-    email: `mgr-me-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
+  // Only referenced as a managerId foreign key below, so it never signs in.
+  const manager = await createManager({ name: 'Me Manager', signIn: false });
 
-  driver = await Driver.create({
+  ({ doc: driver, token: driverToken } = await createDriver({
     name: 'Me Driver',
-    email: `drv-me-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    managerId: manager._id,
-    phoneNumber: '0766518388',
-    isActive: true,
-    isEmailVerified: true
-  });
-
-  driverToken = (await login(driver.email, 'P@ssw0rd!')).body.accessToken;
+    fields: { managerId: manager.id, phoneNumber: '0766518388' }
+  }));
 });
 
 afterAll(async () => {
