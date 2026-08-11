@@ -1,10 +1,9 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Driver = require('../../src/models/Driver');
-const Manager = require('../../src/models/Manager');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createDriver, createManager } = require('./factories');
 
 // POST /api/vehicle/register (a driver self-registering their vehicle) had zero
 // test coverage despite TEST_PLAN_INTEGRATION.md claiming otherwise (issue #18).
@@ -20,31 +19,8 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const driver = await Driver.create({
-    name: 'Reg Driver',
-    email: `drv-vehreg-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-
-  const manager = await Manager.create({
-    name: 'Reg Manager',
-    email: `mgr-vehreg-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-
-  const driverLogin = await request(app).post('/api/auth/login').send({
-    email: driver.email, password: 'P@ssw0rd!'
-  });
-  driverToken = driverLogin.body.accessToken;
-
-  const managerLogin = await request(app).post('/api/auth/login').send({
-    email: manager.email, password: 'P@ssw0rd!'
-  });
-  managerToken = managerLogin.body.accessToken;
+  ({ token: driverToken } = await createDriver({ name: 'Reg Driver' }));
+  ({ token: managerToken } = await createManager({ name: 'Reg Manager' }));
 
   const route = await Route.create({
     routeId: `VEHREG-R-${Date.now()}`,

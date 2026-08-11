@@ -1,16 +1,13 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const SuperAdmin = require('../../src/models/SuperAdmin');
 const Manager = require('../../src/models/Manager');
+const Identity = require('../../src/models/Identity');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createSuperAdmin, authHeader, login: loginAs } = require('./factories');
 
 // Manager provisioning: the super admin creates the account with an email and a
 // password directly. There is no invite email, no activation link and no pending
 // state — the manager can log in the moment the account exists.
-
-async function loginAs(email, password) {
-  return request(app).post('/api/auth/login').send({ email, password });
-}
 
 let superAdminToken;
 
@@ -19,12 +16,7 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Super Admin', email: `sa-prov-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  const res = await loginAs(superAdmin.email, 'P@ssw0rd!');
-  superAdminToken = res.body.accessToken;
+  ({ token: superAdminToken } = await createSuperAdmin({ name: 'Super Admin' }));
 });
 
 afterAll(async () => {
@@ -32,7 +24,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${superAdminToken}`];
+const auth = () => authHeader(superAdminToken);
 
 const GOOD_PASSWORD = 'MgrPass1!';
 
@@ -68,7 +60,9 @@ describe('Manager creation with a directly-set password', () => {
     const email = `dir3-${Date.now()}@t.com`;
     await createManager(email);
 
-    const stored = await Manager.findOne({ email: email.toLowerCase() }).select('+password');
+    // The credential lives on Identity, not the Manager profile — `password` on
+    // an identity-linked profile is a dormant field (see shared/accountFields.js).
+    const stored = await Identity.findOne({ email: email.toLowerCase() }).select('+password');
     expect(stored.password).not.toBe(GOOD_PASSWORD);
     expect(stored.password).toMatch(/^\$2[aby]\$/); // bcrypt hash
   });
