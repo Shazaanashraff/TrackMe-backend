@@ -2,17 +2,75 @@ const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const Identity = require('../models/Identity');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 
-const requestSummary = (enrollment, driver, passenger) => ({
+// A managed rider profile has no email or phone of its own — the manager
+// deciding a request still needs to know which account holder this profile
+// belongs to (docs/modules/PROFILES.md), so this resolves the *account*'s
+// email (from the shared Identity) and phone (from the primary sibling
+// profile) for every MANAGED passenger in one batch. A PRIMARY passenger is
+// its own account: no extra lookup.
+async function resolveAccountsForPassengers(passengers) {
+  const accountByPassengerId = new Map();
+
+  const managed = passengers.filter((p) => p.profileKind === 'MANAGED' && p.identityId);
+  const identityIds = [...new Set(managed.map((p) => String(p.identityId)))];
+
+  let identityById = new Map();
+  let primaryByIdentityId = new Map();
+  if (identityIds.length) {
+    const [identities, primaries] = await Promise.all([
+      Identity.find({ _id: { $in: identityIds } }).select('email').lean(),
+      User.find({ identityId: { $in: identityIds }, profileKind: 'PRIMARY' })
+        .select('identityId phoneNumber name')
+        .lean()
+    ]);
+    identityById = new Map(identities.map((i) => [String(i._id), i]));
+    primaryByIdentityId = new Map(primaries.map((p) => [String(p.identityId), p]));
+  }
+
+  for (const passenger of passengers) {
+    if (passenger.profileKind === 'MANAGED' && passenger.identityId) {
+      const identity = identityById.get(String(passenger.identityId));
+      const primary = primaryByIdentityId.get(String(passenger.identityId));
+      accountByPassengerId.set(String(passenger._id), {
+        name: primary?.name || '',
+        email: identity?.email || '',
+        phoneNumber: primary?.phoneNumber || ''
+      });
+    } else {
+      accountByPassengerId.set(String(passenger._id), {
+        name: passenger.name || '',
+        email: passenger.email || '',
+        phoneNumber: passenger.phoneNumber || ''
+      });
+    }
+  }
+
+  return accountByPassengerId;
+}
+
+const requestSummary = (enrollment, driver, passenger, account) => ({
   _id: enrollment._id,
   status: enrollment.status,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
   driver: driver ? { _id: driver._id, name: driver.name, driverCode: driver.driverCode || null } : null,
   passenger: passenger
-    ? { _id: passenger._id, name: passenger.name, email: passenger.email || '' }
+    ? {
+      _id: passenger._id,
+      name: passenger.name,
+      avatarUrl: passenger.avatarUrl || '',
+      relation: passenger.relation || '',
+      isManagedProfile: passenger.profileKind === 'MANAGED',
+      // Kept populated from the owning account so the existing web-admin
+      // column (which reads passenger.email) does not break for a managed
+      // profile, which has no email of its own.
+      email: passenger.email || account?.email || '',
+      account: account || null
+    }
     : null
 });
 
@@ -74,18 +132,21 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
 
     const passengers = enrollments.length
       ? await User.find({ _id: { $in: enrollments.map((e) => e.userId) } })
-        .select('name email')
+        .select('name email avatarUrl relation profileKind identityId phoneNumber')
         .lean()
       : [];
     const passengerById = new Map(passengers.map((p) => [String(p._id), p]));
+    const accountByPassengerId = await resolveAccountsForPassengers(passengers);
 
-    const data = enrollments.map((enrollment) =>
-      requestSummary(
+    const data = enrollments.map((enrollment) => {
+      const passenger = passengerById.get(String(enrollment.userId));
+      return requestSummary(
         enrollment,
         driverById.get(String(enrollment.driverId)),
-        passengerById.get(String(enrollment.userId))
-      )
-    );
+        passenger,
+        passenger ? accountByPassengerId.get(String(passenger._id)) : null
+      );
+    });
 
     return res.status(200).json({ success: true, data });
   } catch (error) {
@@ -134,12 +195,17 @@ const decide = (approved) => async (req, res, next) => {
 
     await notifyPassenger(enrollment, driver, approved);
 
-    const passenger = await User.findById(enrollment.userId).select('name email').lean();
+    const passenger = await User.findById(enrollment.userId)
+      .select('name email avatarUrl relation profileKind identityId phoneNumber')
+      .lean();
+    const account = passenger
+      ? (await resolveAccountsForPassengers([passenger])).get(String(passenger._id))
+      : null;
 
     return res.status(200).json({
       success: true,
       message: approved ? 'Enrollment approved' : 'Enrollment declined',
-      data: requestSummary(enrollment, driver, passenger)
+      data: requestSummary(enrollment, driver, passenger, account)
     });
   } catch (error) {
     next(error);
