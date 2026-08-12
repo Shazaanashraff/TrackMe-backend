@@ -23,6 +23,68 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-12 — Multiple rider profiles under one account
+- **Branch:** feat/multi-rider-profiles
+- **Modules touched:** auth ([`docs/modules/AUTH.md`](modules/AUTH.md), rewritten — it still
+  described the pre-Identity "four-collection" model), profiles (new —
+  [`docs/modules/PROFILES.md`](modules/PROFILES.md)), notifications
+  ([`docs/modules/NOTIFICATIONS.md`](modules/NOTIFICATIONS.md)), realtime
+  ([`docs/modules/REALTIME.md`](modules/REALTIME.md)), sandbox
+  ([`docs/modules/SANDBOX.md`](modules/SANDBOX.md))
+- **What changed:**
+  - `User` is now the one profile type an `Identity` may hold several of: a `profileKind`
+    (`PRIMARY`/`MANAGED`) field, a scoped unique index so exactly one `PRIMARY` exists per
+    identity, and a `pre('validate')` hook enforcing email-by-kind.
+  - `accountRegistry.loginFilterForRole` makes identity→profile resolution deterministic once
+    several `User` profiles can share an `identityId` — shipped as its own commit *before* the
+    schema change, proven a no-op against the pre-existing single-profile suites.
+  - New `/api/profiles` surface: list, create, update, soft-delete, switch, and a
+    household-scoped enrollments read. `switchProfile` issues tokens through the same
+    `utils/tokens.js`/`utils/accountPayload.js` paths login already uses.
+  - `requireOwnProfile`/`requirePrimaryProfile` guards, plus `req.identityId` on every
+    `protect`ed request. `requireOwnProfile`'s same-identity check is written as two explicit
+    falsy checks, never `String(a)===String(b)` — the null-equality hole that would otherwise let
+    two pre-migration accounts (neither with an `identityId`) read each other's data.
+  - Household fan-out fixes: push tokens resolved across a household
+    (`pushHelper.resolvePushTokensForRider`), notification reads/device-token registration
+    household-scoped, the `student:<id>` socket room joined per household profile, and
+    `attendanceController` grants same-household access — each with the same null-equality
+    discipline as the profile guard.
+  - `managerEnrollmentsController` surfaces the owning account's email/phone for a managed
+    passenger, since it has none of its own.
+  - Derived "Student"/"Employee"/"Passenger" tag (`utils/riderTag.js`) from the enrolled driver's
+    `Organization.serviceType` — never stored on the profile.
+  - `scripts/migrate-rider-profiles.js`: backfills `profileKind`, normalises blank emails, and
+    rebuilds the `users` indexes. `scripts/seed-sandbox.js` seeds two managed profiles under the
+    sandbox rider.
+- **Why:** an account holder (a parent, an office admin) needs to manage and monitor several
+  riders — their children, or staff — from one login, the way Uber lets one account hold several
+  riders.
+- **Contract impact:** new `/api/profiles/*` endpoints (user-app, web-admin's manager-request
+  passenger payload gains `account`/`relation`/`isManagedProfile`/`avatarUrl`, additively —
+  existing `passenger.email` still populates). `userPayload` gains `profileKind`. All three
+  consuming apps' docs updated in the same change.
+- **Tests:** ~25 new integration/unit/ws test files, one per behaviour listed in
+  [`TESTING_GUIDE.md`](TESTING_GUIDE.md)'s new "Rider Profiles" section — including the authz
+  failure cases (cross-identity 404s, the null-equality regression, MANAGED_PROFILE_FORBIDDEN).
+  Also migrated 22 pre-existing integration suites off direct `Model.create({password})` account
+  creation (they predated the Identity model and were silently failing login) — see
+  `tests/integration/factories.js`.
+- **Docs updated:** `docs/modules/AUTH.md` (rewritten), `docs/modules/PROFILES.md` (new),
+  `docs/modules/NOTIFICATIONS.md`, `docs/modules/REALTIME.md`, `docs/modules/SANDBOX.md`,
+  `docs/modules/ADMIN.md` (stub breadcrumb), `docs/README.md`, `docs/TESTING_GUIDE.md`, this file.
+- **Migration:** `scripts/migrate-rider-profiles.js` — dry-run by default, `--apply` to commit,
+  `--verify` to re-check. Must run before deploy; safe to re-run.
+- **Follow-ups / known issues:** live vehicle tracking has no backend producer at all right now
+  (pre-existing, unrelated to this change — see `REALTIME.md`), so the household-enrollments data
+  this change adds has no live position to attach to yet on the map. Also unrelated and
+  pre-existing: `manager-drivers.test.js`'s 3 red cases (a manager-created driver has no
+  `Identity`, so email-based driver login can't work despite the endpoint accepting it), and two
+  unrelated bugs (`route-path.test.js`, `places-proxy.test.js`) — all left untouched, confirmed
+  present on `main` before this branch via a stashed-diff comparison.
+
+---
+
 ## 2026-08-11 — Developer Mode Phase 1: sandbox backend + seed script + /health mode
 - **Branch:** feat/developer-mode-sandbox
 - **Modules touched:** sandbox (new) — [docs/modules/SANDBOX.md](modules/SANDBOX.md)

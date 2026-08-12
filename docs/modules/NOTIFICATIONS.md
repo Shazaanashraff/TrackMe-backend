@@ -69,7 +69,10 @@ All under `/api/notifications` (`src/routes/notificationRoutes.js`), all authent
 | System | `SYSTEM_ALERT` |
 
 Priority: `HIGH` / `MEDIUM` (default). Push tokens live on the account as **`user.pushTokens`
-(an array)** — a user may have several devices.
+(an array)** — a user may have several devices. Under multiple rider profiles ([`PROFILES.md`](PROFILES.md)),
+tokens are only ever registered on the **PRIMARY** profile; `pushHelper.resolvePushTokensForRider`
+unions tokens across a whole household when sending, since a MANAGED profile has no device of
+its own.
 
 > **`BOARDING_EVENT` is not in this enum.** It exists only as `data.type` on the push payload.
 > Don't look for it in the database.
@@ -91,8 +94,14 @@ flowchart TD
 
 ## 6. Authorization & security rules
 
-- Every endpoint is authenticated; a caller only ever reads/mutates **their own** notifications.
-- `POST /device-token` writes to the calling account — tokens are never assigned to another user.
+- Every endpoint is authenticated; a caller reads/mutates their **household's** notifications, not
+  just the currently-active profile's — see [`PROFILES.md`](PROFILES.md). `resolveScopedUserIds`
+  defaults to every profile on the caller's identity, narrowable via `?profileId=` (checked
+  against the household, never trusted from the client outright).
+- `POST /device-token` always writes to the identity's **PRIMARY** profile, regardless of which
+  profile is currently active — a MANAGED profile has no device of its own, and writing to
+  whichever profile happens to be active would move the token off the account holder's record the
+  next time someone switches.
 - `DELETE /admin/cleanup` is guarded by `requireAdmin` (`admin`/`super-admin` only) — a rider or
   driver token gets `403`. It deletes expired `Notification` docs system-wide, not scoped to the
   caller. Covered by `tests/integration/notifications.test.js`.
@@ -135,7 +144,9 @@ flowchart TD
 | Layer | File | What it locks |
 |---|---|---|
 | Integration | `tests/integration/push-helper.test.js` | token filtering, chunking, `NO_TOKENS` skip, error swallow |
-| Integration | `tests/integration/…` | list/unread/read/read-all/delete contracts + per-user scoping |
+| Integration | `tests/integration/push-helper-household.test.js` | `resolvePushTokensForRider` reaching the account holder for a MANAGED scan, de-duplicated across the household |
+| Integration | `tests/integration/notifications.test.js` | list/unread/read/read-all/delete contracts + per-user scoping |
+| Integration | `tests/integration/notifications-household.test.js` | household-scoped reads, `?profileId=`, device-token landing on PRIMARY |
 
 ## 11. Change protocol
 

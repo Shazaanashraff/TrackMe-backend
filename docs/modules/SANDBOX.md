@@ -81,8 +81,11 @@ deliberately exercising that path).
 - `seed-sandbox.js` calls `Model.syncIndexes()` for every model before wiping, so a sandbox
   database left over from an older schema version (e.g. a once-required index that is now sparse)
   doesn't throw a stale duplicate-key error on reseed.
-- Fixtures: 1 superadmin (mirrored `_id`), 2 managers, 4 drivers, 5 routes, 6 vehicles, 12
-  bookings, 3 pending manager vehicle requests.
+- Fixtures: 1 superadmin (mirrored `_id`), 2 managers, 4 drivers, 5 routes, 6 vehicles, 1 sandbox
+  rider (PRIMARY) + 2 managed rider profiles under the same identity (`seedManagedProfiles`,
+  created directly via `User.create` — a managed profile has no login to attach, so it doesn't go
+  through `createIdentityWithProfile`), 12 bookings, 3 pending manager vehicle requests. See
+  [`PROFILES.md`](PROFILES.md).
 
 ## 9. Known gotchas / regressions
 

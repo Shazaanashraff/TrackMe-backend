@@ -11,7 +11,10 @@ cross-cutting reference.
 
 ## Modules (per domain — start here)
 - **[modules/AUTH.md](modules/AUTH.md)** — register/verify/login/Google, JWT + refresh, password
-  reset, profile/avatar, the four-collection account model and role guards.
+  reset, profile/avatar, the Identity + role-profile account model and role guards.
+- **[modules/PROFILES.md](modules/PROFILES.md)** — multiple rider profiles under one account (a
+  parent's children, an office's staff): profileKind, the household reads, and the authz guards
+  a multi-profile identity needs.
 - **[modules/PRIVATE_ROUTES.md](modules/PRIVATE_ROUTES.md)** — room key (AES-GCM + HMAC), lockout,
   join approval, membership, socket enforcement.
 - **[modules/SANDBOX.md](modules/SANDBOX.md)** — Developer Mode's second backend process +
