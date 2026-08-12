@@ -2,7 +2,7 @@ const request = require('supertest');
 const app = require('../../src/server');
 const { _normalizeRoute, _groupRoutes, _pruneRedundant } = require('../../src/controllers/transitController');
 
-// A trimmed Google Routes API TRANSIT route (walk -> bus -> walk).
+// A trimmed Google Routes API TRANSIT route (walk -> vehicle -> walk).
 const sampleRoute = {
   duration: '1620s',
   polyline: { encodedPolyline: 'abc123' },
@@ -15,8 +15,8 @@ const sampleRoute = {
         staticDuration: '1380s',
         polyline: { encodedPolyline: 'bus1' },
         transitDetails: {
-          transitLine: { nameShort: '100', name: 'Panadura-Pettah', vehicle: { type: 'BUS' } },
-          stopDetails: { departureStop: { name: 'Pettah Bus Stop' }, arrivalStop: { name: 'Wellawatte' } },
+          transitLine: { nameShort: '100', name: 'Panadura-Pettah', vehicle: { type: 'VEHICLE' } },
+          stopDetails: { departureStop: { name: 'Pettah Vehicle Stop' }, arrivalStop: { name: 'Wellawatte' } },
           stopCount: 22,
           headsign: 'Panadura',
           headway: '480s',
@@ -31,9 +31,9 @@ const sampleRoute = {
 describe('transit _normalizeRoute', () => {
   const r = _normalizeRoute(sampleRoute);
 
-  it('extracts the bus line and durations', () => {
+  it('extracts the vehicle line and durations', () => {
     expect(r.durationSec).toBe(1620);
-    expect(r.buses).toEqual(['100']);
+    expect(r.vehicles).toEqual(['100']);
     expect(r.transfers).toBe(0);
     expect(r.departureTime).toBe('15.29');
     expect(r.arrivalTime).toBe('15.52');
@@ -46,19 +46,19 @@ describe('transit _normalizeRoute', () => {
 
   it('keeps every step in order with geometry + durations', () => {
     const types = r.legs.map((l) => l.type);
-    expect(types).toEqual(['WALK', 'WALK', 'BUS', 'WALK']);
-    const bus = r.legs.find((l) => l.type === 'BUS');
-    expect(bus.stops).toBe(22);
-    expect(bus.headwaySec).toBe(480);
-    expect(bus.durationSec).toBe(1380);
-    expect(bus.polyline).toBe('bus1');
+    expect(types).toEqual(['WALK', 'WALK', 'VEHICLE', 'WALK']);
+    const vehicle = r.legs.find((l) => l.type === 'VEHICLE');
+    expect(vehicle.stops).toBe(22);
+    expect(vehicle.headwaySec).toBe(480);
+    expect(vehicle.durationSec).toBe(1380);
+    expect(vehicle.polyline).toBe('bus1');
     expect(r.legs[0].polyline).toBe('w1');
     expect(r.legs[0].durationSec).toBe(60);
   });
 });
 
-describe('transit _groupRoutes (Maps-style interchangeable-bus grouping)', () => {
-  // Two "direct" trips with the SAME board->alight, different bus line.
+describe('transit _groupRoutes (Maps-style interchangeable-vehicle grouping)', () => {
+  // Two "direct" trips with the SAME board->alight, different vehicle line.
   const directA = mkDirect('3', 'Brandiyawatta', 'Colombo Fort', 4440, 2581);
   const directB = mkDirect('98', 'Brandiyawatta', 'Colombo Fort', 4470, 2681);
   // A genuinely different trip (different alight).
@@ -66,26 +66,26 @@ describe('transit _groupRoutes (Maps-style interchangeable-bus grouping)', () =>
 
   function mkDirect(line, board, alight, durationSec, walkMeters) {
     return {
-      durationSec, walkMeters, transfers: 0, buses: [line],
+      durationSec, walkMeters, transfers: 0, vehicles: [line],
       legs: [
         { type: 'WALK', meters: walkMeters, durationSec: 600 },
-        { type: 'BUS', line, board, alight, stops: 10, durationSec: durationSec - 600 },
+        { type: 'VEHICLE', line, board, alight, stops: 10, durationSec: durationSec - 600 },
       ],
     };
   }
 
-  it('collapses interchangeable buses (same board->alight) into ONE option', () => {
+  it('collapses interchangeable vehicles (same board->alight) into ONE option', () => {
     const out = _groupRoutes([directA, directB]);
     expect(out).toHaveLength(1);
-    const busLeg = out[0].legs.find((l) => l.type === 'BUS');
-    expect(busLeg.lines).toEqual(['3', '98']); // both lines listed on the leg
-    expect(busLeg.line).toBe('3');             // primary (fastest member)
+    const vehicleLeg = out[0].legs.find((l) => l.type === 'VEHICLE');
+    expect(vehicleLeg.lines).toEqual(['3', '98']); // both lines listed on the leg
+    expect(vehicleLeg.line).toBe('3');             // primary (fastest member)
   });
 
   it('keeps structurally different trips separate', () => {
     const out = _groupRoutes([directA, directB, other]);
     expect(out).toHaveLength(2);
-    expect(out.map((r) => r.legs.find((l) => l.type === 'BUS').lines.join('/')).sort())
+    expect(out.map((r) => r.legs.find((l) => l.type === 'VEHICLE').lines.join('/')).sort())
       .toEqual(['138', '3/98']);
   });
 
@@ -96,39 +96,39 @@ describe('transit _groupRoutes (Maps-style interchangeable-bus grouping)', () =>
 });
 
 describe('transit _pruneRedundant (drop only redundant worse options)', () => {
-  // direct option whose first bus leg can be 98 OR 3
+  // direct option whose first vehicle leg can be 98 OR 3
   const direct = {
     durationSec: 3120, walkMeters: 960, transfers: 0,
-    legs: [{ type: 'WALK', meters: 960 }, { type: 'BUS', line: '98', lines: ['98', '3'], board: 'X', alight: 'Pettah' }],
+    legs: [{ type: 'WALK', meters: 960 }, { type: 'VEHICLE', line: '98', lines: ['98', '3'], board: 'X', alight: 'Pettah' }],
   };
   // a slower transfer that STARTS with 98 (already offered by `direct`)
   const transferStarting98 = {
     durationSec: 3240, walkMeters: 960, transfers: 1,
-    legs: [{ type: 'BUS', line: '98', lines: ['98'], board: 'X', alight: 'Y' }, { type: 'BUS', line: '100', lines: ['100'], board: 'Y', alight: 'Pettah' }],
+    legs: [{ type: 'VEHICLE', line: '98', lines: ['98'], board: 'X', alight: 'Y' }, { type: 'VEHICLE', line: '100', lines: ['100'], board: 'Y', alight: 'Pettah' }],
   };
-  // a worse trip but starting with a DIFFERENT bus (15-1-1) → a real new choice
-  const transferNewBus = {
+  // a worse trip but starting with a DIFFERENT vehicle (15-1-1) → a real new choice
+  const transferNewVehicle = {
     durationSec: 4000, walkMeters: 3500, transfers: 1,
-    legs: [{ type: 'BUS', line: '15-1-1', lines: ['15-1-1'], board: 'Z', alight: 'Y' }, { type: 'BUS', line: '2', lines: ['2'], board: 'Y', alight: 'Pettah' }],
+    legs: [{ type: 'VEHICLE', line: '15-1-1', lines: ['15-1-1'], board: 'Z', alight: 'Y' }, { type: 'VEHICLE', line: '2', lines: ['2'], board: 'Y', alight: 'Pettah' }],
   };
 
-  it('drops the slower transfer that reuses an already-offered first bus (98/3 case)', () => {
+  it('drops the slower transfer that reuses an already-offered first vehicle (98/3 case)', () => {
     const out = _pruneRedundant([direct, transferStarting98]);
     expect(out).toHaveLength(1);
     expect(out[0]).toBe(direct);
   });
 
-  it('KEEPS a worse option that offers a different first bus (variety preserved)', () => {
-    const out = _pruneRedundant([direct, transferNewBus]);
+  it('KEEPS a worse option that offers a different first vehicle (variety preserved)', () => {
+    const out = _pruneRedundant([direct, transferNewVehicle]);
     expect(out).toHaveLength(2);
   });
 
   it('keeps everything when nothing is both worse and lead-covered', () => {
-    const out = _pruneRedundant([direct, transferNewBus, transferStarting98]);
-    // direct + transferNewBus kept; transferStarting98 dropped
+    const out = _pruneRedundant([direct, transferNewVehicle, transferStarting98]);
+    // direct + transferNewVehicle kept; transferStarting98 dropped
     expect(out).toHaveLength(2);
     expect(out).toContain(direct);
-    expect(out).toContain(transferNewBus);
+    expect(out).toContain(transferNewVehicle);
   });
 });
 
@@ -157,23 +157,23 @@ describe('transit service classification + ordering', () => {
     expect(r.serviceLabel).toBeNull();
   });
 
-  it('flags a wide-stop-spacing bus as express even without a known far town', () => {
+  it('flags a wide-stop-spacing vehicle as express even without a known far town', () => {
     // 40 km over 5 stops = 8 km/stop -> skips local stops.
     const r = _normalizeRoute(raw('Some-Local-Sounding', 'X', 5, 40000));
     expect(r.serviceClass).toBe('EXPRESS');
   });
 
   const mk = (line, cls, dur, board = 'X') => ({
-    durationSec: dur, walkMeters: 100, transfers: 0, buses: [line], serviceClass: cls,
-    legs: [{ type: 'BUS', line, board, alight: 'Pettah', serviceClass: cls }],
+    durationSec: dur, walkMeters: 100, transfers: 0, vehicles: [line], serviceClass: cls,
+    legs: [{ type: 'VEHICLE', line, board, alight: 'Pettah', serviceClass: cls }],
   });
 
-  it('a leg served by a local OR long-distance bus counts as local (rider can pick local)', () => {
+  it('a leg served by a local OR long-distance vehicle counts as local (rider can pick local)', () => {
     const out = _groupRoutes([mk('2', 'LONG_DISTANCE', 3000), mk('400', 'LOCAL', 3300)]);
     expect(out).toHaveLength(1);
-    const bus = out[0].legs.find((l) => l.type === 'BUS');
-    expect(bus.serviceClass).toBe('LOCAL');
-    expect(bus.lines).toEqual(['400', '2']); // local listed first
+    const vehicle = out[0].legs.find((l) => l.type === 'VEHICLE');
+    expect(vehicle.serviceClass).toBe('LOCAL');
+    expect(vehicle.lines).toEqual(['400', '2']); // local listed first
     expect(out[0].serviceClass).toBe('LOCAL');
   });
 

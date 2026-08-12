@@ -80,9 +80,9 @@ describe('geo utils', () => {
   });
 });
 
-describe('GET /api/bus/stops', () => {
+describe('GET /api/vehicle/stops', () => {
   test('returns a deduped, sorted list of stops with coordinates', async () => {
-    const res = await request(app).get('/api/bus/stops');
+    const res = await request(app).get('/api/vehicle/stops');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data)).toBe(true);
@@ -96,9 +96,9 @@ describe('GET /api/bus/stops', () => {
   });
 });
 
-describe('GET /api/bus/routes/plan', () => {
+describe('GET /api/vehicle/routes/plan', () => {
   test('matches a direct route in the correct direction', async () => {
-    const res = await request(app).get('/api/bus/routes/plan').query({
+    const res = await request(app).get('/api/vehicle/routes/plan').query({
       fromLat: AVISSAWELLA.lat,
       fromLng: AVISSAWELLA.lng,
       toLat: KADUWELA.lat,
@@ -120,7 +120,7 @@ describe('GET /api/bus/routes/plan', () => {
   });
 
   test('does NOT match when the trip runs against the route direction', async () => {
-    const res = await request(app).get('/api/bus/routes/plan').query({
+    const res = await request(app).get('/api/vehicle/routes/plan').query({
       fromLat: KADUWELA.lat,
       fromLng: KADUWELA.lng,
       toLat: AVISSAWELLA.lat,
@@ -132,7 +132,7 @@ describe('GET /api/bus/routes/plan', () => {
   });
 
   test('returns no matches when both points are far from every stop', async () => {
-    const res = await request(app).get('/api/bus/routes/plan').query({
+    const res = await request(app).get('/api/vehicle/routes/plan').query({
       fromLat: 7.9,
       fromLng: 81.0, // out east, far from any seeded stop
       toLat: 8.0,
@@ -143,7 +143,7 @@ describe('GET /api/bus/routes/plan', () => {
   });
 
   test('rejects requests missing coordinates with 400', async () => {
-    const res = await request(app).get('/api/bus/routes/plan').query({
+    const res = await request(app).get('/api/vehicle/routes/plan').query({
       fromLat: AVISSAWELLA.lat,
       fromLng: AVISSAWELLA.lng,
       // toLat / toLng omitted

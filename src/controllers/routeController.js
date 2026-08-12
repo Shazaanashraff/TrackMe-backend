@@ -1,6 +1,29 @@
 const Route = require('../models/Route');
+const ManagerAuditLog = require('../models/ManagerAuditLog');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
+// A super-admin may edit any route. A manager may only edit a route they own
+// (managerId set on create) — a route with no manager owner (super-admin
+// created) is super-admin-only.
+const isRouteOwner = (user, route) =>
+  user.role === 'super-admin' ||
+  (user.role === 'admin' && !!route.managerId && route.managerId.toString() === user._id.toString());
+
+// A route with no manager owner (super-admin created) has no manager audit
+// trail to attach to — only log when an owning manager exists.
+const writeRouteAuditLog = async ({ user, route, action, metadata }) => {
+  if (!route.managerId) return;
+  await ManagerAuditLog.create({
+    managerId: route.managerId,
+    actorId: user._id,
+    actorRole: user.role,
+    action,
+    entityType: 'ROUTE',
+    entityId: route.routeId,
+    metadata
+  });
+};
 
 // @desc    Create a new route (admin only)
 // @route   POST /api/routes
@@ -35,7 +58,10 @@ exports.createRoute = async (req, res, next) => {
       stopsCount: normalizedStops.length,
       stops: normalizedStops,
       qrEnabled: !!qrEnabled,
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      // Only a Manager account owns a route; a super-admin-created route has no
+      // single manager owner and stays editable by any super-admin only.
+      managerId: req.user.role === 'admin' ? req.user._id : null
     });
 
     res.status(201).json({
@@ -48,26 +74,14 @@ exports.createRoute = async (req, res, next) => {
   }
 };
 
-// PUBLIC routes, or unhidden PRIVATE routes shown as locked stubs (no stops/geometry)
-// per the Private Routes feature. Hidden PRIVATE routes (incl. migrated custom-route
-// shuttles) never appear here — see PRIVATE_ROUTES_PLAN.md §5.3.
-const listableRouteFilter = () => ({
-  $or: [
-    { visibility: 'PUBLIC' },
-    { visibility: 'PRIVATE', isHidden: { $ne: true } }
-  ]
-});
+// Every route is listable now that private routes are gone; geometry is still
+// trimmed from list responses to keep them small.
+const listableRouteFilter = () => ({});
 
 const projectListedRoute = (route) => {
-  const isPrivate = route.visibility === 'PRIVATE';
   const plain = route.toObject ? route.toObject() : route;
-  const { stops, pathPolyline, pathPolylineReturn, roomKey, ...rest } = plain;
-  return {
-    ...rest,
-    isPrivate,
-    requiresApproval: isPrivate ? !!route.joinApprovalRequired : false,
-    locked: isPrivate
-  };
+  const { stops, pathPolyline, pathPolylineReturn, ...rest } = plain;
+  return rest;
 };
 
 // @desc    Get all routes
@@ -90,7 +104,7 @@ exports.getAllRoutes = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy simBusCount createdAt visibility isHidden joinApprovalRequired');
+      .select('routeId routeName source destination distance estimatedTime fare serviceType stopsCount isActive province createdBy createdAt');
 
     res.status(200).json({
       success: true,
@@ -109,7 +123,7 @@ exports.getRouteById = async (req, res, next) => {
     const { routeId } = req.params;
 
     // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
-    const route = await Route.findOne({ routeId, isDeleted: false, visibility: 'PUBLIC' });
+    const route = await Route.findOne({ routeId, isDeleted: false });
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
@@ -144,15 +158,26 @@ exports.updateRoute = async (req, res, next) => {
       delete updateData.estimatedTime;
     }
 
+    const existing = await Route.findOne({ routeId, isDeleted: false });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, existing)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
     const route = await Route.findOneAndUpdate(
       { routeId, isDeleted: false },
       { ...updateData },
       { new: true, runValidators: true }
     );
 
-    if (!route) {
-      return res.status(404).json({ success: false, message: 'Route not found' });
-    }
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_UPDATED',
+      metadata: { fields: Object.keys(updateData) }
+    });
 
     res.status(200).json({
       success: true,
@@ -170,6 +195,14 @@ exports.deleteRoute = async (req, res, next) => {
   try {
     const { routeId } = req.params;
 
+    const existing = await Route.findOne({ routeId, isDeleted: false });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    if (!isRouteOwner(req.user, existing)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
+
     const route = await Route.findOneAndUpdate(
       { routeId, isDeleted: false },
       { isDeleted: true, isActive: false },
@@ -179,6 +212,13 @@ exports.deleteRoute = async (req, res, next) => {
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
+
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_DELETED',
+      metadata: null
+    });
 
     res.status(200).json({
       success: true,
@@ -208,7 +248,7 @@ exports.getRoutesPaginated = async (req, res, next) => {
     }
 
     const routes = await Route.find(filter)
-      .select('-stops -pathPolyline -pathPolylineReturn -roomKey')
+      .select('-stops -pathPolyline -pathPolylineReturn')
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -240,9 +280,19 @@ exports.toggleRouteStatus = async (req, res, next) => {
     if (!route) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
+    if (!isRouteOwner(req.user, route)) {
+      return res.status(403).json({ success: false, message: 'Route not found or not owned by this manager' });
+    }
 
     route.isActive = !route.isActive;
     await route.save();
+
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_STATUS_TOGGLED',
+      metadata: { isActive: route.isActive }
+    });
 
     res.status(200).json({
       success: true,
@@ -259,19 +309,22 @@ exports.toggleRouteStatus = async (req, res, next) => {
 exports.getRoutesStats = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
-    const totalRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC' });
-    const activeRoutes = await Route.countDocuments({ isDeleted: false, visibility: 'PUBLIC', isActive: true });
+    const [stats] = await Route.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          active: [{ $match: { isActive: true } }, { $count: 'count' }],
+          averages: [
+            { $group: { _id: null, avgDistance: { $avg: '$distance' }, avgEstimatedTime: { $avg: '$estimatedTime' } } }
+          ]
+        }
+      }
+    ]);
+
+    const totalRoutes = stats.total[0]?.count || 0;
+    const activeRoutes = stats.active[0]?.count || 0;
     const inactiveRoutes = totalRoutes - activeRoutes;
-
-    const avgDistance = await Route.aggregate([
-      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
-      { $group: { _id: null, avg: { $avg: '$distance' } } }
-    ]);
-
-    const avgEstimatedTime = await Route.aggregate([
-      { $match: { isDeleted: false, visibility: 'PUBLIC' } },
-      { $group: { _id: null, avg: { $avg: '$estimatedTime' } } }
-    ]);
 
     res.status(200).json({
       success: true,
@@ -279,8 +332,8 @@ exports.getRoutesStats = async (req, res, next) => {
         totalRoutes,
         activeRoutes,
         inactiveRoutes,
-        avgDistance: avgDistance[0]?.avg || 0,
-        avgEstimatedTime: avgEstimatedTime[0]?.avg || 0
+        avgDistance: stats.averages[0]?.avgDistance || 0,
+        avgEstimatedTime: stats.averages[0]?.avgEstimatedTime || 0
       }
     });
   } catch (error) {

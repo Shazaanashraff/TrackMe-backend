@@ -8,7 +8,7 @@ Unit tests cover pure helpers, validation rules, and small utilities that do not
 ### Middleware and Validation
 | Item | Test focus | Notes |
 |---|---|---|
-| middleware/auth.js (protect, requireDriver, requireAdmin, requireManager, requireSuperAdmin) | role matrix and token parsing | Prefer integration for full behavior, but keep unit checks for role filtering and error branches |
+| middleware/auth.js (protect, requireDriver, requireManagerOrAbove, requireManager, requireSuperAdmin) | role matrix and token parsing | Prefer integration for full behavior, but keep unit checks for role filtering and error branches |
 | middleware/validators.js | validation rules per endpoint | Validate required fields, type errors, and boundary conditions |
 | middleware/errorHandler.js | error formatting | Ensure consistent message and status shaping |
 

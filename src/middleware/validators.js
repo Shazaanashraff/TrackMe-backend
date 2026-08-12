@@ -1,6 +1,8 @@
 const { body, param, query } = require('express-validator');
+const { looksLikeDriverCode } = require('../utils/driverCode');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Route Validation Rules
 exports.validateCreateRoute = [
@@ -105,16 +107,16 @@ exports.validateRouteId = [
     .notEmpty().withMessage('Route ID is required')
 ];
 
-// Bus Validation Rules
-exports.validateCreateBus = [
-  body('busId')
+// Vehicle Validation Rules
+exports.validateCreateVehicle = [
+  body('vehicleId')
     .trim()
-    .notEmpty().withMessage('Bus ID is required')
-    .matches(/^[A-Z0-9\-_]+$/).withMessage('Bus ID must contain only alphanumeric characters, hyphens, and underscores'),
-  body('busName')
+    .notEmpty().withMessage('Vehicle ID is required')
+    .matches(/^[A-Z0-9\-_]+$/).withMessage('Vehicle ID must contain only alphanumeric characters, hyphens, and underscores'),
+  body('vehicleName')
     .trim()
-    .notEmpty().withMessage('Bus name is required')
-    .isLength({ min: 2, max: 50 }).withMessage('Bus name must be between 2 and 50 characters'),
+    .notEmpty().withMessage('Vehicle name is required')
+    .isLength({ min: 2, max: 50 }).withMessage('Vehicle name must be between 2 and 50 characters'),
   body('registrationNumber')
     .trim()
     .notEmpty().withMessage('Registration number is required')
@@ -122,11 +124,15 @@ exports.validateCreateBus = [
   body('routeId')
     .trim()
     .notEmpty().withMessage('Route ID is required'),
+  // Optional since drivers are no longer asked for a seat count when they
+  // register a vehicle. The bounds still apply to anything that does send one
+  // (seat-map bookings read it — see bookingController.getAvailableSeats).
   body('seatCapacity')
-    .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
-  body('busType')
     .optional()
-    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid bus type'),
+    .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
+  body('vehicleType')
+    .optional()
+    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid vehicle type'),
   body('serviceType')
     .optional()
     .isIn(SERVICE_TYPES).withMessage('Invalid service type'),
@@ -144,17 +150,17 @@ exports.validateCreateBus = [
     .isISO8601().withMessage('Invalid date format')
 ];
 
-exports.validateUpdateBus = [
-  body('busName')
+exports.validateUpdateVehicle = [
+  body('vehicleName')
     .optional()
     .trim()
-    .isLength({ min: 2, max: 50 }).withMessage('Bus name must be between 2 and 50 characters'),
+    .isLength({ min: 2, max: 50 }).withMessage('Vehicle name must be between 2 and 50 characters'),
   body('seatCapacity')
     .optional()
     .isInt({ min: 1, max: 100 }).withMessage('Seat capacity must be between 1 and 100'),
-  body('busType')
+  body('vehicleType')
     .optional()
-    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid bus type'),
+    .isIn(['AC', 'NON-AC', 'DELUXE', 'SLEEPER']).withMessage('Invalid vehicle type'),
   body('serviceType')
     .optional()
     .isIn(SERVICE_TYPES).withMessage('Invalid service type'),
@@ -175,10 +181,10 @@ exports.validateUpdateBus = [
     .isISO8601().withMessage('Invalid date format')
 ];
 
-exports.validateBusId = [
-  param('busId')
+exports.validateVehicleId = [
+  param('vehicleId')
     .trim()
-    .notEmpty().withMessage('Bus ID is required')
+    .notEmpty().withMessage('Vehicle ID is required')
 ];
 
 // Auth Validation Rules
@@ -200,11 +206,18 @@ exports.validateRegister = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
+// Sign-in accepts an email or a driver code (drivers may have no email), sent as
+// either `identifier` or the original `email` field. The shape check happens
+// here; which account it belongs to is the controller's business.
 exports.validateLogin = [
-  body('email')
-    .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email format'),
+  body(['identifier', 'email'])
+    .custom((_value, { req }) => {
+      const raw = String(req.body?.identifier ?? req.body?.email ?? '').trim();
+      if (!raw) throw new Error('Email or driver ID is required');
+      if (looksLikeDriverCode(raw)) return true;
+      if (!EMAIL_REGEX.test(raw)) throw new Error('Enter a valid email address or driver ID');
+      return true;
+    }),
   body('password')
     .notEmpty().withMessage('Password is required')
 ];
@@ -267,6 +280,9 @@ exports.validateForgotPasswordReset = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
+const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
+const ORG_SERVICE_TYPES = ['SCHOOL', 'UNIVERSITY', 'OFFICE'];
+
 exports.validateCreateManager = [
   body('name')
     .trim()
@@ -276,9 +292,20 @@ exports.validateCreateManager = [
     .trim()
     .notEmpty().withMessage('Email is required')
     .isEmail().withMessage('Invalid email format'),
+  // The super admin sets the manager's password directly at creation time.
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character'),
+  body('serviceType')
+    .optional()
+    .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
+  body('organizationId')
+    .optional({ nullable: true })
+    .isMongoId().withMessage('Invalid organization id')
 ];
 
 exports.validateUpdateManager = [
@@ -289,7 +316,23 @@ exports.validateUpdateManager = [
   body('email')
     .optional()
     .trim()
-    .isEmail().withMessage('Invalid email format')
+    .isEmail().withMessage('Invalid email format'),
+  body('serviceType')
+    .optional()
+    .isIn(MANAGER_SERVICE_TYPES).withMessage('Invalid service type'),
+  body('organizationId')
+    .optional({ nullable: true })
+    .isMongoId().withMessage('Invalid organization id')
+];
+
+exports.validateCreateOrganization = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('Organization name is required')
+    .isLength({ min: 2, max: 120 }).withMessage('Organization name must be between 2 and 120 characters'),
+  body('serviceType')
+    .notEmpty().withMessage('Service type is required')
+    .isIn(ORG_SERVICE_TYPES).withMessage('Organizations only exist for school, university, or office services')
 ];
 
 exports.validateManagerId = [
@@ -302,22 +345,43 @@ exports.validateManagerStatus = [
     .isBoolean().withMessage('isActive must be boolean')
 ];
 
+// The super admin sets a manager's password directly, with no emailed link.
 exports.validateManagerPasswordReset = [
+  body('password')
+    .notEmpty().withMessage('Password is required')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
+];
+
+// Public invite/reset link endpoints (manager sets their own password).
+exports.validateAccountSetupValidate = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token is required')
+];
+
+exports.validateAccountSetupComplete = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token is required'),
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
 ];
 
-exports.validateAssignBuses = [
-  body('busIds')
-    .isArray({ min: 1 }).withMessage('busIds must be a non-empty array'),
-  body('busIds.*')
-    .isMongoId().withMessage('Each busId must be a valid Mongo ID')
+exports.validateAssignVehicles = [
+  body('vehicleIds')
+    .isArray({ min: 1 }).withMessage('vehicleIds must be a non-empty array'),
+  body('vehicleIds.*')
+    .isMongoId().withMessage('Each vehicleId must be a valid Mongo ID')
 ];
 
-exports.validateCreateBusReview = [
-  body('busId')
-    .isMongoId().withMessage('Valid busId is required'),
+exports.validateCreateVehicleReview = [
+  body('vehicleId')
+    .isMongoId().withMessage('Valid vehicleId is required'),
   body('rating')
     .isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
   body('title')
@@ -330,7 +394,7 @@ exports.validateCreateBusReview = [
     .isLength({ max: 1200 }).withMessage('Comment cannot exceed 1200 characters')
 ];
 
-exports.validateUpdateBusReview = [
+exports.validateUpdateVehicleReview = [
   body('rating')
     .optional()
     .isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
@@ -349,7 +413,18 @@ exports.validateReviewId = [
     .isMongoId().withMessage('Invalid review id')
 ];
 
-exports.validateBusObjectId = [
-  param('busId')
-    .isMongoId().withMessage('Invalid bus id')
+exports.validateVehicleObjectId = [
+  param('vehicleId')
+    .isMongoId().withMessage('Invalid vehicle id')
+];
+
+exports.validateVehicleRequestId = [
+  param('requestId')
+    .isMongoId().withMessage('Invalid request id')
+];
+
+exports.validateManagerIdQuery = [
+  query('managerId')
+    .optional()
+    .isMongoId().withMessage('Invalid manager id')
 ];

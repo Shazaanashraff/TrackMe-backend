@@ -14,7 +14,7 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const account = await findAccountById(decoded.id, decoded.role);
 
     if (!account) {
@@ -36,7 +36,7 @@ const protect = async (req, res, next) => {
 
 // Attaches req.user if a valid Bearer token is present; never blocks the request.
 // Used by endpoints that stay public for PUBLIC routes but need to recognize an
-// authenticated member for PRIVATE routes (e.g. bus/ETA reads).
+// authenticated member for PRIVATE routes (e.g. vehicle/ETA reads).
 const optionalAuth = async (req, res, next) => {
   try {
     let token;
@@ -45,7 +45,7 @@ const optionalAuth = async (req, res, next) => {
     }
     if (!token) return next();
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const account = await findAccountById(decoded.id, decoded.role);
     if (account && account.doc.isActive !== false) {
       req.user = account.doc;
@@ -87,7 +87,14 @@ const requireUser = (req, res, next) => {
   }
 };
 
-const requireAdmin = requireRoles('admin', 'super-admin');
+// NOTE: the 'admin' role string identifies Manager profiles (see accountRegistry) — it is not
+// the super-admin role. Reach for requireSuperAdmin, never requireManagerOrAbove, when a route
+// must be restricted to super-admins only.
+// Manager-or-super-admin gate. Previously named `requireAdmin`, which read as "admin role only"
+// but actually granted both 'admin' (manager) and 'super-admin' — a footgun for anyone adding a
+// genuinely super-admin-only route and reaching for the strictest-sounding name.
+const requireManagerOrAbove = requireRoles('admin', 'super-admin');
+// Manager-only gate ('admin' role string == Manager profile).
 const requireManager = requireRoles('admin');
 const requireSuperAdmin = requireRoles('super-admin');
 
@@ -97,7 +104,7 @@ module.exports = {
   requireRoles,
   requireDriver,
   requireUser,
-  requireAdmin,
+  requireManagerOrAbove,
   requireManager,
   requireSuperAdmin
 };

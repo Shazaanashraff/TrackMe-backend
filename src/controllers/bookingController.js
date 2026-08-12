@@ -1,5 +1,5 @@
 const Booking = require('../models/Booking');
-const Bus = require('../models/Bus');
+const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
 const Route = require('../models/Route');
 const { validationResult } = require('express-validator');
@@ -34,7 +34,7 @@ const createBooking = async (req, res) => {
 
     const userId = req.user.id;
     const {
-      busId,
+      vehicleId,
       routeId,
       seatNumbers,
       journeyDate,
@@ -45,15 +45,23 @@ const createBooking = async (req, res) => {
       totalPrice
     } = req.body;
 
-    // Verify bus exists
-    const bus = await Bus.findById(busId);
-    if (!bus) {
-      return res.status(404).json({ message: 'Bus not found' });
+    const { end: journeyEndOfDay } = getStartAndEndOfDay(journeyDate);
+    if (Number.isNaN(journeyEndOfDay.getTime())) {
+      return res.status(400).json({ message: 'Invalid journeyDate' });
+    }
+    if (journeyEndOfDay.getTime() < Date.now()) {
+      return res.status(400).json({ message: 'journeyDate cannot be in the past' });
     }
 
-    if (!bus.bookingEnabled) {
+    // Verify vehicle exists
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    if (!vehicle.bookingEnabled) {
       return res.status(403).json({
-        message: 'Booking is currently disabled for this bus'
+        message: 'Booking is currently disabled for this vehicle'
       });
     }
 
@@ -87,11 +95,11 @@ const createBooking = async (req, res) => {
       return res.status(400).json({ message: 'Invalid pickup or dropoff stop' });
     }
 
-    // Check if seats are already booked for this bus on this date
+    // Check if seats are already booked for this vehicle on this date
     const { start, end } = getStartAndEndOfDay(journeyDate);
 
     const existingBookings = await Booking.find({
-      busId,
+      vehicleId,
       journeyDate: {
         $gte: start,
         $lte: end
@@ -117,13 +125,13 @@ const createBooking = async (req, res) => {
     // Create booking
     const booking = new Booking({
       userId,
-      busId,
+      vehicleId,
       routeId,
       seatNumbers: requestedSeats,
       totalPassengers: passengerDetails?.length || 1,
       pricePerSeat,
       totalPrice,
-      serviceType: bus.serviceType || 'PUBLIC',
+      serviceType: vehicle.serviceType || 'PUBLIC',
       journeyDate: new Date(journeyDate),
       pickupStop: normalizeStop(pickupStop),
       dropoffStop: normalizeStop(dropoffStop),
@@ -134,7 +142,7 @@ const createBooking = async (req, res) => {
     await booking.save();
 
     // Populate references for response
-    await booking.populate(['userId', 'busId', 'routeId']);
+    await booking.populate(['userId', 'vehicleId', 'routeId']);
 
     return res.status(201).json({
       message: 'Booking created successfully',
@@ -159,7 +167,7 @@ const getBooking = async (req, res) => {
 
     const booking = await Booking.findById(bookingId)
       .populate('userId', 'name email phone')
-      .populate('busId', 'busName registrationNumber busType')
+      .populate('vehicleId', 'vehicleName registrationNumber vehicleType')
       .populate('routeId', 'source destination fare');
 
     if (!booking) {
@@ -191,7 +199,7 @@ const getUserBookings = async (req, res) => {
     if (status) query.status = status;
 
     const bookings = await Booking.find(query)
-      .populate('busId', 'busName registrationNumber busType')
+      .populate('vehicleId', 'vehicleName registrationNumber vehicleType')
       .populate('routeId', 'source destination')
       .sort({ journeyDate: -1 })
       .limit(limit * 1)
@@ -215,29 +223,29 @@ const getUserBookings = async (req, res) => {
 };
 
 /**
- * GET /api/bookings/bus/:busId/available-seats
- * Get available seats for a bus on a specific date
+ * GET /api/bookings/vehicle/:vehicleId/available-seats
+ * Get available seats for a vehicle on a specific date
  */
 const getAvailableSeats = async (req, res) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
     const { journeyDate } = req.query;
 
     if (!journeyDate) {
       return res.status(400).json({ message: 'journeyDate required' });
     }
 
-    // Get bus details
-    const bus = await Bus.findById(busId);
-    if (!bus) {
-      return res.status(404).json({ message: 'Bus not found' });
+    // Get vehicle details
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
     }
 
     // Get all booked seats for this date
     const { start, end } = getStartAndEndOfDay(journeyDate);
 
     const bookings = await Booking.find({
-      busId,
+      vehicleId,
       journeyDate: {
         $gte: start,
         $lte: end
@@ -250,13 +258,13 @@ const getAvailableSeats = async (req, res) => {
       return [...acc, ...booking.seatNumbers];
     }, []);
 
-    // Generate all seat numbers based on bus capacity
-    const totalSeats = bus.seatCapacity || 45;
+    // Generate all seat numbers based on vehicle capacity
+    const totalSeats = vehicle.seatCapacity || 45;
     const allSeats = Array.from({ length: totalSeats }, (_, i) => i + 1);
     const availableSeats = allSeats.filter(seat => !bookedSeats.includes(seat));
 
     return res.json({
-      busId,
+      vehicleId,
       journeyDate,
       totalSeats,
       bookedSeats: bookedSeats.length,
@@ -302,7 +310,7 @@ const confirmPayment = async (req, res) => {
 
     await booking.save();
 
-    await booking.populate(['busId', 'routeId']);
+    await booking.populate(['vehicleId', 'routeId']);
 
     return res.json({
       message: 'Payment confirmed and booking confirmed',
@@ -368,16 +376,16 @@ const cancelBooking = async (req, res) => {
 };
 
 /**
- * GET /api/bookings/bus/:busId/bookings
- * Get bookings for a specific bus (for driver)
+ * GET /api/bookings/vehicle/:vehicleId/bookings
+ * Get bookings for a specific vehicle (for driver)
  */
-const getBusBookings = async (req, res) => {
+const getVehicleBookings = async (req, res) => {
   try {
-    const { busId } = req.params;
+    const { vehicleId } = req.params;
     const { journeyDate } = req.query;
 
     const query = {
-      busId,
+      vehicleId,
       status: 'CONFIRMED',
       isDeleted: false
     };
@@ -397,14 +405,14 @@ const getBusBookings = async (req, res) => {
       .lean();
 
     return res.json({
-      busId,
+      vehicleId,
       journeyDate: journeyDate || 'all',
       totalBookings: bookings.length,
       bookings
     });
   } catch (error) {
-    console.error('Get bus bookings error:', error);
-    res.status(500).json({ message: 'Failed to fetch bus bookings', error: error.message });
+    console.error('Get vehicle bookings error:', error);
+    res.status(500).json({ message: 'Failed to fetch vehicle bookings', error: error.message });
   }
 };
 
@@ -454,7 +462,7 @@ const getAdminBookingOverview = async (req, res) => {
       ]),
       Booking.find({ isDeleted: false })
         .populate('userId', 'name email')
-        .populate('busId', 'busName busId')
+        .populate('vehicleId', 'vehicleName vehicleId')
         .populate('routeId', 'routeId source destination')
         .sort({ createdAt: -1 })
         .limit(limitNumber)
@@ -486,6 +494,6 @@ module.exports = {
   getAvailableSeats,
   confirmPayment,
   cancelBooking,
-  getBusBookings,
+  getVehicleBookings,
   getAdminBookingOverview
 };

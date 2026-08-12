@@ -52,7 +52,7 @@ function segmentDistanceKm(stops, from, to) {
 
 /**
  * Project a lat/lng point to local planar metres relative to an origin point,
- * using an equirectangular approximation (accurate enough at bus-route scale).
+ * using an equirectangular approximation (accurate enough at vehicle-route scale).
  */
 function toLocalMeters(origin, point) {
   const latRad = toRad(origin.lat);

@@ -1,9 +1,9 @@
 /**
  * Migration Script: Add serviceType and bookingEnabled fields
  * 
- * This script adds backward-compatible defaults to existing Route, Bus, and Booking documents:
+ * This script adds backward-compatible defaults to existing Route, Vehicle, and Booking documents:
  * - Routes without serviceType default to 'PUBLIC'
- * - Buses without serviceType default to 'PUBLIC' and bookingEnabled defaults to true
+ * - Vehicles without serviceType default to 'PUBLIC' and bookingEnabled defaults to true
  * - Bookings without serviceType default to 'PUBLIC'
  * 
  * Run with: node scripts/migrate-service-types.js
@@ -13,7 +13,7 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 
 const Route = require('../src/models/Route');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const Booking = require('../src/models/Booking');
 
 const MONGO_URI = process.env.MONGOURI;
@@ -32,9 +32,9 @@ const migrate = async () => {
     );
     console.log(`   Updated ${routesResult.modifiedCount} routes with default serviceType='PUBLIC'`);
 
-    // Migrate Buses
-    console.log('\n🚌 Migrating Buses...');
-    const busesResult = await Bus.updateMany(
+    // Migrate Vehicles
+    console.log('\n🚌 Migrating Vehicles...');
+    const vehiclesResult = await Vehicle.updateMany(
       { serviceType: { $exists: false } },
       {
         $set: {
@@ -43,7 +43,7 @@ const migrate = async () => {
         }
       }
     );
-    console.log(`   Updated ${busesResult.modifiedCount} buses with serviceType='PUBLIC' and bookingEnabled=true`);
+    console.log(`   Updated ${vehiclesResult.modifiedCount} vehicles with serviceType='PUBLIC' and bookingEnabled=true`);
 
     // Migrate Bookings
     console.log('\n🎟️  Migrating Bookings...');
@@ -56,19 +56,19 @@ const migrate = async () => {
     // Verification
     console.log('\n✅ Verifying migration...');
     const routesCount = await Route.countDocuments({ serviceType: { $exists: false } });
-    const busesCount = await Bus.countDocuments({ serviceType: { $exists: false } });
+    const vehiclesCount = await Vehicle.countDocuments({ serviceType: { $exists: false } });
     const bookingsCount = await Booking.countDocuments({ serviceType: { $exists: false } });
 
-    if (routesCount === 0 && busesCount === 0 && bookingsCount === 0) {
+    if (routesCount === 0 && vehiclesCount === 0 && bookingsCount === 0) {
       console.log('   ✅ All records migrated successfully!');
       console.log('\n📊 Summary:');
       console.log(`   • ${routesResult.modifiedCount} routes updated`);
-      console.log(`   • ${busesResult.modifiedCount} buses updated`);
+      console.log(`   • ${vehiclesResult.modifiedCount} vehicles updated`);
       console.log(`   • ${bookingsResult.modifiedCount} bookings updated`);
     } else {
       console.warn('   ⚠️  Some records were not migrated:');
       if (routesCount > 0) console.warn(`   • ${routesCount} routes still missing serviceType`);
-      if (busesCount > 0) console.warn(`   • ${busesCount} buses still missing serviceType/bookingEnabled`);
+      if (vehiclesCount > 0) console.warn(`   • ${vehiclesCount} vehicles still missing serviceType/bookingEnabled`);
       if (bookingsCount > 0) console.warn(`   • ${bookingsCount} bookings still missing serviceType`);
     }
 

@@ -1,0 +1,811 @@
+[
+  {
+    "_id": "69cccef2a015f87303254297",
+    "routeId": "ROUTE_A",
+    "routeName": "Main Street - City Center",
+    "source": "Suburb A",
+    "destination": "City Center",
+    "distance": 12.5,
+    "estimatedTime": 0,
+    "fare": 50,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Stop 1",
+        "order": 1,
+        "lat": 28.6139,
+        "lng": 77.209,
+        "_id": "69cccef2a015f87303254298"
+      },
+      {
+        "stopName": "Stop 2",
+        "order": 2,
+        "lat": 28.6239,
+        "lng": 77.219,
+        "_id": "69cccef2a015f87303254299"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-01T07:53:22.497Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b93c",
+    "routeId": "100",
+    "routeName": "Colombo - Kandy Express",
+    "source": "Colombo Fort",
+    "destination": "Kandy Central",
+    "distance": 115,
+    "estimatedTime": 180,
+    "fare": 75,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Fort",
+        "order": 1,
+        "lat": 6.9271,
+        "lng": 79.8353,
+        "_id": "69ce77da6d574fe6a9c1b93d"
+      },
+      {
+        "stopName": "Maharagama Junction",
+        "order": 2,
+        "lat": 6.8167,
+        "lng": 79.8667,
+        "_id": "69ce77da6d574fe6a9c1b93e"
+      },
+      {
+        "stopName": "Kelaniya Temple Junction",
+        "order": 3,
+        "lat": 6.9289,
+        "lng": 80.1281,
+        "_id": "69ce77da6d574fe6a9c1b93f"
+      },
+      {
+        "stopName": "Ambepussa Junction",
+        "order": 4,
+        "lat": 7.1122,
+        "lng": 80.2789,
+        "_id": "69ce77da6d574fe6a9c1b940"
+      },
+      {
+        "stopName": "Rambukkana",
+        "order": 5,
+        "lat": 7.3056,
+        "lng": 80.3817,
+        "_id": "69ce77da6d574fe6a9c1b941"
+      },
+      {
+        "stopName": "Kandy Central (Goods Shed)",
+        "order": 6,
+        "lat": 7.2906,
+        "lng": 80.6328,
+        "_id": "69ce77da6d574fe6a9c1b942"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.744Z",
+    "updatedAt": "2026-07-11T03:39:38.753Z",
+    "visibility": "PUBLIC",
+    "pathPolyline": "}shi@oeifNAAi@RcATMLSDSEOQAWHSNIVeACcCIkFAgBKW{@{@uAs@k@Ee@BKBa@r@eAfCUTWDiAEy@WQUG]Fy@j@oELqAGg@Ke@c@mDCyADaCIA",
+    "pathPolylineReturn": ""
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b943",
+    "routeId": "101",
+    "routeName": "Colombo - Galle Highway",
+    "source": "Colombo Fort",
+    "destination": "Galle",
+    "distance": 119,
+    "estimatedTime": 180,
+    "fare": 77,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Fort",
+        "order": 1,
+        "lat": 6.9271,
+        "lng": 79.8353,
+        "_id": "69ce77da6d574fe6a9c1b944"
+      },
+      {
+        "stopName": "Wellawatta Junction",
+        "order": 2,
+        "lat": 6.8722,
+        "lng": 79.8467,
+        "_id": "69ce77da6d574fe6a9c1b945"
+      },
+      {
+        "stopName": "Mount Lavinia Hotel",
+        "order": 3,
+        "lat": 6.8455,
+        "lng": 79.8631,
+        "_id": "69ce77da6d574fe6a9c1b946"
+      },
+      {
+        "stopName": "Moratuwa Junction",
+        "order": 4,
+        "lat": 6.8019,
+        "lng": 79.8767,
+        "_id": "69ce77da6d574fe6a9c1b947"
+      },
+      {
+        "stopName": "Panadura",
+        "order": 5,
+        "lat": 6.7313,
+        "lng": 79.8917,
+        "_id": "69ce77da6d574fe6a9c1b948"
+      },
+      {
+        "stopName": "Matara Junction",
+        "order": 6,
+        "lat": 5.9497,
+        "lng": 80.5378,
+        "_id": "69ce77da6d574fe6a9c1b949"
+      },
+      {
+        "stopName": "Galle Fort",
+        "order": 7,
+        "lat": 6.0535,
+        "lng": 80.2169,
+        "_id": "69ce77da6d574fe6a9c1b94a"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.745Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b94b",
+    "routeId": "102",
+    "routeName": "Colombo - Negombo Coastal",
+    "source": "Colombo Fort",
+    "destination": "Negombo Bus Stand",
+    "distance": 37,
+    "estimatedTime": 90,
+    "fare": 24,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Fort",
+        "order": 1,
+        "lat": 6.9271,
+        "lng": 79.8353,
+        "_id": "69ce77da6d574fe6a9c1b94c"
+      },
+      {
+        "stopName": "Colombo Harbour",
+        "order": 2,
+        "lat": 6.9363,
+        "lng": 79.8317,
+        "_id": "69ce77da6d574fe6a9c1b94d"
+      },
+      {
+        "stopName": "Ragama Junction",
+        "order": 3,
+        "lat": 6.9711,
+        "lng": 79.9058,
+        "_id": "69ce77da6d574fe6a9c1b94e"
+      },
+      {
+        "stopName": "Wattala",
+        "order": 4,
+        "lat": 6.9839,
+        "lng": 79.9242,
+        "_id": "69ce77da6d574fe6a9c1b94f"
+      },
+      {
+        "stopName": "Negombo Bus Stand",
+        "order": 5,
+        "lat": 7.2093,
+        "lng": 79.8431,
+        "_id": "69ce77da6d574fe6a9c1b950"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.745Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b951",
+    "routeId": "103",
+    "routeName": "Colombo - Anuradhapura Heritage",
+    "source": "Colombo Main Bus Stand",
+    "destination": "Anuradhapura Bus Terminus",
+    "distance": 205,
+    "estimatedTime": 330,
+    "fare": 133,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Main Bus Stand",
+        "order": 1,
+        "lat": 6.9365,
+        "lng": 79.8578,
+        "_id": "69ce77da6d574fe6a9c1b952"
+      },
+      {
+        "stopName": "Kurunegala Junction",
+        "order": 2,
+        "lat": 7.487,
+        "lng": 80.6344,
+        "_id": "69ce77da6d574fe6a9c1b953"
+      },
+      {
+        "stopName": "Dambulla",
+        "order": 3,
+        "lat": 7.8667,
+        "lng": 80.65,
+        "_id": "69ce77da6d574fe6a9c1b954"
+      },
+      {
+        "stopName": "Matale",
+        "order": 4,
+        "lat": 7.6158,
+        "lng": 80.7789,
+        "_id": "69ce77da6d574fe6a9c1b955"
+      },
+      {
+        "stopName": "Anuradhapura Bus Terminus",
+        "order": 5,
+        "lat": 8.3369,
+        "lng": 80.4133,
+        "_id": "69ce77da6d574fe6a9c1b956"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.745Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b957",
+    "routeId": "104",
+    "routeName": "Kandy - Nuwara Eliya Hill Country",
+    "source": "Kandy Central",
+    "destination": "Nuwara Eliya Market",
+    "distance": 58,
+    "estimatedTime": 150,
+    "fare": 38,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Kandy Central",
+        "order": 1,
+        "lat": 7.2906,
+        "lng": 80.6328,
+        "_id": "69ce77da6d574fe6a9c1b958"
+      },
+      {
+        "stopName": "Peradeniya Junction",
+        "order": 2,
+        "lat": 7.2513,
+        "lng": 80.7733,
+        "_id": "69ce77da6d574fe6a9c1b959"
+      },
+      {
+        "stopName": "Gampola",
+        "order": 3,
+        "lat": 7.1797,
+        "lng": 80.7833,
+        "_id": "69ce77da6d574fe6a9c1b95a"
+      },
+      {
+        "stopName": "Nawalapitiya",
+        "order": 4,
+        "lat": 7.0494,
+        "lng": 80.8222,
+        "_id": "69ce77da6d574fe6a9c1b95b"
+      },
+      {
+        "stopName": "Nuwara Eliya Market",
+        "order": 5,
+        "lat": 6.9497,
+        "lng": 80.7834,
+        "_id": "69ce77da6d574fe6a9c1b95c"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.746Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b95d",
+    "routeId": "105",
+    "routeName": "Galle - Matara South Coast",
+    "source": "Galle Fort",
+    "destination": "Matara Bus Stand",
+    "distance": 42,
+    "estimatedTime": 75,
+    "fare": 27,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Galle Fort",
+        "order": 1,
+        "lat": 6.0535,
+        "lng": 80.2169,
+        "_id": "69ce77da6d574fe6a9c1b95e"
+      },
+      {
+        "stopName": "Unawatuna Beach",
+        "order": 2,
+        "lat": 6.0244,
+        "lng": 80.3453,
+        "_id": "69ce77da6d574fe6a9c1b95f"
+      },
+      {
+        "stopName": "Mirissa",
+        "order": 3,
+        "lat": 5.9497,
+        "lng": 80.4828,
+        "_id": "69ce77da6d574fe6a9c1b960"
+      },
+      {
+        "stopName": "Polhena",
+        "order": 4,
+        "lat": 5.965,
+        "lng": 80.5386,
+        "_id": "69ce77da6d574fe6a9c1b961"
+      },
+      {
+        "stopName": "Matara Bus Stand",
+        "order": 5,
+        "lat": 5.9497,
+        "lng": 80.5378,
+        "_id": "69ce77da6d574fe6a9c1b962"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.746Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b963",
+    "routeId": "106",
+    "routeName": "Colombo - Jaffna Northern Main",
+    "source": "Colombo Main Bus Stand",
+    "destination": "Jaffna Market",
+    "distance": 401,
+    "estimatedTime": 600,
+    "fare": 261,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Main Bus Stand",
+        "order": 1,
+        "lat": 6.9365,
+        "lng": 79.8578,
+        "_id": "69ce77da6d574fe6a9c1b964"
+      },
+      {
+        "stopName": "Kurunegala Junction",
+        "order": 2,
+        "lat": 7.487,
+        "lng": 80.6344,
+        "_id": "69ce77da6d574fe6a9c1b965"
+      },
+      {
+        "stopName": "Puttalam",
+        "order": 3,
+        "lat": 8.0333,
+        "lng": 79.8333,
+        "_id": "69ce77da6d574fe6a9c1b966"
+      },
+      {
+        "stopName": "Mullaitivu",
+        "order": 4,
+        "lat": 8.7053,
+        "lng": 81.52,
+        "_id": "69ce77da6d574fe6a9c1b967"
+      },
+      {
+        "stopName": "Vavuniya Junction",
+        "order": 5,
+        "lat": 8.7564,
+        "lng": 80.8119,
+        "_id": "69ce77da6d574fe6a9c1b968"
+      },
+      {
+        "stopName": "Jaffna Market",
+        "order": 6,
+        "lat": 9.6615,
+        "lng": 80.7845,
+        "_id": "69ce77da6d574fe6a9c1b969"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.746Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b96a",
+    "routeId": "107",
+    "routeName": "Trincomalee - Batticaloa East Coast",
+    "source": "Trincomalee Central Bus Stand",
+    "destination": "Batticaloa Bus Stand",
+    "distance": 97,
+    "estimatedTime": 180,
+    "fare": 63,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Trincomalee Central Bus Stand",
+        "order": 1,
+        "lat": 8.5711,
+        "lng": 81.2344,
+        "_id": "69ce77da6d574fe6a9c1b96b"
+      },
+      {
+        "stopName": "Kuchchaveli",
+        "order": 2,
+        "lat": 8.5889,
+        "lng": 81.3167,
+        "_id": "69ce77da6d574fe6a9c1b96c"
+      },
+      {
+        "stopName": "Nilaveli Beach",
+        "order": 3,
+        "lat": 8.6214,
+        "lng": 81.2653,
+        "_id": "69ce77da6d574fe6a9c1b96d"
+      },
+      {
+        "stopName": "Batticaloa Bus Stand",
+        "order": 4,
+        "lat": 7.7086,
+        "lng": 81.6944,
+        "_id": "69ce77da6d574fe6a9c1b96e"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.746Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b97d",
+    "routeId": "111",
+    "routeName": "Kandy - Badulla Mountain Express",
+    "source": "Kandy Central",
+    "destination": "Badulla Bazaar",
+    "distance": 82,
+    "estimatedTime": 180,
+    "fare": 53,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Kandy Central",
+        "order": 1,
+        "lat": 7.2906,
+        "lng": 80.6328,
+        "_id": "69ce77da6d574fe6a9c1b97e"
+      },
+      {
+        "stopName": "Peradeniya",
+        "order": 2,
+        "lat": 7.2513,
+        "lng": 80.7733,
+        "_id": "69ce77da6d574fe6a9c1b97f"
+      },
+      {
+        "stopName": "Gampola",
+        "order": 3,
+        "lat": 7.1797,
+        "lng": 80.7833,
+        "_id": "69ce77da6d574fe6a9c1b980"
+      },
+      {
+        "stopName": "Nawalapitiya",
+        "order": 4,
+        "lat": 7.0494,
+        "lng": 80.8222,
+        "_id": "69ce77da6d574fe6a9c1b981"
+      },
+      {
+        "stopName": "Nuwara Eliya",
+        "order": 5,
+        "lat": 6.9497,
+        "lng": 80.7834,
+        "_id": "69ce77da6d574fe6a9c1b982"
+      },
+      {
+        "stopName": "Badulla Bazaar",
+        "order": 6,
+        "lat": 6.9903,
+        "lng": 81.2717,
+        "_id": "69ce77da6d574fe6a9c1b983"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.747Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b984",
+    "routeId": "112",
+    "routeName": "Colombo - Matara Southern Express",
+    "source": "Colombo Fort",
+    "destination": "Matara Bus Stand",
+    "distance": 157,
+    "estimatedTime": 210,
+    "fare": 102,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Fort",
+        "order": 1,
+        "lat": 6.9271,
+        "lng": 79.8353,
+        "_id": "69ce77da6d574fe6a9c1b985"
+      },
+      {
+        "stopName": "Moratuwa",
+        "order": 2,
+        "lat": 6.8019,
+        "lng": 79.8767,
+        "_id": "69ce77da6d574fe6a9c1b986"
+      },
+      {
+        "stopName": "Panadura",
+        "order": 3,
+        "lat": 6.7313,
+        "lng": 79.8917,
+        "_id": "69ce77da6d574fe6a9c1b987"
+      },
+      {
+        "stopName": "Kalutara Junction",
+        "order": 4,
+        "lat": 6.5867,
+        "lng": 79.9542,
+        "_id": "69ce77da6d574fe6a9c1b988"
+      },
+      {
+        "stopName": "Matara Bus Stand",
+        "order": 5,
+        "lat": 5.9497,
+        "lng": 80.5378,
+        "_id": "69ce77da6d574fe6a9c1b989"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.747Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b98a",
+    "routeId": "113",
+    "routeName": "Kurunegala - Puttalam West Route",
+    "source": "Kurunegala Junction",
+    "destination": "Puttalam Bus Stand",
+    "distance": 68,
+    "estimatedTime": 120,
+    "fare": 44,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Kurunegala Junction",
+        "order": 1,
+        "lat": 7.487,
+        "lng": 80.6344,
+        "_id": "69ce77da6d574fe6a9c1b98b"
+      },
+      {
+        "stopName": "Bingiriya Junction",
+        "order": 2,
+        "lat": 7.6667,
+        "lng": 80.4833,
+        "_id": "69ce77da6d574fe6a9c1b98c"
+      },
+      {
+        "stopName": "Chilaw",
+        "order": 3,
+        "lat": 7.5839,
+        "lng": 79.7931,
+        "_id": "69ce77da6d574fe6a9c1b98d"
+      },
+      {
+        "stopName": "Puttalam Bus Stand",
+        "order": 4,
+        "lat": 8.0333,
+        "lng": 79.8333,
+        "_id": "69ce77da6d574fe6a9c1b98e"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.747Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b98f",
+    "routeId": "114",
+    "routeName": "Galle - Hikkaduwa Beach Shuttle",
+    "source": "Galle Fort",
+    "destination": "Hikkaduwa Main Road",
+    "distance": 29,
+    "estimatedTime": 45,
+    "fare": 20,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Galle Fort",
+        "order": 1,
+        "lat": 6.0535,
+        "lng": 80.2169,
+        "_id": "69ce77da6d574fe6a9c1b990"
+      },
+      {
+        "stopName": "Ahangama",
+        "order": 2,
+        "lat": 6.0753,
+        "lng": 80.3117,
+        "_id": "69ce77da6d574fe6a9c1b991"
+      },
+      {
+        "stopName": "Neluwa",
+        "order": 3,
+        "lat": 6.1219,
+        "lng": 80.3522,
+        "_id": "69ce77da6d574fe6a9c1b992"
+      },
+      {
+        "stopName": "Hikkaduwa Main Road",
+        "order": 4,
+        "lat": 6.1411,
+        "lng": 80.3914,
+        "_id": "69ce77da6d574fe6a9c1b993"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.747Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "69ce77da6d574fe6a9c1b994",
+    "routeId": "115",
+    "routeName": "Colombo - Ratnapura Gem Route",
+    "source": "Colombo Main Bus Stand",
+    "destination": "Ratnapura Bus Stand",
+    "distance": 101,
+    "estimatedTime": 180,
+    "fare": 66,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [
+      {
+        "stopName": "Colombo Main Bus Stand",
+        "order": 1,
+        "lat": 6.9365,
+        "lng": 79.8578,
+        "_id": "69ce77da6d574fe6a9c1b995"
+      },
+      {
+        "stopName": "Dehiwala Junction",
+        "order": 2,
+        "lat": 6.8372,
+        "lng": 79.8658,
+        "_id": "69ce77da6d574fe6a9c1b996"
+      },
+      {
+        "stopName": "Kalutara Junction",
+        "order": 3,
+        "lat": 6.5867,
+        "lng": 79.9542,
+        "_id": "69ce77da6d574fe6a9c1b997"
+      },
+      {
+        "stopName": "Avissawella",
+        "order": 4,
+        "lat": 6.6294,
+        "lng": 80.6442,
+        "_id": "69ce77da6d574fe6a9c1b998"
+      },
+      {
+        "stopName": "Ratnapura Bus Stand",
+        "order": 5,
+        "lat": 6.7128,
+        "lng": 80.3942,
+        "_id": "69ce77da6d574fe6a9c1b999"
+      }
+    ],
+    "isActive": true,
+    "isDeleted": false,
+    "__v": 0,
+    "createdAt": "2026-04-02T14:06:18.747Z",
+    "updatedAt": "2026-07-10T15:32:31.897Z",
+    "visibility": "PUBLIC"
+  },
+  {
+    "_id": "6a5b4a5e1e4eaf902da514fd",
+    "routeId": "RT-QR-DEMO",
+    "routeName": "Kandy Central School Shuttle",
+    "source": "Kandy Town",
+    "destination": "Kandy Central College",
+    "province": "",
+    "distance": 8,
+    "estimatedTime": 0,
+    "fare": 80,
+    "serviceType": "PUBLIC",
+    "stopsCount": 0,
+    "stops": [],
+    "pathPolyline": "",
+    "pathPolylineReturn": "",
+    "simBusCount": 0,
+    "isActive": true,
+    "isDeleted": false,
+    "createdBy": "69ccd9a3acd28a549f4834dd",
+    "visibility": "PUBLIC",
+    "managerId": "6a0f342ef36f11b6b8726a89",
+    "origin": "SYSTEM",
+    "status": "ACTIVE",
+    "recordedMeta": {
+      "recordedByDriverId": null,
+      "recordedByBusId": null,
+      "recordedAt": null,
+      "rawPointCount": 0,
+      "snapped": false
+    },
+    "qrEnabled": true,
+    "isHidden": false,
+    "joinApprovalRequired": false,
+    "roomKey": {
+      "ciphertext": null,
+      "iv": null,
+      "authTag": null,
+      "updatedAt": null,
+      "updatedBy": null
+    },
+    "createdAt": "2026-07-18T09:41:50.070Z",
+    "updatedAt": "2026-07-18T09:45:04.007Z",
+    "__v": 0
+  }
+]

@@ -60,12 +60,9 @@ Each row requires: happy path, invalid input, unauthorized/wrong role, not found
 | POST /api/bus/register | register bus |
 | GET /api/bus/my-bus | driver owns bus |
 | PUT /api/bus/:busId | update bus (driver) |
-| GET /api/driver-earnings/stats | stats |
-| GET /api/driver-earnings/history | pagination |
-| GET /api/driver-earnings/daily-breakdown | daily breakdown |
-| GET /api/driver-earnings/:earningId | earning details |
-| POST /api/driver-earnings/log-trip | system/admin logging path |
-| PATCH /api/driver-earnings/:earningId/request-payout | payout request |
+| GET /api/driver/trips | pagination |
+| GET /api/driver/trips/:tripId | trip details |
+| POST /api/driver/trips/log | system/admin logging path |
 
 ### Web Admin Endpoints
 | Endpoint | Cases |

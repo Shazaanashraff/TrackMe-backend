@@ -2,6 +2,7 @@ const SuperAdmin = require('../models/SuperAdmin');
 const Manager = require('../models/Manager');
 const Driver = require('../models/Driver');
 const User = require('../models/User');
+const { normalizeDriverCode, looksLikeDriverCode } = require('./driverCode');
 
 // Central map of role -> the collection that role's accounts live in. This is the
 // only place that needs to know all four account types exist; everything else
@@ -33,6 +34,25 @@ const findAccountByEmail = async (email, { select } = {}) => {
 
   return null;
 };
+
+// Drivers can sign in with their permanent driver code instead of an email;
+// many have no email at all. Only the driver collection has these codes.
+const findAccountByDriverCode = async (code, { select } = {}) => {
+  const normalized = normalizeDriverCode(code);
+  if (!normalized) return null;
+
+  let query = Driver.findOne({ driverCode: normalized });
+  if (select) query = query.select(select);
+  const doc = await query;
+
+  return doc ? { doc, role: 'driver', model: Driver } : null;
+};
+
+// Single entry point for "whatever the person typed into the sign-in box".
+const findAccountByIdentifier = (identifier, options = {}) =>
+  (looksLikeDriverCode(identifier)
+    ? findAccountByDriverCode(identifier, options)
+    : findAccountByEmail(identifier, options));
 
 const findAccountById = async (id, role, { select } = {}) => {
   const model = modelForRole(role);
@@ -67,6 +87,8 @@ module.exports = {
   ACCOUNTS,
   modelForRole,
   findAccountByEmail,
+  findAccountByDriverCode,
+  findAccountByIdentifier,
   findAccountById,
   isEmailRegistered
 };

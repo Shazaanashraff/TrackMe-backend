@@ -4,7 +4,7 @@ const User = require('../src/models/User');
 const Manager = require('../src/models/Manager');
 const Driver = require('../src/models/Driver');
 const SuperAdmin = require('../src/models/SuperAdmin');
-const Bus = require('../src/models/Bus');
+const Vehicle = require('../src/models/Vehicle');
 const Route = require('../src/models/Route');
 
 const seedData = async () => {
@@ -17,7 +17,7 @@ const seedData = async () => {
     await Manager.deleteMany({});
     await Driver.deleteMany({});
     await SuperAdmin.deleteMany({});
-    await Bus.deleteMany({});
+    await Vehicle.deleteMany({});
     await Route.deleteMany({});
     console.log('Cleared existing data');
 
@@ -75,7 +75,7 @@ const seedData = async () => {
       {
         routeId: 'ROUTE_B',
         routeName: 'Expressway Shuttle',
-        source: 'Business Park',
+        source: 'Vehicleiness Park',
         destination: 'Metro Station',
         distance: 8.2,
         fare: 35,
@@ -101,40 +101,40 @@ const seedData = async () => {
     ]);
     console.log(`Created ${routes.length} routes`);
 
-    // Create buses
-    const buses = await Bus.insertMany([
+    // Create vehicles
+    const vehicles = await Vehicle.insertMany([
       {
-        busId: 'BUS001',
-        busName: 'City Express 1',
+        vehicleId: 'BUS001',
+        vehicleName: 'City Express 1',
         registrationNumber: 'MH-01-AB-1001',
         numberPlate: 'MH-01-AB-1001',
         routeId: 'ROUTE_A',
         driverId: driver._id,
         seatCapacity: 50,
-        busType: 'AC'
+        vehicleType: 'AC'
       },
       {
-        busId: 'BUS002',
-        busName: 'Metro Shuttle 2',
+        vehicleId: 'BUS002',
+        vehicleName: 'Metro Shuttle 2',
         registrationNumber: 'MH-01-AB-1002',
         numberPlate: 'MH-01-AB-1002',
         routeId: 'ROUTE_B',
         driverId: driver._id,
         seatCapacity: 42,
-        busType: 'NON-AC'
+        vehicleType: 'NON-AC'
       },
       {
-        busId: 'BUS003',
-        busName: 'Downtown Connector',
+        vehicleId: 'BUS003',
+        vehicleName: 'Downtown Connector',
         registrationNumber: 'MH-01-AB-1003',
         numberPlate: 'MH-01-AB-1003',
         routeId: 'ROUTE_C',
         driverId: driver._id,
         seatCapacity: 36,
-        busType: 'DELUXE'
+        vehicleType: 'DELUXE'
       }
     ]);
-    console.log(`Created ${buses.length} buses`);
+    console.log(`Created ${vehicles.length} vehicles`);
 
     console.log('\n--- Seed Complete ---');
     console.log('Driver login: driver@test.com / password123');

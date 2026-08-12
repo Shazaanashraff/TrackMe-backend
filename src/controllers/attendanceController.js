@@ -2,17 +2,8 @@
 // docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md.
 const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
-const RouteMembership = require('../models/RouteMembership');
-
-const DEFAULT_RANGE_DAYS = 30;
-
-function resolveRange(query) {
-  const to = query?.to ? new Date(query.to) : new Date();
-  const from = query?.from
-    ? new Date(query.from)
-    : new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
-  return { from, to };
-}
+const Vehicle = require('../models/Vehicle');
+const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
   const summary = { totalBoard: 0, totalAlight: 0, byRoute: {} };
@@ -48,7 +39,19 @@ exports.getStudentAttendance = async (req, res, next) => {
         return res.status(403).json({ success: false, message: 'Access denied' });
       }
       if (req.user.role === 'admin') {
-        const managesRider = await RouteMembership.exists({ userId: studentId, managerId: req.user._id });
+        // Route membership is gone, so a manager's authority over a rider is
+        // derived from the fleet instead: they may read this rider's attendance
+        // only if the rider has actually boarded one of their vehicles.
+        const managedVehicleIds = await Vehicle.find({
+          managerId: req.user._id,
+          isDeleted: false
+        }).distinct('_id');
+
+        const managesRider = await BoardingEvent.exists({
+          studentId,
+          vehicleId: { $in: managedVehicleIds }
+        });
+
         if (!managesRider) {
           return res.status(403).json({ success: false, message: 'Access denied' });
         }

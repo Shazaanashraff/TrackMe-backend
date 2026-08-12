@@ -5,7 +5,7 @@
 // their true along-route distance. No invented halts.
 //
 // Sources: busroutessrilanka.blogspot.com/2018/09/143-hanwella-pettah.html
-//          routemaster.lk/bus/143
+//          routemaster.lk/vehicle/143
 //
 // Usage: node scripts/densify-143-stops.js
 
