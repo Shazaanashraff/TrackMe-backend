@@ -181,7 +181,7 @@ async function seedVehicles(managers, drivers, routes) {
   return Vehicle.insertMany(fixtures.map((fixture) => ({ ...fixture, isActive: true, isDeleted: false })));
 }
 
-async function seedBookings(routes, vehicles) {
+async function seedRider() {
   const { doc: rider } = await createIdentityWithProfile({
     email: 'rider.sandbox@trackme.dev',
     password: SANDBOX_PASSWORD,
@@ -194,7 +194,37 @@ async function seedBookings(routes, vehicles) {
       isEmailVerified: true,
     },
   });
+  return rider;
+}
 
+// Two managed (dependant) profiles under the sandbox rider's identity — the
+// fixture Developer Mode needs to exercise the multi-rider-profiles feature:
+// one identity holding several User documents, only the first of which
+// (seedRider, above) carries the mirrored Identity.email. Created directly
+// via User.create rather than createIdentityWithProfile: a managed profile
+// has no login of its own, so there is nothing to attach a profile to — see
+// docs/modules/PROFILES.md.
+async function seedManagedProfiles(rider) {
+  const fixtures = [
+    { name: 'Sandbox Child A', relation: 'Daughter' },
+    { name: 'Sandbox Child B', relation: 'Son' },
+  ];
+
+  const profiles = [];
+  for (const fixture of fixtures) {
+    const profile = await User.create({
+      name: fixture.name,
+      relation: fixture.relation,
+      identityId: rider.identityId,
+      profileKind: 'MANAGED',
+      isActive: true,
+    });
+    profiles.push(profile);
+  }
+  return profiles;
+}
+
+async function seedBookings(routes, vehicles, rider) {
   const routesById = new Map(routes.map((route) => [route.routeId, route]));
 
   const fixtures = Array.from({ length: 12 }, (_, i) => {
@@ -278,7 +308,13 @@ async function main() {
   const vehicles = await seedVehicles(managers, drivers, routes);
   console.log(`Seeded ${vehicles.length} vehicles`);
 
-  const bookings = await seedBookings(routes, vehicles);
+  const rider = await seedRider();
+  console.log('Seeded sandbox rider (primary profile)');
+
+  const managedProfiles = await seedManagedProfiles(rider);
+  console.log(`Seeded ${managedProfiles.length} managed profiles under the sandbox rider`);
+
+  const bookings = await seedBookings(routes, vehicles, rider);
   console.log(`Seeded ${bookings.length} bookings`);
 
   const pendingRequests = await seedPendingRequests(managers, vehicles);
