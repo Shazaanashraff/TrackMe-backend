@@ -24,7 +24,13 @@ const applyPasswordAuth = require('./passwordAuth');
 // name + phone only), so it cannot drift. Its `unique` index is per-collection,
 // which is what lets one email hold a rider profile and a driver profile at the
 // same time.
-const applyAccountFields = (schema, { emailOptional = false } = {}) => {
+//
+// `multiplePerIdentity` is the second exception, held only by `User`: one
+// identity may hold several rider profiles (the account holder plus the
+// dependants/employees they manage). Everywhere else in this file "profile"
+// still means "at most one per identity" — see User.js for how the rider
+// profile marks which one is the actual login.
+const applyAccountFields = (schema, { emailOptional = false, multiplePerIdentity = false } = {}) => {
   schema.add({
     // The person this profile belongs to. The uniqueness constraint is declared as
     // a partial index below rather than `unique + sparse` here: a sparse unique
@@ -103,12 +109,21 @@ const applyAccountFields = (schema, { emailOptional = false } = {}) => {
     }
   });
 
-  // At most one profile of this role per identity, while leaving pre-migration
-  // documents (no `identityId` at all) and any explicit nulls out of the index.
-  schema.index(
-    { identityId: 1 },
-    { unique: true, partialFilterExpression: { identityId: { $type: 'objectId' } } }
-  );
+  if (!multiplePerIdentity) {
+    // At most one profile of this role per identity, while leaving pre-migration
+    // documents (no `identityId` at all) and any explicit nulls out of the index.
+    schema.index(
+      { identityId: 1 },
+      { unique: true, partialFilterExpression: { identityId: { $type: 'objectId' } } }
+    );
+  } else {
+    // A role that allows several profiles per identity (rider profiles: the
+    // account holder plus everyone they manage) declares its own uniqueness
+    // scoped to the field that marks which one is the login — see User.js. This
+    // is still a plain (non-unique) index: every household read filters on
+    // identityId, and it would be a full collection scan without one.
+    schema.index({ identityId: 1 });
+  }
 
   applyPasswordAuth(schema);
 
