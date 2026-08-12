@@ -6,6 +6,12 @@ const Manager = require('../models/Manager');
 const Identity = require('../models/Identity');
 const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
 const {
+  accessTokenExpiresIn,
+  refreshTokenExpiresIn,
+  hashToken,
+  issueTokensForUser
+} = require('../utils/tokens');
+const {
   findIdentityByEmail,
   findProfilesForIdentity,
   resolveProfileForAudience,
@@ -38,25 +44,6 @@ const readAudience = (req) => {
   if (!raw) return null;
   return VALID_AUDIENCES.includes(raw) ? raw : undefined; // undefined = invalid
 };
-
-const accessTokenExpiresIn = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
-const refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '7d';
-
-const toMillis = (expiresIn) => {
-  const match = String(expiresIn).trim().match(/^(\d+)([smhd])$/i);
-  if (!match) return 7 * 24 * 60 * 60 * 1000;
-
-  const value = Number(match[1]);
-  const unit = match[2].toLowerCase();
-  if (unit === 's') return value * 1000;
-  if (unit === 'm') return value * 60 * 1000;
-  if (unit === 'h') return value * 60 * 60 * 1000;
-  if (unit === 'd') return value * 24 * 60 * 60 * 1000;
-
-  return 7 * 24 * 60 * 60 * 1000;
-};
-
-const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 // Echoing an OTP in the response body is a dev/test convenience with no email
 // provider — it must never fire from a bare misconfiguration (NODE_ENV unset in a
@@ -127,30 +114,6 @@ const sendVerificationEmail = async (to, otp) => {
 
   console.log('[Resend] sendVerificationEmail sent, id:', data?.id);
   return true;
-};
-
-const issueTokensForUser = async (user, role) => {
-  const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access' }, process.env.JWT_SECRET, {
-    expiresIn: accessTokenExpiresIn
-  });
-
-  const refreshToken = jwt.sign({ id: user._id, role, tokenType: 'refresh' }, process.env.JWT_SECRET, {
-    expiresIn: refreshTokenExpiresIn
-  });
-
-  user.refreshToken = {
-    tokenHash: hashToken(refreshToken),
-    expiresAt: new Date(Date.now() + toMillis(refreshTokenExpiresIn))
-  };
-
-  await user.save();
-
-  return {
-    accessToken,
-    refreshToken,
-    accessTokenExpiresIn,
-    refreshTokenExpiresIn
-  };
 };
 
 // `identity` is optional so the two profile-only flows (refresh, logout) can keep
