@@ -1,9 +1,8 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
-const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createDriver } = require('./factories');
 
 // GET /api/vehicle/my-vehicle. The driver app reads the owning driver off this
 // payload to show whether enrolment with their key needs the manager's approval,
@@ -11,22 +10,14 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 let managerId;
 
-const login = (email, password) =>
-  request(app).post('/api/auth/login').send({ email, password });
-
 const stamp = Date.now();
 let seq = 0;
 
 async function makeDriverWithVehicle({ isPrivate }) {
   const n = seq++;
-  const driver = await Driver.create({
+  const { doc: driver, token } = await createDriver({
     name: `MV Driver ${n}`,
-    email: `mv-drv-${stamp}-${n}@t.com`,
-    password: 'P@ssw0rd!',
-    managerId,
-    isPrivate,
-    isActive: true,
-    isEmailVerified: true
+    fields: { managerId, isPrivate }
   });
 
   await Vehicle.create({
@@ -38,7 +29,6 @@ async function makeDriverWithVehicle({ isPrivate }) {
     managerId
   });
 
-  const token = (await login(driver.email, 'P@ssw0rd!')).body.accessToken;
   return { driver, token };
 }
 
@@ -47,14 +37,8 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const manager = await Manager.create({
-    name: 'My Vehicle Manager',
-    email: `mgr-mv-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  managerId = manager._id;
+  // Only referenced as a managerId foreign key below, so it never signs in.
+  ({ id: managerId } = await createManager({ name: 'My Vehicle Manager', signIn: false }));
 });
 
 afterAll(async () => {
@@ -102,15 +86,10 @@ describe('GET /api/vehicle/my-vehicle', () => {
   });
 
   it('404s when the driver has no vehicle', async () => {
-    const driver = await Driver.create({
+    const { token } = await createDriver({
       name: 'MV Driver No Vehicle',
-      email: `mv-drv-none-${stamp}@t.com`,
-      password: 'P@ssw0rd!',
-      managerId,
-      isActive: true,
-      isEmailVerified: true
+      fields: { managerId }
     });
-    const token = (await login(driver.email, 'P@ssw0rd!')).body.accessToken;
 
     const res = await request(app)
       .get('/api/vehicle/my-vehicle')

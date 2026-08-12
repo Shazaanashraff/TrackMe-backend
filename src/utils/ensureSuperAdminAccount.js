@@ -1,4 +1,5 @@
 const SuperAdmin = require('../models/SuperAdmin');
+const { findIdentityByEmail, createIdentityWithProfile } = require('./identityRegistry');
 
 // Runs once on server boot. The database is the source of truth for the
 // super-admin's credentials — this only ever creates the account on a fresh
@@ -17,20 +18,39 @@ const ensureSuperAdminAccount = async () => {
   if (!email || !password) {
     console.warn(
       'No super-admin account exists and SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD are not set. ' +
-      'Skipping bootstrap — set both env vars and restart, or create one via scripts/create-admins.js.'
+      'Skipping bootstrap — set both env vars and restart.'
     );
     return;
   }
 
-  await SuperAdmin.create({
-    name: process.env.SUPERADMIN_NAME || 'Platform Super Admin',
-    email: email.toLowerCase().trim(),
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // A super-admin must own its email outright — sharing that login with a rider or a
+  // manager would mean one leaked password reaches the highest-privilege account. Fail
+  // loudly rather than quietly bootstrapping onto somebody's existing login.
+  const existingIdentity = await findIdentityByEmail(normalizedEmail);
+  if (existingIdentity) {
+    console.error(
+      `Refusing to bootstrap the super-admin: ${normalizedEmail} already has a TrackMe login. ` +
+      'Set SUPERADMIN_EMAIL to a dedicated address that holds no other role.'
+    );
+    return;
+  }
+
+  await createIdentityWithProfile({
+    email: normalizedEmail,
     password,
-    isActive: true,
-    isEmailVerified: true
+    isEmailVerified: true,
+    isProvisional: true,
+    role: 'super-admin',
+    fields: {
+      name: process.env.SUPERADMIN_NAME || 'Platform Super Admin',
+      isActive: true,
+      isEmailVerified: true
+    }
   });
 
-  console.log(`Super-admin account created for web-admin access: ${email.toLowerCase().trim()}`);
+  console.log(`Super-admin account created for web-admin access: ${normalizedEmail}`);
 };
 
 module.exports = ensureSuperAdminAccount;

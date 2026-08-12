@@ -1,12 +1,12 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Organization = require('../../src/models/Organization');
 const DriverEnrollmentKey = require('../../src/models/DriverEnrollmentKey');
 const { findDriverIdByEnrollmentKey } = require('../../src/utils/enrollmentKey');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, authHeader, login } = require('./factories');
 
 // The manager driver directory. A driver belongs to one manager, so the whole
 // surface is scoped by that ownership. The cross-manager cases below are the
@@ -14,10 +14,8 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 let managerToken;
 let managerId;
+let managerEmail;
 let otherManagerId;
-
-const login = (email, password) =>
-  request(app).post('/api/auth/login').send({ email, password });
 
 beforeAll(async () => {
   await connectTestDb();
@@ -29,26 +27,17 @@ beforeAll(async () => {
   // the same thing for real databases).
   await Driver.syncIndexes();
 
-  const manager = await Manager.create({
-    name: 'Fleet Manager',
-    email: `mgr-drv-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  managerId = manager._id;
+  // Built through the factory rather than Manager.create: the password lives on
+  // the Identity, so a directly-created manager cannot log in and every request
+  // in this suite would 401.
+  const manager = await createManager({ name: 'Fleet Manager' });
+  managerId = manager.id;
+  managerToken = manager.token;
+  managerEmail = manager.email;
 
-  const other = await Manager.create({
-    name: 'Other Manager',
-    email: `mgr-other-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  otherManagerId = other._id;
-
-  const res = await login(manager.email, 'P@ssw0rd!');
-  managerToken = res.body.accessToken;
+  // Only ever referenced as somebody else's managerId, so it never signs in.
+  const other = await createManager({ name: 'Other Manager', signIn: false });
+  otherManagerId = other.id;
 });
 
 afterAll(async () => {
@@ -56,7 +45,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${managerToken}`];
+const auth = () => authHeader(managerToken);
 
 let seq = 0;
 const newDriver = (overrides = {}) => ({
@@ -144,11 +133,10 @@ describe('POST /api/manager/drivers', () => {
   });
 
   it('rejects an email already used by another account type', async () => {
-    const manager = await Manager.findById(managerId);
     const res = await request(app)
       .post('/api/manager/drivers')
       .set(...auth())
-      .send(newDriver({ email: manager.email }));
+      .send(newDriver({ email: managerEmail }));
 
     expect(res.status).toBe(409);
   });

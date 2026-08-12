@@ -89,7 +89,15 @@ Run **once**, with the backend connected to MongoDB:
 ```bash
 cd TrackMe-backend
 npm run seed:wp               # 25 Western Province routes (2020 WP dataset)
-npm run seed:manager-buses    # manager + 3 buses per route (75 buses)
+```
+
+> `npm run seed:manager-buses` (manager + 3 buses/route) no longer exists — the script behind it
+> created `Manager`/`Driver` documents directly with no `identityId`, which the identity model
+> (see `docs/modules/AUTH.md`) requires to log in. Create test managers/drivers/buses by hand
+> via WebAdmin until an identity-aware replacement is written. `seed:start-journeys` (below)
+> needs at least one bus to exist first.
+
+```bash
 npm run seed:start-journeys   # activates 2 buses/route + starting positions
 ```
 
@@ -104,12 +112,15 @@ the backend so the road-path cache recomputes.
 | Role | Email | Password | Used in |
 |------|-------|----------|---------|
 | Super-admin | `ShazaanAshraff@SuperAdmin.com` | `SuperAdmin@123` | WebAdmin |
-| Manager (admin) | `testadmin@mail.com` | `TestAdmin@123` | WebAdmin |
 | Passenger (verified) | `passenger@trackme.com` | `Passenger@123` | UserApp |
-| Drivers | `route.driver.001@bus.com` … `075@bus.com` | `Driver@123` | DriverApp |
 
-The passenger account is pre-marked email-verified so login works without an email
-service (`RESEND_API_KEY` blank locally).
+The super-admin is auto-created on first boot from `SUPERADMIN_EMAIL`/`SUPERADMIN_PASSWORD`
+(see `docs/modules/AUTH.md`). The passenger account is pre-marked email-verified so login works
+without an email service (`RESEND_API_KEY` blank locally) — create it via UserApp sign-up.
+
+> The Manager/Driver rows that used to be here (`testadmin@mail.com`, `route.driver.001@bus.com`
+> …) came from `npm run seed:manager-buses`, which was removed — see the note in step 4. Create
+> a manager from WebAdmin's Managers page instead.
 
 ---
 
@@ -122,8 +133,9 @@ docker run -d --name trackme-mongo -p 27017:27017 mongo:7   # or: docker start t
 # 1. Backend                (http://localhost:5000)
 cd TrackMe-backend && npm install && npm run dev
 
-# 2. Seed data (once, after backend is up)
-cd TrackMe-backend && npm run seed:wp && npm run seed:manager-buses && npm run seed:start-journeys
+# 2. Seed data (once, after backend is up) — create a manager + buses via WebAdmin first,
+#    npm run seed:manager-buses was removed (see step 4)
+cd TrackMe-backend && npm run seed:wp && npm run seed:start-journeys
 
 # 3. WebAdmin               (http://localhost:5173)
 cd TrackMe-WebAdmin && npm install && npm run dev

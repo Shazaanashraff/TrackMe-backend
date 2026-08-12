@@ -219,7 +219,16 @@ exports.validateLogin = [
       return true;
     }),
   body('password')
-    .notEmpty().withMessage('Password is required')
+    .notEmpty().withMessage('Password is required'),
+  // Which app is signing in, so login resolves the right role profile for a person who
+  // holds several (a rider who also drives). Optional while the apps are still being
+  // released; absent means "use the legacy first-match precedence".
+  body('audience')
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(['user', 'rider', 'driver', 'admin', 'web-admin', 'manager', 'super-admin'])
+    .withMessage('Invalid audience')
 ];
 
 exports.validateVerifyEmail = [
@@ -427,4 +436,43 @@ exports.validateManagerIdQuery = [
   query('managerId')
     .optional()
     .isMongoId().withMessage('Invalid manager id')
+];
+
+// Rider profiles (docs/modules/PROFILES.md). Phone number is validated in
+// profileController itself via utils/phoneNumber.js — every other manager/
+// driver phone check in this codebase lives in its controller the same way,
+// not here.
+exports.validateProfileId = [
+  param('id')
+    .isMongoId().withMessage('Invalid profile id')
+];
+
+exports.validateCreateProfile = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('Name is required')
+    .isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
+  body('relation')
+    .optional()
+    .trim()
+    .isLength({ max: 30 }).withMessage('Relation cannot exceed 30 characters'),
+  body('avatarUrl')
+    .optional()
+    .isString().withMessage('avatarUrl must be a string')
+];
+
+exports.validateUpdateProfile = [
+  param('id')
+    .isMongoId().withMessage('Invalid profile id'),
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
+  body('relation')
+    .optional()
+    .trim()
+    .isLength({ max: 30 }).withMessage('Relation cannot exceed 30 characters'),
+  body('avatarUrl')
+    .optional()
+    .isString().withMessage('avatarUrl must be a string')
 ];

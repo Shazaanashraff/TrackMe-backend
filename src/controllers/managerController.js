@@ -430,7 +430,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       } else if (await isEmailRegistered(normalizedEmail)) {
         return res.status(409).json({
           success: false,
-          message: 'Email already exists on a non-driver account'
+          message: 'That email belongs to a super-admin account and cannot be used for a bus account'
         });
       }
     }
@@ -642,6 +642,9 @@ exports.resetVehicleAccountPassword = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Driver account not found for this vehicle' });
     }
 
+    // Drivers sign in with a driver code + password stored directly on their own
+    // account, not through the shared Identity login, so a manager may reset it
+    // outright — there's no other app session that a rewrite could hijack.
     driver.password = password;
     // A password reset genuinely implies the account is now reachable, so
     // verifying it is a real side effect of this action. Reactivating it is

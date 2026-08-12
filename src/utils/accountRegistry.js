@@ -2,7 +2,7 @@ const SuperAdmin = require('../models/SuperAdmin');
 const Manager = require('../models/Manager');
 const Driver = require('../models/Driver');
 const User = require('../models/User');
-const { normalizeDriverCode, looksLikeDriverCode } = require('./driverCode');
+const { normalizeDriverCode } = require('./driverCode');
 
 // Central map of role -> the collection that role's accounts live in. This is the
 // only place that needs to know all four account types exist; everything else
@@ -12,31 +12,31 @@ const ACCOUNTS = [
   { role: 'super-admin', model: SuperAdmin },
   { role: 'admin', model: Manager },
   { role: 'driver', model: Driver },
-  { role: 'user', model: User }
+  // The only role a person may hold several of: one account holder plus the rider
+  // profiles they manage (a parent and their children, an office and its staff).
+  // `loginFilter` is what "the profile this person signs in as" means for such a
+  // role — without it, a lookup by identityId alone returns an arbitrary profile
+  // in MongoDB natural order, which could hand a parent their child's session.
+  //
+  // Expressed as "not MANAGED" rather than "is PRIMARY" on purpose: `$ne` also
+  // matches documents with no `profileKind` at all, so every rider written before
+  // the field existed still resolves as the account holder. That is what lets this
+  // filter ship ahead of the schema change and the backfill without an outage.
+  { role: 'user', model: User, loginFilter: { profileKind: { $ne: 'MANAGED' } } }
 ];
 
 const modelForRole = (role) => ACCOUNTS.find((entry) => entry.role === role)?.model || null;
 
-// Scans all four collections for a matching email. Only used where the caller
-// doesn't already know the role (login, registration uniqueness, password reset
-// by email). Once a role is known (e.g. from a JWT), use findAccountById instead.
-const findAccountByEmail = async (email, { select } = {}) => {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
-  if (!normalizedEmail) return null;
+// The extra criteria that narrow "every profile with this identityId" down to the
+// single one that role signs in as. Empty for the three roles that can only ever
+// hold one profile per identity, so callers can spread it unconditionally.
+const loginFilterForRole = (role) =>
+  ACCOUNTS.find((entry) => entry.role === role)?.loginFilter || {};
 
-  for (const { role, model } of ACCOUNTS) {
-    let query = model.findOne({ email: normalizedEmail });
-    if (select) query = query.select(select);
-    // eslint-disable-next-line no-await-in-loop
-    const doc = await query;
-    if (doc) return { doc, role, model };
-  }
-
-  return null;
-};
-
-// Drivers can sign in with their permanent driver code instead of an email;
-// many have no email at all. Only the driver collection has these codes.
+// Drivers can sign in with their permanent driver code instead of an email; many
+// have no email at all, and (unlike the other three account types) they have no
+// Identity login either — the driver code + password live directly on this
+// collection. Only the driver collection has these codes.
 const findAccountByDriverCode = async (code, { select } = {}) => {
   const normalized = normalizeDriverCode(code);
   if (!normalized) return null;
@@ -48,12 +48,6 @@ const findAccountByDriverCode = async (code, { select } = {}) => {
   return doc ? { doc, role: 'driver', model: Driver } : null;
 };
 
-// Single entry point for "whatever the person typed into the sign-in box".
-const findAccountByIdentifier = (identifier, options = {}) =>
-  (looksLikeDriverCode(identifier)
-    ? findAccountByDriverCode(identifier, options)
-    : findAccountByEmail(identifier, options));
-
 const findAccountById = async (id, role, { select } = {}) => {
   const model = modelForRole(role);
   if (!model || !id) return null;
@@ -64,8 +58,13 @@ const findAccountById = async (id, role, { select } = {}) => {
   return doc ? { doc, role, model } : null;
 };
 
-// Cross-collection uniqueness check used before creating/renaming any account so
-// no two account types (e.g. a rider and a manager) can share an email.
+// Scans all four collections for a matching email, regardless of whether that
+// account is identity-linked. Used for the "does anybody already own this
+// email" checks that must see driver-code drivers too (who have no Identity to
+// check against) — e.g. a manager naming a driver, or refusing to hand a
+// super-admin's email to a new bus account. Once a role is known, use
+// findAccountById instead; for identity-linked accounts, identityRegistry's
+// `isEmailRegistered` is the equivalent single-Identity-lookup check.
 const isEmailRegistered = async (email, { excludeId, excludeRole } = {}) => {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!normalizedEmail) return false;
@@ -86,9 +85,8 @@ const isEmailRegistered = async (email, { excludeId, excludeRole } = {}) => {
 module.exports = {
   ACCOUNTS,
   modelForRole,
-  findAccountByEmail,
+  loginFilterForRole,
   findAccountByDriverCode,
-  findAccountByIdentifier,
   findAccountById,
   isEmailRegistered
 };

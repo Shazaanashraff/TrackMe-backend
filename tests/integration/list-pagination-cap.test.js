@@ -1,10 +1,10 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const VehicleReview = require('../../src/models/VehicleReview');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createRider } = require('./factories');
 
 // Covers the page-size cap on three previously-unbounded list endpoints (issue #6):
 // GET /api/vehicle/list/all, GET /api/vehicle/routes, GET /api/vehicle-reviews/vehicle/:id.
@@ -50,17 +50,13 @@ beforeAll(async () => {
     numberPlate: 'PAGE-REVIEWS-NP'
   });
 
-  const reviewer = await User.create({
-    name: 'Reviewer', email: `pagination-reviewer-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    role: 'user', isEmailVerified: true, isActive: true
-  });
-  const login = await request(app).post('/api/auth/login').send({ email: reviewer.email, password: 'P@ssw0rd!' });
-  userToken = login.body.accessToken;
+  const reviewer = await createRider({ name: 'Reviewer' });
+  userToken = reviewer.token;
 
   await VehicleReview.insertMany(
     Array.from({ length: SEED_COUNT }, (_, i) => ({
       vehicleId: vehicleForReviews._id,
-      userId: reviewer._id,
+      userId: reviewer.id,
       rating: 5,
       comment: `Review ${i}`
     }))

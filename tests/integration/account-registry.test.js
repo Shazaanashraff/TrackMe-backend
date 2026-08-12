@@ -1,17 +1,28 @@
-const SuperAdmin = require('../../src/models/SuperAdmin');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
+const Identity = require('../../src/models/Identity');
+const Manager = require('../../src/models/Manager');
 const User = require('../../src/models/User');
+const { findAccountById } = require('../../src/utils/accountRegistry');
 const {
-  findAccountByEmail,
-  findAccountById,
+  findIdentityByEmail,
+  findProfilesForIdentity,
+  resolveProfileForAudience,
+  attachProfile,
+  createIdentityWithProfile,
   isEmailRegistered,
-} = require('../../src/utils/accountRegistry');
+  hasSuperAdminProfile,
+  SuperAdminIsolationError
+} = require('../../src/utils/identityRegistry');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
-// accountRegistry is the single place that knows all four account types exist —
-// login, protect, and every uniqueness check go through it instead of picking a
-// model directly. These tests cover the cross-collection scanning/lookup logic.
+// `accountRegistry` now only resolves a known (id, role) pair — the lookup `protect`
+// performs on every request. Resolving by EMAIL moved to `identityRegistry`, because
+// one email may now hold several role profiles and the answer depends on which app is
+// asking. The old `findAccountByEmail` was deleted rather than adapted: returning the
+// first matching collection would silently shadow every profile but one.
+//
+// Pure resolution logic (audience precedence, super-admin isolation) is covered
+// without a database in identity-registry.test.js.
 
 beforeAll(async () => {
   await connectTestDb();
@@ -22,54 +33,13 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-describe('accountRegistry', () => {
-  test('findAccountByEmail finds a manager and returns its role', async () => {
-    const manager = await Manager.create({
-      name: 'Registry Manager', email: `reg-mgr-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    });
-
-    const result = await findAccountByEmail(manager.email);
-    expect(result).not.toBeNull();
-    expect(result.role).toBe('admin');
-    expect(String(result.doc._id)).toBe(String(manager._id));
-  });
-
-  test('findAccountByEmail finds a driver, a super-admin, and a rider by the same call', async () => {
-    const driver = await Driver.create({
-      name: 'Registry Driver', email: `reg-drv-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    });
-    const superAdmin = await SuperAdmin.create({
-      name: 'Registry Super Admin', email: `reg-sa-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    });
-    const rider = await User.create({
-      name: 'Registry Rider', email: `reg-user-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    });
-
-    await expect(findAccountByEmail(driver.email)).resolves.toMatchObject({ role: 'driver' });
-    await expect(findAccountByEmail(superAdmin.email)).resolves.toMatchObject({ role: 'super-admin' });
-    await expect(findAccountByEmail(rider.email)).resolves.toMatchObject({ role: 'user' });
-  });
-
-  test('findAccountByEmail returns null for an unregistered email', async () => {
-    const result = await findAccountByEmail(`nobody-${Date.now()}@test.com`);
-    expect(result).toBeNull();
-  });
-
-  test('findAccountByEmail honors a select option (e.g. +password)', async () => {
-    const manager = await Manager.create({
-      name: 'Select Manager', email: `reg-select-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    });
-
-    const withoutPassword = await findAccountByEmail(manager.email);
-    expect(withoutPassword.doc.password).toBeUndefined();
-
-    const withPassword = await findAccountByEmail(manager.email, { select: '+password' });
-    expect(typeof withPassword.doc.password).toBe('string');
-  });
-
-  test('findAccountById looks up directly in the collection for the given role', async () => {
-    const driver = await Driver.create({
-      name: 'ById Driver', email: `reg-byid-drv-${Date.now()}@test.com`, password: 'P@ssw0rd!',
+describe('accountRegistry.findAccountById', () => {
+  test('looks up directly in the collection for the given role', async () => {
+    const { doc: driver } = await createIdentityWithProfile({
+      email: `reg-byid-drv-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!',
+      role: 'driver',
+      fields: { name: 'ById Driver' }
     });
 
     const found = await findAccountById(driver._id, 'driver');
@@ -77,18 +47,172 @@ describe('accountRegistry', () => {
     expect(found.role).toBe('driver');
 
     // Same _id, wrong role -> not found (accounts don't leak across collections).
-    const notFound = await findAccountById(driver._id, 'admin');
-    expect(notFound).toBeNull();
+    expect(await findAccountById(driver._id, 'admin')).toBeNull();
+  });
+});
+
+describe('identityRegistry — one login, several roles', () => {
+  test('createIdentityWithProfile creates the login and mirrors the email onto the profile', async () => {
+    const email = `identity-new-${Date.now()}@test.com`;
+    const { identity, doc } = await createIdentityWithProfile({
+      email,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'New Rider' }
+    });
+
+    expect(identity.email).toBe(email);
+    expect(doc.email).toBe(email);
+    expect(String(doc.identityId)).toBe(String(identity._id));
   });
 
-  test('isEmailRegistered is true across every account type, not just one collection', async () => {
-    const email = `reg-cross-${Date.now()}@test.com`;
+  test('attachProfile gives an existing person a second role without touching credentials', async () => {
+    const email = `identity-both-${Date.now()}@test.com`;
+    const { identity } = await createIdentityWithProfile({
+      email,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'Rider Who Drives' }
+    });
+
+    const { doc: driver, created } = await attachProfile({
+      identityId: identity._id,
+      role: 'driver',
+      fields: { name: 'Rider Who Drives' }
+    });
+
+    expect(created).toBe(true);
+    expect(driver.email).toBe(email);
+    // The password stays on the Identity — the profile never gets its own copy.
+    const driverWithPassword = await Driver.findById(driver._id).select('+password');
+    expect(driverWithPassword.password).toBeUndefined();
+
+    const roles = (await findProfilesForIdentity(identity._id)).map((p) => p.role).sort();
+    expect(roles).toEqual(['driver', 'user']);
+  });
+
+  test('attachProfile is idempotent for a role the person already holds', async () => {
+    const { identity } = await createIdentityWithProfile({
+      email: `identity-idem-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'Idem' }
+    });
+
+    const again = await attachProfile({ identityId: identity._id, role: 'user', fields: { name: 'Idem' } });
+    expect(again.created).toBe(false);
+    expect(await User.countDocuments({ identityId: identity._id })).toBe(1);
+  });
+
+  test('resolveProfileForAudience returns the profile that app is for', async () => {
+    const { identity } = await createIdentityWithProfile({
+      email: `identity-aud-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'Multi' }
+    });
+    await attachProfile({ identityId: identity._id, role: 'driver', fields: { name: 'Multi' } });
+
+    expect((await resolveProfileForAudience(identity._id, 'user')).role).toBe('user');
+    expect((await resolveProfileForAudience(identity._id, 'driver')).role).toBe('driver');
+    // No manager profile -> the admin portal must refuse this login.
+    expect(await resolveProfileForAudience(identity._id, 'web-admin')).toBeNull();
+  });
+
+  test('one password authenticates every role the person holds', async () => {
+    const email = `identity-onepw-${Date.now()}@test.com`;
+    const { identity } = await createIdentityWithProfile({
+      email,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'One Password' }
+    });
+    await attachProfile({ identityId: identity._id, role: 'driver', fields: { name: 'One Password' } });
+
+    const stored = await Identity.findById(identity._id).select('+password');
+    expect(await stored.comparePassword('P@ssw0rd!')).toBe(true);
+    expect(await stored.comparePassword('wrong')).toBe(false);
+  });
+});
+
+describe('identityRegistry — super-admin isolation', () => {
+  test('refuses to attach any role to a super-admin login', async () => {
+    const { identity } = await createIdentityWithProfile({
+      email: `identity-sa-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!',
+      role: 'super-admin',
+      fields: { name: 'Boss' }
+    });
+
+    expect(await hasSuperAdminProfile(identity._id)).toBe(true);
+    await expect(
+      attachProfile({ identityId: identity._id, role: 'user', fields: { name: 'Boss' } })
+    ).rejects.toThrow(SuperAdminIsolationError);
+  });
+
+  test('refuses to make an existing rider a super-admin', async () => {
+    const { identity } = await createIdentityWithProfile({
+      email: `identity-rider-sa-${Date.now()}@test.com`,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'Just A Rider' }
+    });
+
+    await expect(
+      attachProfile({ identityId: identity._id, role: 'super-admin', fields: { name: 'Just A Rider' } })
+    ).rejects.toThrow(SuperAdminIsolationError);
+  });
+});
+
+describe('identityRegistry.isEmailRegistered', () => {
+  test('asks whether any Identity owns the email', async () => {
+    const email = `identity-owned-${Date.now()}@test.com`;
     expect(await isEmailRegistered(email)).toBe(false);
 
-    const manager = await Manager.create({ name: 'Cross Manager', email, password: 'P@ssw0rd!' });
-    expect(await isEmailRegistered(email)).toBe(true);
+    const { identity } = await createIdentityWithProfile({
+      email,
+      password: 'P@ssw0rd!',
+      role: 'admin',
+      fields: { name: 'Owner' }
+    });
 
-    // excludeId lets an account's own update check pass without a false positive.
-    expect(await isEmailRegistered(email, { excludeId: manager._id, excludeRole: 'admin' })).toBe(false);
+    expect(await isEmailRegistered(email)).toBe(true);
+    // excludeIdentityId lets that identity's own update pass without a false positive.
+    expect(await isEmailRegistered(email, { excludeIdentityId: identity._id })).toBe(false);
+  });
+
+  test('findIdentityByEmail normalises case and whitespace', async () => {
+    const email = `identity-norm-${Date.now()}@test.com`;
+    await createIdentityWithProfile({
+      email,
+      password: 'P@ssw0rd!',
+      role: 'user',
+      fields: { name: 'Norm' }
+    });
+
+    expect(await findIdentityByEmail(`  ${email.toUpperCase()}  `)).not.toBeNull();
+    expect(await findIdentityByEmail('')).toBeNull();
+  });
+});
+
+describe('identityRegistry — a manager keeps their own password', () => {
+  test('attaching a manager role does not create or change a credential', async () => {
+    // This is the regression guard for the provisioning hole: a manager/super-admin
+    // must never be able to set the password on an email that is already somebody's.
+    const email = `identity-keep-pw-${Date.now()}@test.com`;
+    const { identity } = await createIdentityWithProfile({
+      email,
+      password: 'RidersOwn1!',
+      role: 'user',
+      fields: { name: 'Rider Turned Manager' }
+    });
+
+    await attachProfile({ identityId: identity._id, role: 'admin', fields: { name: 'Rider Turned Manager' } });
+
+    const stored = await Identity.findById(identity._id).select('+password');
+    expect(await stored.comparePassword('RidersOwn1!')).toBe(true);
+
+    const manager = await Manager.findOne({ identityId: identity._id }).select('+password');
+    expect(manager.password).toBeUndefined();
   });
 });

@@ -23,6 +23,11 @@ const protect = async (req, res, next) => {
 
     req.user = account.doc;
     req.user.role = account.role;
+    // The profile doc already carries this — no extra query. `|| null` so a
+    // pre-migration profile with no identityId is an explicit null, never
+    // `undefined`, which matters for the falsy-on-both-sides check in
+    // requireOwnProfile below.
+    req.identityId = account.doc.identityId || null;
 
     if (req.user.isActive === false) {
       return res.status(403).json({ message: 'Account is deactivated. Contact super admin.' });
@@ -50,6 +55,7 @@ const optionalAuth = async (req, res, next) => {
     if (account && account.doc.isActive !== false) {
       req.user = account.doc;
       req.user.role = account.role;
+      req.identityId = account.doc.identityId || null;
     }
     next();
   } catch (error) {
@@ -98,6 +104,60 @@ const requireManagerOrAbove = requireRoles('admin', 'super-admin');
 const requireManager = requireRoles('admin');
 const requireSuperAdmin = requireRoles('super-admin');
 
+// Guards a route parameter (default `:id`) naming a rider profile, so a
+// caller can only ever act on a profile that shares their own identity — a
+// parent's session reaching a stranger's child. 404s rather than 403s for
+// both "no such profile" and "not yours", matching leaveEnrollment
+// (enrollmentController.js) — a profile id is an opaque ObjectId to the
+// caller either way, so there is nothing to leak by not distinguishing them.
+//
+// The comparison is written as two explicit falsy checks, not
+// `String(a) === String(b)`. A pre-migration document (or, in principle, a
+// caller whose own identityId somehow came back null) has `identityId:
+// undefined`, and `String(undefined) === String(undefined)` is
+// `'undefined' === 'undefined'` — true. That would make every profile-less
+// legacy account a "member" of every other legacy account's household. A
+// missing identity on *either* side must be a hard refusal, never a match.
+const requireOwnProfile = (paramName = 'id') => async (req, res, next) => {
+  try {
+    // Lazy require: middleware/ is loaded before models/ are guaranteed to be
+    // registered on some import orders, and only this guard needs User.
+    const User = require('../models/User');
+
+    if (!req.identityId) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+
+    const target = await User.findById(req.params[paramName]);
+    if (!target || target.deletedAt) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+
+    if (!target.identityId || String(target.identityId) !== String(req.identityId)) {
+      return res.status(404).json({ success: false, message: 'Profile not found' });
+    }
+
+    req.targetProfile = target;
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Restricts an action to the account holder — the profile that owns the
+// login. Stops a stolen or leaked MANAGED-profile token from creating
+// sibling profiles or deleting the primary out from under the account.
+const requirePrimaryProfile = (req, res, next) => {
+  if (!req.user || req.user.role !== 'user' || req.user.profileKind === 'MANAGED') {
+    return res.status(403).json({
+      success: false,
+      code: 'MANAGED_PROFILE_FORBIDDEN',
+      message: 'Only the account holder can do this'
+    });
+  }
+  next();
+};
+
 module.exports = {
   protect,
   optionalAuth,
@@ -106,5 +166,7 @@ module.exports = {
   requireUser,
   requireManagerOrAbove,
   requireManager,
-  requireSuperAdmin
+  requireSuperAdmin,
+  requireOwnProfile,
+  requirePrimaryProfile
 };

@@ -1,15 +1,18 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
+
 const Driver = require('../../src/models/Driver');
 const User = require('../../src/models/User');
-const SuperAdmin = require('../../src/models/SuperAdmin');
+
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const Booking = require('../../src/models/Booking');
 const BoardingEvent = require('../../src/models/BoardingEvent');
 const ManagerAuditLog = require('../../src/models/ManagerAuditLog');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const {
+  createManager, createDriver, createRider, createSuperAdmin
+} = require('./factories');
 
 // Ownership/authorization boundaries with no regression coverage before this
 // (issue #17). Two of these (route edit/toggle, vehicle maintenance) turned out
@@ -26,53 +29,31 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const managerA = await Manager.create({
-    name: 'Owner Manager', email: `mgrA-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  managerAId = managerA._id;
-  const managerB = await Manager.create({
-    name: 'Other Manager', email: `mgrB-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  managerBId = managerB._id;
+  // Every account here signs in, so all of them go through the factory: the
+  // password lives on the Identity, and a directly-created profile cannot log in.
+  const managerA = await createManager({ name: 'Owner Manager' });
+  managerAId = managerA.id;
+  managerAToken = managerA.token;
 
-  const driverA = await Driver.create({
-    name: 'Driver A', email: `drvA-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  driverAId = driverA._id;
-  const driverB = await Driver.create({
-    name: 'Driver B', email: `drvB-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  driverBId = driverB._id;
+  const managerB = await createManager({ name: 'Other Manager' });
+  managerBId = managerB.id;
+  managerBToken = managerB.token;
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Root Admin', email: `sa-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
+  const driverA = await createDriver({ name: 'Driver A' });
+  driverAId = driverA.id;
+  driverAToken = driverA.token;
 
-  const riderA = await User.create({
-    name: 'Rider A', email: `riderA-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    role: 'user', isEmailVerified: true, isActive: true
-  });
-  riderAId = riderA._id;
-  const riderB = await User.create({
-    name: 'Rider B', email: `riderB-authz-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    role: 'user', isEmailVerified: true, isActive: true
-  });
+  const driverB = await createDriver({ name: 'Driver B' });
+  driverBId = driverB.id;
+  driverBToken = driverB.token;
 
-  const login = (email) => request(app).post('/api/auth/login').send({ email, password: 'P@ssw0rd!' })
-    .then((res) => res.body.accessToken);
+  ({ token: superAdminToken } = await createSuperAdmin({ name: 'Root Admin' }));
 
-  managerAToken = await login(managerA.email);
-  managerBToken = await login(managerB.email);
-  driverAToken = await login(driverA.email);
-  driverBToken = await login(driverB.email);
-  superAdminToken = await login(superAdmin.email);
-  riderAToken = await login(riderA.email);
-  riderBToken = await login(riderB.email);
+  const riderA = await createRider({ name: 'Rider A' });
+  riderAId = riderA.id;
+  riderAToken = riderA.token;
+
+  ({ token: riderBToken } = await createRider({ name: 'Rider B' }));
 });
 
 afterAll(async () => {
@@ -106,12 +87,8 @@ describe('Route edit ownership', () => {
   });
 
   it('refuses a different manager editing it (403)', async () => {
-    const managerB = await Manager.create({
-      name: 'Editor B', email: `mgrB-edit-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-      isEmailVerified: true, isActive: true
-    });
-    const managerBToken = (await request(app).post('/api/auth/login')
-      .send({ email: managerB.email, password: 'P@ssw0rd!' })).body.accessToken;
+    const managerB = await createManager({ name: 'Editor B' });
+    const managerBToken = managerB.token;
 
     const res = await request(app).put(`/api/routes/${ownRouteId}`)
       .set('Authorization', `Bearer ${managerBToken}`)
@@ -145,12 +122,8 @@ describe('Route toggle ownership', () => {
       });
     ownRouteId = res.body.data.routeId;
 
-    const managerB = await Manager.create({
-      name: 'Toggle B', email: `mgrB-toggle-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-      isEmailVerified: true, isActive: true
-    });
-    const managerBToken = (await request(app).post('/api/auth/login')
-      .send({ email: managerB.email, password: 'P@ssw0rd!' })).body.accessToken;
+    const managerB = await createManager({ name: 'Toggle B' });
+    const managerBToken = managerB.token;
     const other = await request(app).post('/api/routes')
       .set('Authorization', `Bearer ${managerBToken}`)
       .send({
@@ -197,12 +170,8 @@ describe('Route delete ownership', () => {
       });
     ownRouteId = res.body.data.routeId;
 
-    const managerB = await Manager.create({
-      name: 'Delete B', email: `mgrB-delete-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-      isEmailVerified: true, isActive: true
-    });
-    const managerBToken = (await request(app).post('/api/auth/login')
-      .send({ email: managerB.email, password: 'P@ssw0rd!' })).body.accessToken;
+    const managerB = await createManager({ name: 'Delete B' });
+    const managerBToken = managerB.token;
     const other = await request(app).post('/api/routes')
       .set('Authorization', `Bearer ${managerBToken}`)
       .send({
@@ -425,17 +394,13 @@ describe('Cross-manager attendance access', () => {
   let managerBToken, managerBRouteId, riderOnBRouteId;
 
   beforeAll(async () => {
-    const managerB = await Manager.create({
-      name: 'Attendance B', email: `mgrB-attend-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-      isEmailVerified: true, isActive: true
-    });
-    managerBToken = (await request(app).post('/api/auth/login')
-      .send({ email: managerB.email, password: 'P@ssw0rd!' })).body.accessToken;
+    const managerB = await createManager({ name: 'Attendance B' });
+    managerBToken = managerB.token;
 
     const routeB = await Route.create({
       routeId: `AUTHZ-ATT-B-${Date.now()}`, routeName: 'B Route',
       source: 'Colombo', destination: 'Ja-Ela', distance: 20, fare: 40, estimatedTime: 30,
-      serviceType: 'PUBLIC', managerId: managerB._id
+      serviceType: 'PUBLIC', managerId: managerB.id
     });
     managerBRouteId = routeB.routeId;
 

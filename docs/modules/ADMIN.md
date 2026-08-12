@@ -11,6 +11,11 @@ of your next change here — that is the change protocol, not optional extra wor
 
 `src/routes/managerRoutes.js`, `src/routes/superAdminRoutes.js`, `src/controllers/managerController.js`, `src/controllers/superAdminController.js`, `src/models/ManagerAuditLog.js`, `src/models/ManagerBusRequest.js`
 
+> `src/controllers/managerEnrollmentsController.js`'s passenger payload (`requestSummary`) also
+> belongs in this doc once written — it now surfaces `passenger.account` (the owning identity's
+> email/phone) for a managed rider profile, since that profile has no email of its own. See
+> [`PROFILES.md`](PROFILES.md) §6 and `tests/integration/manager-enrollments-managed-profile.test.js`.
+
 ## What this doc must cover
 
 Follow the template's section order: Purpose · API surface (method/path/auth/controller) ·

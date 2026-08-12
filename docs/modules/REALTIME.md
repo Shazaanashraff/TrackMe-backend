@@ -71,7 +71,7 @@ so a client cannot listen to a route it has no membership for.
 | `route:<routeId>` | passengers tracking a route, the driver | `bus:update`, `bus:status-update`, `attendance:event`, `route:access-revoked` |
 | `bus:<busId>` | managers watching a bus, the driver | per-vehicle `bus:update` |
 | `driver:<busId>` | the driver socket | driver-directed messages |
-| `student:<userId>` | **auto-joined on connect** | per-rider `attendance:event` — no explicit join call from the client |
+| `student:<userId>` | **auto-joined on connect, per household profile** | per-rider `attendance:event` — no explicit join call from the client. A `role: 'user'` connection joins `student:<id>` for **every** profile on its identity ([`PROFILES.md`](PROFILES.md)), not just the connected token's own profile, so an event for a switched-out MANAGED profile still reaches the connection. Every other role keeps the original single-room join. |
 
 ## 5. Authorization & security rules
 
@@ -98,7 +98,9 @@ so a client cannot listen to a route it has no membership for.
 - **Controllers emit without importing `io`** — always `req.app.get('io')`. Importing the instance
   creates a circular dependency and silently no-ops in tests.
 - **`student:<userId>` is joined automatically on connect**, so per-rider pushes need no client
-  join. Clients that "join their own room" are duplicating work.
+  join. Clients that "join their own room" are duplicating work. Under multiple rider profiles
+  ([`PROFILES.md`](PROFILES.md)), this is a per-household join, not per-token — the connecting
+  profile's `identityId` is looked up once at connect time.
 - **Disconnect is a real event source**, not just cleanup: it emits `bus:status-update`.
 - The socket layer shares the client's REST refresh path (`refreshAuthTokens`), so a token expiring
   mid-session doesn't race two refreshes — a *client* invariant, but it depends on this server
@@ -118,6 +120,7 @@ so a client cannot listen to a route it has no membership for.
 | Layer | File | What it locks |
 |---|---|---|
 | WS integration | `tests/integration/ws/` | handshake auth, `join-route` refused without ACTIVE membership, recent-locations refused likewise, `bus:update` fan-out to both rooms |
+| WS integration | `tests/integration/ws/household-socket.test.js` | a PRIMARY connection auto-joins every household profile's `student:<id>` room, and still receives its own |
 
 ## 10. Change protocol
 

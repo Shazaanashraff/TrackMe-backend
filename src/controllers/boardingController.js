@@ -2,6 +2,8 @@
 const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const BoardingEvent = require('../models/BoardingEvent');
+const DriverEnrollment = require('../models/DriverEnrollment');
+const User = require('../models/User');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
 
@@ -125,6 +127,123 @@ exports.scanBoarding = async (req, res, next) => {
     }
 
     return res.status(201).json({ success: true, debounced: false, data: eventPayload(event) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Map a rider's latest trip event type to a roster status.
+function statusFromLastType(lastType) {
+  if (lastType === 'BOARD') return 'ON';
+  if (lastType === 'ALIGHT') return 'OFF';
+  return 'NOT_BOARDED';
+}
+
+// Sort order for the roster: on board first, then not-yet-boarded, then alighted; name as tiebreak.
+const STATUS_ORDER = { ON: 0, NOT_BOARDED: 1, OFF: 2 };
+
+// @desc    Roster for the driver's currently-assigned vehicle: who is enrolled with this
+//          driver and who is on board right now for the resolved trip. Powers the
+//          driver-app "X / Y on board" card + roster page. Enrollment = ACTIVE
+//          DriverEnrollment for this driver (a passenger who redeemed their enrollment
+//          key), independent of route. "On board" is derived from each rider's latest
+//          BoardingEvent within the trip window.
+// @route   GET /api/driver/boarding/roster?vehicleId=&tripId=
+exports.getBoardingRoster = async (req, res, next) => {
+  try {
+    const vehicleId = req.query?.vehicleId ? String(req.query.vehicleId) : '';
+    if (!vehicleId) {
+      return res.status(400).json({ success: false, message: 'vehicleId is required' });
+    }
+
+    const vehicle = await Vehicle.findOne({ vehicleId, driverId: req.user._id, isDeleted: false });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found or not assigned to you' });
+    }
+
+    const route = await Route.findOne({ routeId: vehicle.routeId, isDeleted: false });
+    if (!route?.qrEnabled) {
+      return res.status(403).json({ success: false, message: 'QR attendance is not enabled for this route' });
+    }
+
+    const tripId = req.query?.tripId ? String(req.query.tripId) : dayTripId(vehicleId);
+
+    // Latest event per student within the trip → their current on-board status.
+    const latestEvents = await BoardingEvent.aggregate([
+      { $match: { tripId } },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: '$studentId',
+          lastType: { $first: '$type' },
+          lastEventAt: { $first: '$timestamp' }
+        }
+      }
+    ]);
+    const statusByStudent = new Map(
+      latestEvents.map((e) => [String(e._id), { status: statusFromLastType(e.lastType), lastEventAt: e.lastEventAt }])
+    );
+
+    // Enrollment used to be route-scoped (RouteMembership); it is now driver-scoped —
+    // a passenger enrols with a specific driver by redeeming their enrollment key. See
+    // DriverEnrollment / docs/modules/DRIVER.md.
+    const enrollments = await DriverEnrollment.find({ driverId: req.user._id, status: 'ACTIVE' })
+      .populate('userId', 'name')
+      .lean();
+
+    const enrolledIds = new Set();
+    const roster = enrollments.map((e) => {
+      const studentId = String(e.userId?._id || e.userId);
+      enrolledIds.add(studentId);
+      const trip = statusByStudent.get(studentId);
+      return {
+        studentId,
+        studentName: e.userId?.name || 'Unknown',
+        status: trip?.status || 'NOT_BOARDED',
+        lastEventAt: trip?.lastEventAt || null
+      };
+    });
+
+    roster.sort((a, b) => {
+      const order = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      return order !== 0 ? order : a.studentName.localeCompare(b.studentName);
+    });
+
+    const onBoardCount = roster.filter((r) => r.status === 'ON').length;
+
+    // Riders currently on board who are not enrolled members (scanned a QR without a
+    // membership). Surfaced separately so the headline onBoardCount / enrolledCount stays clean.
+    const guestIds = latestEvents
+      .filter((e) => e.lastType === 'BOARD' && !enrolledIds.has(String(e._id)))
+      .map((e) => e._id);
+    let guests = [];
+    if (guestIds.length > 0) {
+      const guestUsers = await User.find({ _id: { $in: guestIds } }).select('name').lean();
+      const nameById = new Map(guestUsers.map((u) => [String(u._id), u.name]));
+      guests = guestIds
+        .map((id) => {
+          const trip = statusByStudent.get(String(id));
+          return {
+            studentId: String(id),
+            studentName: nameById.get(String(id)) || 'Unknown',
+            lastEventAt: trip?.lastEventAt || null
+          };
+        })
+        .sort((a, b) => a.studentName.localeCompare(b.studentName));
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        vehicleId,
+        routeId: vehicle.routeId,
+        tripId,
+        enrolledCount: roster.length,
+        onBoardCount,
+        roster,
+        guests
+      }
+    });
   } catch (error) {
     next(error);
   }

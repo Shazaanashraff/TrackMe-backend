@@ -16,6 +16,8 @@ the one doc you need. Deep detail lives in [`docs/`](docs/README.md) — do not 
    - **Adding a feature** → [`docs/guides/ADDING_A_FEATURE.md`](docs/guides/ADDING_A_FEATURE.md)
    - **Adding a test** → [`docs/guides/ADDING_A_TEST.md`](docs/guides/ADDING_A_TEST.md)
    - **Cutting a release** → [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md)
+   - **Working a GitHub issue** (agent routine/schedule or manual "finish up #N") →
+     [`docs/guides/WORKING_AN_ISSUE.md`](docs/guides/WORKING_AN_ISSUE.md)
 4. Before you push, append an entry to [`docs/CHANGES.md`](docs/CHANGES.md).
 
 **One-time setup per clone** (enables the pre-push docs check):
@@ -94,6 +96,9 @@ regardless of account type — see [`docs/modules/AUTH.md`](docs/modules/AUTH.md
 - **No undocumented module.** Update the [`docs/modules/`](docs/modules/) doc, starting from
   [`docs/guides/_MODULE_TEMPLATE.md`](docs/guides/_MODULE_TEMPLATE.md).
 - **Contract changes are cross-repo.** Update the consuming app's module doc too.
+- **Schema and CRUD changes must work in sandbox.** A new model, field, or endpoint ships with
+  its `scripts/seed-sandbox.js` fixture updated in the same change. Any migration must be runnable
+  against the sandbox database — see [`docs/modules/SANDBOX.md`](docs/modules/SANDBOX.md).
 - **Log the session.** Append to [`docs/CHANGES.md`](docs/CHANGES.md) before every push.
 
 ---
@@ -103,10 +108,18 @@ regardless of account type — see [`docs/modules/AUTH.md`](docs/modules/AUTH.md
 ```bash
 npm run dev              # nodemon
 npm start                # node src/server.js
+npm run dev:sandbox      # nodemon against .env.sandbox — second process, :5001, own database
+npm run seed:sandbox     # wipe + reseed the sandbox database (see docs/modules/SANDBOX.md)
 npm test                 # node --test smoke suite
 npm run test:integration # jest integration suite
 ```
 
-Seed/simulation helpers live in `scripts/` (`npm run seed`, `seed:routes`, `simulate`, …).
+Seed/simulation helpers live in `scripts/` (`npm run seed:routes`, `simulate`, …). The scripts
+that used to seed demo managers/drivers/buses (`seed`, `seed:buses`, `seed:manager-buses`) were
+removed — they created `Manager`/`Driver` documents directly with no `identityId`, which the
+identity model (see [`docs/modules/AUTH.md`](docs/modules/AUTH.md)) requires to log in. A
+replacement that goes through `createIdentityWithProfile` has not been written yet **for the dev
+database** — `scripts/seed-sandbox.js` is that replacement, but scoped to the sandbox database
+only (see [`docs/modules/SANDBOX.md`](docs/modules/SANDBOX.md)).
 Environment + deploy config: [`SETUP.md`](SETUP.md), `render.yaml`, and
 [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md).

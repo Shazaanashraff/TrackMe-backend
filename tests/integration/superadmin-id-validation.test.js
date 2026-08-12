@@ -1,15 +1,11 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const SuperAdmin = require('../../src/models/SuperAdmin');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createSuperAdmin, authHeader } = require('./factories');
 
 // A malformed Mongo ObjectId in these super-admin params/query used to fall through
 // to Mongoose's CastError, which errorHandler.js didn't special-case — surfacing as
 // an unhelpful 500 that embeds the raw invalid value. See issues #51/#52/#53.
-
-async function loginAs(email, password) {
-  return request(app).post('/api/auth/login').send({ email, password });
-}
 
 let superAdminToken;
 
@@ -18,12 +14,7 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Super Admin', email: `sa-idval-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  const res = await loginAs(superAdmin.email, 'P@ssw0rd!');
-  superAdminToken = res.body.accessToken;
+  ({ token: superAdminToken } = await createSuperAdmin({ name: 'Super Admin' }));
 });
 
 afterAll(async () => {
@@ -31,7 +22,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${superAdminToken}`];
+const auth = () => authHeader(superAdminToken);
 
 describe('super-admin malformed ObjectId handling', () => {
   it('PATCH /vehicle-requests/:requestId/review returns 400, not 500, for a malformed requestId', async () => {

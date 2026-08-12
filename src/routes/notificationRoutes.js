@@ -10,7 +10,7 @@ const {
   cleanupOldNotifications,
   registerDeviceToken
 } = require('../controllers/notificationController');
-const { protect } = require('../middleware/auth');
+const { protect, requireManagerOrAbove } = require('../middleware/auth');
 
 // All notification routes require authentication
 router.use(protect);
@@ -37,6 +37,6 @@ router.put('/read-all', markAllAsRead);
 router.delete('/:notificationId', deleteNotification);
 
 // DELETE /api/notifications/admin/cleanup - Clean old notifications (admin only)
-router.delete('/admin/cleanup', cleanupOldNotifications);
+router.delete('/admin/cleanup', requireManagerOrAbove, cleanupOldNotifications);
 
 module.exports = router;

@@ -1,15 +1,45 @@
-const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
+const applyPasswordAuth = require('./passwordAuth');
 
 // Common fields shared by every account type (SuperAdmin, Manager, Driver, User).
 // Composed into each model's own schema instead of a base Mongoose model, since
 // each account type needs to live in its own collection.
 //
-// `emailOptional` is for account types that have another way to sign in (drivers
-// have a driver code). The index then has to be sparse, since a plain unique
-// index counts every missing email as the same null and would allow only one
-// email-less account.
-const applyAccountFields = (schema, { emailOptional = false } = {}) => {
+// These four models are *profiles*: one person (an `Identity`) may hold several of
+// them — a rider who also drives. Credentials normally live on the Identity, not
+// here — the credential fields below (`password`, `emailVerification`,
+// `passwordReset`) are **dormant** on an identity-linked profile so a rollback
+// stays possible; they are dropped once the identity model is settled in
+// production. See docs/modules/AUTH.md.
+//
+// Drivers are the one exception: a driver signs in with a permanent driver code
+// and has no Identity at all, so their `password` field is their real, live
+// credential rather than a dormant mirror. `emailOptional` exists for exactly
+// this case — an account type with another way to sign in. The index then has to
+// be sparse, since a plain unique index counts every missing email as the same
+// null and would allow only one email-less account.
+//
+// `email` on an identity-linked profile is deliberately kept as a denormalised
+// mirror of `Identity.email` — it is never user-editable (updateProfile touches
+// name + phone only), so it cannot drift. Its `unique` index is per-collection,
+// which is what lets one email hold a rider profile and a driver profile at the
+// same time.
+//
+// `multiplePerIdentity` is the second exception, held only by `User`: one
+// identity may hold several rider profiles (the account holder plus the
+// dependants/employees they manage). Everywhere else in this file "profile"
+// still means "at most one per identity" — see User.js for how the rider
+// profile marks which one is the actual login.
+const applyAccountFields = (schema, { emailOptional = false, multiplePerIdentity = false } = {}) => {
   schema.add({
+    // The person this profile belongs to. The uniqueness constraint is declared as
+    // a partial index below rather than `unique + sparse` here: a sparse unique
+    // index skips *missing* fields but still treats explicit `null` as a value, so
+    // two profiles written with `identityId: null` would collide.
+    identityId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Identity'
+    },
     name: {
       type: String,
       required: [true, 'Name is required'],
@@ -40,11 +70,13 @@ const applyAccountFields = (schema, { emailOptional = false } = {}) => {
       sparse: true,
       index: true
     },
+    // Dormant on identity-linked profiles (`Identity.password` is the real
+    // credential there) but live for driver-code drivers, who have no Identity.
+    // Deliberately NOT required either way: `attachProfile` adds a second role to
+    // an existing person and must be able to create a profile with no password of
+    // its own.
     password: {
       type: String,
-      required: function requiredPassword() {
-        return !this.googleId;
-      },
       minlength: 8,
       select: false
     },
@@ -77,15 +109,23 @@ const applyAccountFields = (schema, { emailOptional = false } = {}) => {
     }
   });
 
-  schema.pre('save', async function hashPassword(next) {
-    if (!this.isModified('password')) return next();
-    this.password = await bcrypt.hash(this.password, 12);
-    next();
-  });
+  if (!multiplePerIdentity) {
+    // At most one profile of this role per identity, while leaving pre-migration
+    // documents (no `identityId` at all) and any explicit nulls out of the index.
+    schema.index(
+      { identityId: 1 },
+      { unique: true, partialFilterExpression: { identityId: { $type: 'objectId' } } }
+    );
+  } else {
+    // A role that allows several profiles per identity (rider profiles: the
+    // account holder plus everyone they manage) declares its own uniqueness
+    // scoped to the field that marks which one is the login — see User.js. This
+    // is still a plain (non-unique) index: every household read filters on
+    // identityId, and it would be a full collection scan without one.
+    schema.index({ identityId: 1 });
+  }
 
-  schema.methods.comparePassword = async function comparePassword(candidatePassword) {
-    return bcrypt.compare(candidatePassword, this.password);
-  };
+  applyPasswordAuth(schema);
 
   return schema;
 };
