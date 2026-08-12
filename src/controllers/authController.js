@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const Manager = require('../models/Manager');
+const Identity = require('../models/Identity');
 const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
 const {
   findIdentityByEmail,
@@ -162,6 +163,10 @@ const userPayload = (user, role, identity = null) => ({
   // Drivers sign in with this and it is shown in their profile; absent on
   // every other role.
   ...(user.driverCode ? { driverCode: user.driverCode } : {}),
+  // Present only on `user` — undefined (dropped by JSON.stringify) elsewhere.
+  // Tells the client which profile it is looking at without a second call:
+  // MANAGED profiles hide the phone field and can't create/delete siblings.
+  ...(user.profileKind ? { profileKind: user.profileKind } : {}),
   phoneNumber: user.phoneNumber,
   avatarUrl: user.avatarUrl || '',
   role,
@@ -174,6 +179,13 @@ const userPayload = (user, role, identity = null) => ({
       ? { _id: user.organization._id, name: user.organization.name }
       : null
 });
+
+// Re-hydrates the Identity a profile document points at, for the many
+// `userPayload` call sites below that only have the profile in hand. Without
+// this, userPayload falls back to the profile's own (dormant, and on a
+// managed rider profile always empty) `email`/`isEmailVerified` fields — the
+// account's real email would silently blank out of the response.
+const hydrateIdentity = async (user) => (user.identityId ? Identity.findById(user.identityId) : null);
 
 // Email verification is only enforced for riders. Every other role is created by an
 // admin (a manager provisioning a driver, a super-admin adding a manager), which
@@ -689,12 +701,13 @@ exports.refreshAccessToken = async (req, res, next) => {
     }
 
     const tokens = await issueTokensForUser(user, role);
+    const identity = await hydrateIdentity(user);
 
     res.status(200).json({
       success: true,
       message: 'Token refreshed successfully',
       ...tokens,
-      user: userPayload(user, role)
+      user: userPayload(user, role, identity)
     });
   } catch (error) {
     next(error);
@@ -1028,9 +1041,11 @@ exports.getMe = async (req, res, next) => {
   try {
     // `protect` has already loaded the account document and stamped its role,
     // so this is the same shape login hands back, from the same source.
+    const identity = await hydrateIdentity(req.user);
+
     return res.status(200).json({
       success: true,
-      user: userPayload(req.user, req.user.role)
+      user: userPayload(req.user, req.user.role, identity)
     });
   } catch (error) {
     next(error);
@@ -1054,7 +1069,13 @@ exports.updateProfile = async (req, res, next) => {
 
     const update = { name: name.trim() };
 
-    if (phoneNumber !== undefined) {
+    // A managed rider profile has no phone number of its own — it belongs to
+    // the account holder. Ignored rather than rejected: the UI simply hides
+    // the field for a managed profile, so a stale value in the body should
+    // not turn an otherwise-valid name change into an error.
+    const isManagedProfile = req.user.role === 'user' && req.user.profileKind === 'MANAGED';
+
+    if (phoneNumber !== undefined && !isManagedProfile) {
       const trimmedPhone = String(phoneNumber).trim();
       if (trimmedPhone && !PHONE_NUMBER_REGEX.test(trimmedPhone)) {
         return res.status(400).json({
@@ -1079,10 +1100,12 @@ exports.updateProfile = async (req, res, next) => {
       });
     }
 
+    const identity = await hydrateIdentity(user);
+
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      user: userPayload(user, req.user.role)
+      user: userPayload(user, req.user.role, identity)
     });
   } catch (error) {
     next(error);
@@ -1111,7 +1134,7 @@ exports.updateAvatar = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message: 'Profile picture removed',
-        user: userPayload(cleared, req.user.role)
+        user: userPayload(cleared, req.user.role, await hydrateIdentity(cleared))
       });
     }
 
@@ -1150,7 +1173,7 @@ exports.updateAvatar = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Profile picture updated',
-      user: userPayload(user, req.user.role)
+      user: userPayload(user, req.user.role, await hydrateIdentity(user))
     });
   } catch (error) {
     next(error);
