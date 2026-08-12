@@ -3,7 +3,6 @@ const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const Manager = require('../models/Manager');
-const Identity = require('../models/Identity');
 const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
 const {
   accessTokenExpiresIn,
@@ -11,6 +10,7 @@ const {
   hashToken,
   issueTokensForUser
 } = require('../utils/tokens');
+const { userPayload, hydrateIdentity } = require('../utils/accountPayload');
 const {
   findIdentityByEmail,
   findProfilesForIdentity,
@@ -115,40 +115,6 @@ const sendVerificationEmail = async (to, otp) => {
   console.log('[Resend] sendVerificationEmail sent, id:', data?.id);
   return true;
 };
-
-// `identity` is optional so the two profile-only flows (refresh, logout) can keep
-// calling this without a second lookup. When present it is the source of truth for
-// `isEmailVerified`, which now belongs to the person rather than to one of their roles.
-const userPayload = (user, role, identity = null) => ({
-  _id: user._id,
-  name: user.name,
-  email: identity?.email || user.email || '',
-  // Drivers sign in with this and it is shown in their profile; absent on
-  // every other role.
-  ...(user.driverCode ? { driverCode: user.driverCode } : {}),
-  // Present only on `user` — undefined (dropped by JSON.stringify) elsewhere.
-  // Tells the client which profile it is looking at without a second call:
-  // MANAGED profiles hide the phone field and can't create/delete siblings.
-  ...(user.profileKind ? { profileKind: user.profileKind } : {}),
-  phoneNumber: user.phoneNumber,
-  avatarUrl: user.avatarUrl || '',
-  role,
-  isEmailVerified: identity ? identity.isEmailVerified : user.isEmailVerified,
-  // Drives service-aware UI (e.g. a school manager sees "Vehicles", not "Buses").
-  // Always present for managers; harmless (PUBLIC/null) for other roles.
-  serviceType: user.serviceType || 'PUBLIC',
-  organization:
-    user.organization && user.organization.name
-      ? { _id: user.organization._id, name: user.organization.name }
-      : null
-});
-
-// Re-hydrates the Identity a profile document points at, for the many
-// `userPayload` call sites below that only have the profile in hand. Without
-// this, userPayload falls back to the profile's own (dormant, and on a
-// managed rider profile always empty) `email`/`isEmailVerified` fields — the
-// account's real email would silently blank out of the response.
-const hydrateIdentity = async (user) => (user.identityId ? Identity.findById(user.identityId) : null);
 
 // Email verification is only enforced for riders. Every other role is created by an
 // admin (a manager provisioning a driver, a super-admin adding a manager), which

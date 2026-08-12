@@ -4,6 +4,8 @@ const Vehicle = require('../models/Vehicle');
 const Organization = require('../models/Organization');
 const { publicOrganization } = require('../utils/organizations');
 const { findDriverIdByEnrollmentKey } = require('../utils/enrollmentKey');
+const { findHouseholdProfiles } = require('../utils/identityRegistry');
+const { riderTagForServiceType } = require('../utils/riderTag');
 
 // One message for every reason a key does not work, so a caller cannot use the
 // response to learn which keys exist or which drivers are private.
@@ -61,8 +63,57 @@ const enrollmentSummary = (enrollment, driver, organization, vehicle) => ({
   requiredApproval: enrollment.requiredApproval,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
-  driver: driver ? driverSummary(driver, organization, vehicle) : null
+  driver: driver ? driverSummary(driver, organization, vehicle) : null,
+  // Derived from the driver's organization, never stored — see utils/riderTag.js.
+  riderTag: riderTagForServiceType(organization?.serviceType)
 });
+
+// Shared by getMyEnrollments (one profile) and getHouseholdEnrollments
+// (every profile on an identity): fetches ACTIVE/PENDING enrollments for a
+// set of profile ids and batch-loads the drivers/organizations/vehicles they
+// reference, returning one summary list per profile id. Keeping this in one
+// place is what makes the household view's per-profile grouping consistent
+// with what a single profile's own "my shuttle" list already shows.
+const loadEnrollmentsByProfile = async (profileIds) => {
+  const byProfile = new Map(profileIds.map((id) => [String(id), []]));
+  if (!profileIds.length) return byProfile;
+
+  const enrollments = await DriverEnrollment.find({
+    userId: { $in: profileIds },
+    status: { $in: ['ACTIVE', 'PENDING'] }
+  }).sort({ createdAt: -1 }).lean();
+
+  if (!enrollments.length) return byProfile;
+
+  const driverIds = enrollments.map((item) => item.driverId);
+  const drivers = await Driver.find({ _id: { $in: driverIds } })
+    .select('name driverCode organization isActive')
+    .lean();
+
+  const orgIds = drivers.map((d) => d.organization).filter(Boolean);
+  const [organizations, vehicles] = await Promise.all([
+    orgIds.length
+      ? Organization.find({ _id: { $in: orgIds } }).select('name serviceType').lean()
+      : [],
+    Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId').lean()
+  ]);
+
+  const driverById = new Map(drivers.map((d) => [String(d._id), d]));
+  const orgById = new Map(organizations.map((o) => [String(o._id), o]));
+  const vehicleByDriver = new Map(vehicles.map((v) => [String(v.driverId), v]));
+
+  for (const enrollment of enrollments) {
+    const driver = driverById.get(String(enrollment.driverId));
+    const organization = driver?.organization ? orgById.get(String(driver.organization)) : null;
+    const summary = enrollmentSummary(enrollment, driver, organization, vehicleByDriver.get(String(enrollment.driverId)));
+
+    const key = String(enrollment.userId);
+    if (!byProfile.has(key)) byProfile.set(key, []);
+    byProfile.get(key).push(summary);
+  }
+
+  return byProfile;
+};
 
 // @route POST /api/enrollments/redeem
 exports.redeemEnrollmentKey = async (req, res, next) => {
@@ -157,43 +208,43 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
 // are left out: to the passenger the request simply did not succeed.
 exports.getMyEnrollments = async (req, res, next) => {
   try {
-    const enrollments = await DriverEnrollment.find({
-      userId: req.user._id,
-      status: { $in: ['ACTIVE', 'PENDING'] }
-    })
-      .sort({ createdAt: -1 })
-      .lean();
+    const byProfile = await loadEnrollmentsByProfile([req.user._id]);
+    return res.status(200).json({ success: true, data: byProfile.get(String(req.user._id)) || [] });
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (!enrollments.length) {
+// @route GET /api/profiles/household/enrollments
+// Every profile on the caller's identity — the account holder plus everyone
+// they manage — with its own ACTIVE/PENDING enrollments, so the app can show
+// one map with every household member's shuttle at once (see
+// docs/modules/PROFILES.md). An identity-less caller (a pre-migration
+// account, in principle) gets an empty list rather than an unscoped query —
+// there is no household to return.
+exports.getHouseholdEnrollments = async (req, res, next) => {
+  try {
+    if (!req.identityId) {
       return res.status(200).json({ success: true, data: [] });
     }
 
-    const driverIds = enrollments.map((item) => item.driverId);
-    const drivers = await Driver.find({ _id: { $in: driverIds } })
-      .select('name driverCode organization isActive')
-      .lean();
+    const profiles = await findHouseholdProfiles(req.identityId);
+    if (!profiles.length) {
+      return res.status(200).json({ success: true, data: [] });
+    }
 
-    const orgIds = drivers.map((d) => d.organization).filter(Boolean);
-    const [organizations, vehicles] = await Promise.all([
-      orgIds.length
-        ? Organization.find({ _id: { $in: orgIds } }).select('name serviceType').lean()
-        : [],
-      Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId').lean()
-    ]);
+    const byProfile = await loadEnrollmentsByProfile(profiles.map((p) => p._id));
 
-    const driverById = new Map(drivers.map((d) => [String(d._id), d]));
-    const orgById = new Map(organizations.map((o) => [String(o._id), o]));
-    const vehicleByDriver = new Map(vehicles.map((v) => [String(v.driverId), v]));
-
-    const data = enrollments.map((enrollment) => {
-      const driver = driverById.get(String(enrollment.driverId));
-      return enrollmentSummary(
-        enrollment,
-        driver,
-        driver?.organization ? orgById.get(String(driver.organization)) : null,
-        vehicleByDriver.get(String(enrollment.driverId))
-      );
-    });
+    const data = profiles.map((profile) => ({
+      profile: {
+        _id: profile._id,
+        name: profile.name,
+        relation: profile.relation || '',
+        profileKind: profile.profileKind,
+        hasAvatar: Boolean(profile.avatarUrl)
+      },
+      enrollments: byProfile.get(String(profile._id)) || []
+    }));
 
     return res.status(200).json({ success: true, data });
   } catch (error) {
