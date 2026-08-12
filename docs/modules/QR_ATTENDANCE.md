@@ -89,6 +89,11 @@ latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the roster
 - The roster exposes enrolled rider names to the driver of that route's bus only — scoped strictly
   to the caller's own assigned bus.
 - `qrEnabled` gates both scan and roster (403 when false).
+- `GET /api/attendance/student/:studentId` additionally grants access to anyone sharing the
+  target's `identityId` — the account holder reading a managed child's attendance, or vice versa —
+  on top of the existing self/managing-manager rules. Same null-equality discipline as
+  [`PROFILES.md`](PROFILES.md)'s `requireOwnProfile`: a caller with no `identityId` never matches
+  a target with none either.
 
 ## Side effects
 
@@ -102,7 +107,12 @@ latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the roster
   debounce/push), manager QR toggle, attendance reads, device-token.
 - `tests/integration/qr-roster.test.js` — roster status derivation, counts, guests, authz.
 - `tests/integration/ws/qr-attendance-socket.test.js` — `student:<id>` auto-join.
-- Traceability rows in [`../TESTING_GUIDE.md`](../TESTING_GUIDE.md) §QR Attendance.
+- `tests/integration/attendance-household.test.js` — cross-profile attendance access for a
+  shared identity, plus the null-equality regression case (see [`PROFILES.md`](PROFILES.md)).
+- `tests/integration/ws/household-socket.test.js` — the `student:<id>` auto-join extended to
+  every profile in a connection's household.
+- Traceability rows in [`../TESTING_GUIDE.md`](../TESTING_GUIDE.md) §QR Attendance and
+  §Rider Profiles.
 
 ## Change protocol
 
