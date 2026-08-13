@@ -1,6 +1,7 @@
 // Expo push delivery for QR boarding/alighting events.
 // See docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md "Push notifications".
 const { Expo } = require('expo-server-sdk');
+const User = require('../models/User');
 
 const expo = new Expo();
 
@@ -8,14 +9,33 @@ function formatTime(date) {
   return new Date(date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-// Sends a "<Child> boarded/alighted <Vehicle> at HH:MM" push to every registered Expo
-// token on `user`. Never throws — push delivery failures must not block the scan
-// endpoint or attendance recording. Returns a small delivery summary for logging/tests.
-async function sendBoardingPush(student, account, event, vehicleName) {
+// A managed rider profile (a child, an employee someone else set up) has no
+// device of its own — push tokens are only ever registered on the account
+// holder (see notificationController.registerDeviceToken). Without this, a
+// boarding push for a scanned child resolves zero tokens and the parent is
+// silently never told their child boarded, which defeats most of the point
+// of the feature. Falls back to the rider's own tokens when it has no
+// identityId (a pre-migration document, in principle), so this stays correct
+// for every account shape, not just multi-profile ones.
+async function resolvePushTokensForRider(rider) {
+  if (!rider) return [];
+
+  if (!rider.identityId) {
+    return Array.isArray(rider.pushTokens) ? rider.pushTokens.filter((t) => Expo.isExpoPushToken(t)) : [];
+  }
+
+  const household = await User.find({ identityId: rider.identityId }).select('pushTokens').lean();
+  const tokens = household.flatMap((doc) => (Array.isArray(doc.pushTokens) ? doc.pushTokens : []));
+  return [...new Set(tokens)].filter((t) => Expo.isExpoPushToken(t));
+}
+
+// Sends a "<Child> boarded/alighted <Vehicle> at HH:MM" push to every Expo token
+// registered anywhere in `user`'s household. Never throws — push delivery failures
+// must not block the scan endpoint or attendance recording. Returns a small delivery
+// summary for logging/tests.
+async function sendBoardingPush(user, event, vehicleName) {
   try {
-    const tokens = Array.isArray(account?.pushTokens)
-      ? account.pushTokens.filter((t) => Expo.isExpoPushToken(t))
-      : [];
+    const tokens = await resolvePushTokensForRider(user);
 
     if (tokens.length === 0) {
       return { sent: 0, skipped: 'NO_TOKENS' };
@@ -51,4 +71,4 @@ async function sendBoardingPush(student, account, event, vehicleName) {
   }
 }
 
-module.exports = { sendBoardingPush };
+module.exports = { sendBoardingPush, resolvePushTokensForRider };

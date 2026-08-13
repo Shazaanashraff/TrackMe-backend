@@ -1,11 +1,10 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
-const SuperAdmin = require('../../src/models/SuperAdmin');
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const ManagerVehicleRequest = require('../../src/models/ManagerVehicleRequest');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createSuperAdmin } = require('./factories');
 
 // Issue #81: reviewVehicleRequest's CREATE_VEHICLE_ACCOUNT approval branch used
 // to spread the manager-submitted vehicle payload straight into Vehicle.create()
@@ -17,33 +16,20 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 
 const stamp = Date.now();
 
-const login = (identifier, password) =>
-  request(app).post('/api/auth/login').send({ identifier, password });
-
 let superAdminToken;
-let manager;
+let managerId;
 let route;
 
 beforeAll(async () => {
   await connectTestDb();
   await clearTestDb();
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Review Whitelist Admin',
-    email: `sa-whitelist-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  superAdminToken = (await login(superAdmin.email, 'P@ssw0rd!')).body.accessToken;
+  const superAdmin = await createSuperAdmin({ name: 'Review Whitelist Admin' });
+  superAdminToken = superAdmin.token;
 
-  manager = await Manager.create({
-    name: 'Whitelist Manager',
-    email: `mgr-whitelist-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
+  // Only ever referenced as the request's managerId, so it never signs in.
+  const manager = await createManager({ name: 'Whitelist Manager', signIn: false });
+  managerId = manager.id;
 
   route = await Route.create({
     routeId: `WL-ROUTE-${stamp}`,
@@ -67,7 +53,7 @@ describe('PATCH /api/super-admin/vehicle-requests/:requestId/review — CREATE_V
   it('does not persist a field outside the vehicle-creation whitelist from the submitted payload', async () => {
     const requestDoc = await ManagerVehicleRequest.create({
       type: 'CREATE_VEHICLE_ACCOUNT',
-      managerId: manager._id,
+      managerId,
       vehicleId: `WL-VEH-${stamp}`,
       payload: {
         vehicle: {

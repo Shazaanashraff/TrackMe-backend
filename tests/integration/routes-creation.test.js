@@ -1,9 +1,8 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
-const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createDriver } = require('./factories');
 
 // POST /api/routes had zero test coverage despite TEST_PLAN_INTEGRATION.md
 // claiming otherwise (issue #18). Covers the happy path, the admin-only guard,
@@ -17,31 +16,8 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const manager = await Manager.create({
-    name: 'Route Admin',
-    email: `mgr-routecreate-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-
-  const driver = await Driver.create({
-    name: 'Route Driver',
-    email: `drv-routecreate-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-
-  const managerLogin = await request(app).post('/api/auth/login').send({
-    email: manager.email, password: 'P@ssw0rd!'
-  });
-  managerToken = managerLogin.body.accessToken;
-
-  const driverLogin = await request(app).post('/api/auth/login').send({
-    email: driver.email, password: 'P@ssw0rd!'
-  });
-  driverToken = driverLogin.body.accessToken;
+  ({ token: managerToken } = await createManager({ name: 'Route Admin' }));
+  ({ token: driverToken } = await createDriver({ name: 'Route Driver' }));
 });
 
 afterAll(async () => {

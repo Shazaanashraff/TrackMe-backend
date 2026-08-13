@@ -1,13 +1,26 @@
 const Notification = require('../models/Notification');
 const User = require('../models/User');
-const RiderProfile = require('../models/RiderProfile');
+const { findHouseholdProfiles } = require('../utils/identityRegistry');
 
-async function riderFilterForRequest(req) {
-  const requested = String(req.query?.riderId || req.query?.studentId || '').trim();
-  if (!requested || requested === 'all') return {};
-  const owned = await RiderProfile.exists({ _id: requested, accountId: req.user._id, isActive: { $ne: false } });
-  if (!owned) return null;
-  return { $or: [{ studentId: requested }, { studentId: null }] };
+// Every rider-facing read below is household-scoped by default — a
+// notification about a managed profile must stay visible while a different
+// profile's session is active, otherwise switching to check on a child would
+// mean losing sight of everyone else's notifications. Narrowed to one
+// profile via ?profileId=, which is checked against the household rather
+// than trusted outright: a client-supplied id must actually belong to the
+// caller before it can scope a query.
+async function resolveScopedUserIds(req) {
+  if (!req.identityId) return [req.user._id];
+
+  const household = await findHouseholdProfiles(req.identityId);
+  const householdIds = household.map((p) => String(p._id));
+
+  const requestedProfileId = req.query?.profileId ? String(req.query.profileId) : null;
+  if (requestedProfileId) {
+    return householdIds.includes(requestedProfileId) ? [requestedProfileId] : [];
+  }
+
+  return householdIds;
 }
 
 // @desc    Get user's notifications
@@ -17,10 +30,8 @@ exports.getUserNotifications = async (req, res, next) => {
     const { page = 1, limit = 10, unreadOnly = false } = req.query;
     const skip = (page - 1) * limit;
 
-    const filter = { userId: req.user._id };
-    const riderFilter = await riderFilterForRequest(req);
-    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
-    Object.assign(filter, riderFilter);
+    const userIds = await resolveScopedUserIds(req);
+    const filter = { userId: { $in: userIds } };
     if (unreadOnly === 'true') {
       filter.isRead = false;
     }
@@ -52,9 +63,10 @@ exports.getUserNotifications = async (req, res, next) => {
 exports.markAsRead = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
+    const userIds = await resolveScopedUserIds(req);
 
     const notification = await Notification.findOneAndUpdate(
-      { _id: notificationId, userId: req.user._id },
+      { _id: notificationId, userId: { $in: userIds } },
       { isRead: true, readAt: new Date() },
       { new: true }
     );
@@ -77,10 +89,10 @@ exports.markAsRead = async (req, res, next) => {
 // @route   PUT /api/notifications/read-all
 exports.markAllAsRead = async (req, res, next) => {
   try {
-    const riderFilter = await riderFilterForRequest(req);
-    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
+    const userIds = await resolveScopedUserIds(req);
+
     await Notification.updateMany(
-      { userId: req.user._id, isRead: false, ...riderFilter },
+      { userId: { $in: userIds }, isRead: false },
       { isRead: true, readAt: new Date() }
     );
 
@@ -98,10 +110,11 @@ exports.markAllAsRead = async (req, res, next) => {
 exports.deleteNotification = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
+    const userIds = await resolveScopedUserIds(req);
 
     const notification = await Notification.findOneAndDelete({
       _id: notificationId,
-      userId: req.user._id
+      userId: { $in: userIds }
     });
 
     if (!notification) {
@@ -121,12 +134,11 @@ exports.deleteNotification = async (req, res, next) => {
 // @route   GET /api/notifications/count/unread
 exports.getUnreadCount = async (req, res, next) => {
   try {
-    const riderFilter = await riderFilterForRequest(req);
-    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
+    const userIds = await resolveScopedUserIds(req);
+
     const count = await Notification.countDocuments({
-      userId: req.user._id,
-      isRead: false,
-      ...riderFilter
+      userId: { $in: userIds },
+      isRead: false
     });
 
     res.status(200).json({
@@ -162,10 +174,11 @@ exports.createNotification = async (userId, type, title, message, data = {}) => 
 exports.getNotificationById = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
+    const userIds = await resolveScopedUserIds(req);
 
     const notification = await Notification.findOne({
       _id: notificationId,
-      userId: req.user._id
+      userId: { $in: userIds }
     });
 
     if (!notification) {
@@ -195,7 +208,19 @@ exports.registerDeviceToken = async (req, res, next) => {
     // Push tokens are a rider-only feature (see User.js pushTokens comment); other
     // account types don't have this field, so there's nothing to store for them.
     if (req.user.role === 'user') {
-      await User.findByIdAndUpdate(req.user._id, { $addToSet: { pushTokens: token } });
+      // Always the account holder's document, never whichever profile is
+      // currently active: a managed profile has no device of its own, and
+      // pushHelper.resolvePushTokensForRider already unions tokens across
+      // the whole household — writing here to a switched-in child would
+      // silently move the token off the profile that's actually registered
+      // to deliver, and it would vanish the next time someone switches back.
+      const targetUserId = req.user.profileKind === 'MANAGED'
+        ? (await User.findOne({ identityId: req.identityId, profileKind: 'PRIMARY' }).select('_id'))?._id
+        : req.user._id;
+
+      if (targetUserId) {
+        await User.findByIdAndUpdate(targetUserId, { $addToSet: { pushTokens: token } });
+      }
     }
 
     return res.status(200).json({ success: true, message: 'Device token registered' });

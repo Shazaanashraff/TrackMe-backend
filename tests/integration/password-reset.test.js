@@ -1,7 +1,8 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
+const Identity = require('../../src/models/Identity');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createRider, uniqueEmail } = require('./factories');
 
 // Covers POST /api/auth/forgot-password/request-otp + verify-otp, including the
 // brute-force lockout on verify-otp (issue #4): no RESEND_API_KEY is configured
@@ -14,11 +15,8 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 // and mask what's actually being tested here.
 
 async function createUser() {
-  const email = `pwreset-${Date.now()}-${Math.random().toString(36).slice(2)}@test.com`;
-  await User.create({
-    name: 'Reset Tester', email, password: 'P@ssw0rd!',
-    role: 'user', isEmailVerified: true, isActive: true
-  });
+  const email = uniqueEmail('pwreset');
+  await createRider({ name: 'Reset Tester', email, signIn: false });
   return email;
 }
 
@@ -159,7 +157,9 @@ describe('Password reset OTP', () => {
     const email = await createUser();
     await requestOtp(email);
 
-    const withReset = await User.findOne({ email }).select('+passwordReset.expiresAt');
+    // passwordReset lives on Identity, not the profile — dormant there
+    // (shared/accountFields.js).
+    const withReset = await Identity.findOne({ email }).select('+passwordReset.expiresAt');
     const resetExpiryMs = withReset.passwordReset.expiresAt.getTime() - Date.now();
     // 5-minute window, allowing slack for test execution time.
     expect(resetExpiryMs).toBeGreaterThan(4.5 * 60 * 1000);
@@ -172,7 +172,9 @@ describe('Password reset OTP', () => {
     });
     expect(registerRes.status).toBe(201);
 
-    const withVerification = await User.findOne({ email: registerRes.body.email }).select('+emailVerification.expiresAt');
+    // Same dormant-on-profile / real-on-Identity split as passwordReset above.
+    const withVerification = await Identity.findOne({ email: registerRes.body.email })
+      .select('+emailVerification.expiresAt');
     const verificationExpiryMs = withVerification.emailVerification.expiresAt.getTime() - Date.now();
     // 10-minute window, allowing slack for test execution time.
     expect(verificationExpiryMs).toBeGreaterThan(9.5 * 60 * 1000);

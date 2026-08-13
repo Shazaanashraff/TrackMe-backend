@@ -1,0 +1,55 @@
+name: Task / Issue
+description: A scoped bug fix or feature for an engineer or agent to pick up and merge to main.
+title: "[TASK] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See `docs/guides/WORKING_AN_ISSUE.md` for how this gets picked up and merged —
+        applies the same whether it's a scheduled agent or a manual session.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What's wrong, or what's needed. One or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be true for this to be considered done. Bullet list.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: input
+    id: module
+    attributes:
+      label: Owning module
+      description: Which docs/modules/<NAME>.md does this belong to? (see CLAUDE.md "Where to look")
+      placeholder: e.g. docs/modules/PRIVATE_ROUTES.md
+    validations:
+      required: false
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression tests required
+      description: >
+        Exact commands that must be green before this can merge. This is a floor, not a ceiling —
+        the assignee adds more if the change needs it (see docs/guides/ADDING_A_TEST.md).
+      value: |
+        - [ ] `npm test`
+        - [ ] `npm run test:integration`
+      render: markdown
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Cross-repo contract
+      options:
+        - label: This touches a response shape, status code, or socket payload shared with user-app / driver-app / web-admin
+          required: false

@@ -1,0 +1,22 @@
+#!/bin/sh
+# pre-push — documentation staleness check.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Warns when code changed without the matching docs/CHANGES.md, module doc, or
+# TESTING_GUIDE row. Warning only — add --strict below to block pushes instead.
+# Skip a single push with:  SKIP_DOCS_CHECK=1 git push
+
+if [ -n "$SKIP_DOCS_CHECK" ]; then
+  echo "check-docs: skipped (SKIP_DOCS_CHECK set)"
+  exit 0
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "check-docs: node not found, skipping."
+  exit 0
+fi
+
+node "$(git rev-parse --show-toplevel)/scripts/check-docs.mjs" || exit $?
+exit 0

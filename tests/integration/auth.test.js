@@ -14,6 +14,7 @@ jest.mock('resend', () => ({
 const app = require('../../src/server');
 const User = require('../../src/models/User');
 const { connectTestDb, closeTestDb } = require('./db');
+const { createRider, createManager } = require('./factories');
 
 // Matches the real API: POST /api/auth/login returns
 // { success, message, accessToken, refreshToken, user } on success.
@@ -27,15 +28,9 @@ const VALID = {
 beforeAll(async () => {
   await connectTestDb();
   await User.deleteMany({ email: VALID.email });
-  // Password is hashed by the User pre-save hook; email pre-verified so login isn't gated.
-  await User.create({
-    name: VALID.name,
-    email: VALID.email,
-    password: VALID.password,
-    role: 'user',
-    isEmailVerified: true,
-    isActive: true,
-  });
+  // Built through the factory, not User.create: the password lives on Identity,
+  // so a directly-created rider cannot log in.
+  await createRider({ name: VALID.name, email: VALID.email, password: VALID.password });
 });
 
 afterAll(async () => {
@@ -91,13 +86,9 @@ describe('Auth Integration - POST /api/auth/login', () => {
 
   test('unverified account returns 403 with requiresVerification + email', async () => {
     const email = `unverified-${Date.now()}@test.com`;
-    await User.create({
-      name: 'Unverified Tester',
-      email,
-      password: VALID.password,
-      role: 'user',
-      isEmailVerified: false,
-      isActive: true,
+    await createRider({
+      name: 'Unverified Tester', email, password: VALID.password,
+      isEmailVerified: false, signIn: false
     });
 
     const res = await request(app)
@@ -156,6 +147,55 @@ describe('Auth Integration - POST /api/auth/register + POST /api/auth/verify-ema
   });
 });
 
+describe('Auth Integration - POST /api/auth/register with a duplicate email', () => {
+  test('registering with the correct password of an existing rider offers a sign-in shortcut', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: VALID.email, password: VALID.password })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(true);
+  });
+
+  test('registering with the wrong password of an existing rider does not offer sign-in', async () => {
+    const res = await request(app)
+      // Policy-valid but wrong, so this exercises the duplicate-email/wrong-password
+      // branch rather than tripping the password-policy validator first — the
+      // original 'totally-wrong-password' has no uppercase or digit and 400s
+      // before the controller's duplicate check ever runs.
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: VALID.email, password: 'Totally-Wr0ng!' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(false);
+  });
+
+  test('registering with a manager account email never offers sign-in, even with the right password', async () => {
+    // Through the factory so the Identity register's duplicate-email check reads
+    // actually exists — a directly-created Manager has no Identity, so register
+    // would find no match at all and create a brand-new rider instead of 409ing.
+    const manager = await createManager({
+      name: 'Registry Manager', password: 'Manager@123', signIn: false
+    });
+
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Retry', email: manager.email, password: 'Manager@123' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('EMAIL_IN_USE');
+    expect(res.body.canSignIn).toBe(false);
+  });
+});
+
 describe('Auth Integration - PUT /api/auth/profile (phone number)', () => {
   const PROFILE_USER = {
     name: 'Profile Tester',
@@ -165,16 +205,7 @@ describe('Auth Integration - PUT /api/auth/profile (phone number)', () => {
   let token;
 
   beforeAll(async () => {
-    await User.create({
-      ...PROFILE_USER,
-      role: 'user',
-      isEmailVerified: true,
-      isActive: true,
-    });
-    const login = await request(app)
-      .post('/api/auth/login')
-      .send({ email: PROFILE_USER.email, password: PROFILE_USER.password });
-    token = login.body.accessToken;
+    ({ token } = await createRider({ ...PROFILE_USER }));
   });
 
   test('accepts and persists a phoneNumber, returned on the user object', async () => {
@@ -236,16 +267,7 @@ describe('Auth Integration - PUT /api/auth/avatar (profile picture)', () => {
   let token;
 
   beforeAll(async () => {
-    await User.create({
-      ...AVATAR_USER,
-      role: 'user',
-      isEmailVerified: true,
-      isActive: true,
-    });
-    const login = await request(app)
-      .post('/api/auth/login')
-      .send({ email: AVATAR_USER.email, password: AVATAR_USER.password });
-    token = login.body.accessToken;
+    ({ token } = await createRider({ ...AVATAR_USER }));
   });
 
   test('login returns an (empty) avatarUrl field by default', async () => {

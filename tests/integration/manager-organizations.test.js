@@ -1,17 +1,12 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const SuperAdmin = require('../../src/models/SuperAdmin');
 const Organization = require('../../src/models/Organization');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createSuperAdmin, authHeader } = require('./factories');
 
 // Managers are categorised by serviceType (PUBLIC / SCHOOL / UNIVERSITY / OFFICE).
 // The private service types must belong to an Organization (school/university/office),
 // which the super admin can create and pick. PUBLIC managers have no organization.
-
-async function loginAs(email, password) {
-  const res = await request(app).post('/api/auth/login').send({ email, password });
-  return res.body.accessToken;
-}
 
 let superAdminToken;
 
@@ -23,11 +18,7 @@ beforeAll(async () => {
   delete process.env.RESEND_API_KEY;
   process.env.NODE_ENV = 'test';
 
-  const superAdmin = await SuperAdmin.create({
-    name: 'Super Admin', email: `sa-${Date.now()}@test.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  superAdminToken = await loginAs(superAdmin.email, 'P@ssw0rd!');
+  ({ token: superAdminToken } = await createSuperAdmin({ name: 'Super Admin' }));
 });
 
 afterAll(async () => {
@@ -35,7 +26,7 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${superAdminToken}`];
+const auth = () => authHeader(superAdminToken);
 
 describe('Organizations', () => {
   it('creates an organization and lists it filtered by service type', async () => {

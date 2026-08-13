@@ -1,10 +1,10 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const User = require('../../src/models/User');
 const Driver = require('../../src/models/Driver');
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
 const { connectTestDb, closeTestDb } = require('./db');
+const { createRider } = require('./factories');
 
 // Matches the real API: POST /api/bookings expects
 // { vehicleId, routeId, seatNumbers[], journeyDate, pricePerSeat, totalPrice, ... }
@@ -21,18 +21,9 @@ beforeAll(async () => {
   await connectTestDb();
 
   // Passenger + auth token
-  await User.create({
-    name: 'Booking Tester',
-    email: PASSENGER.email,
-    password: PASSENGER.password,
-    role: 'user',
-    isEmailVerified: true,
-    isActive: true,
-  });
-  const login = await request(app)
-    .post('/api/auth/login')
-    .send({ email: PASSENGER.email, password: PASSENGER.password });
-  token = login.body.accessToken;
+  ({ token } = await createRider({
+    name: 'Booking Tester', email: PASSENGER.email, password: PASSENGER.password
+  }));
 
   // A driver is required to create a vehicle.
   const driver = await Driver.create({

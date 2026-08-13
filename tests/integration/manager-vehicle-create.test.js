@@ -1,17 +1,19 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
 const ManagerVehicleRequest = require('../../src/models/ManagerVehicleRequest');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, authHeader } = require('./factories');
 
-// A manager owns their own fleet, so POST /api/manager/vehicle-accounts creates
-// the vehicle and its driver outright. It used to raise a request for a super
-// admin to approve, which left a new manager unable to add anything at all
-// until somebody else acted, and unable to add a driver either since the driver
-// form needs an existing vehicle.
+// A manager's first vehicle is created outright, so POST /api/manager/vehicle-accounts
+// creates the vehicle and its driver immediately for a fleet that is still empty.
+// That used to be true for every vehicle a manager created, but a manager's fleet
+// showing up in the system now means every vehicle after the first goes through a
+// super-admin-approved request instead (see vehicle-create-approval.test.js) — so
+// every test in this file uses a brand new, vehicle-less manager to keep exercising
+// the immediate-creation path this file is actually about.
 
 let managerToken;
 let managerId;
@@ -24,17 +26,9 @@ beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   await Driver.syncIndexes();
 
-  const manager = await Manager.create({
-    name: 'Fleet Owner', email: `mgr-veh-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  managerId = manager._id;
-
-  const other = await Manager.create({
-    name: 'Other Owner', email: `mgr-other-veh-${Date.now()}@t.com`, password: 'P@ssw0rd!',
-    isEmailVerified: true, isActive: true
-  });
-  otherManagerId = other._id;
+  // Only ever referenced as somebody else's managerId, so it never signs in.
+  const other = await createManager({ name: 'Other Owner', signIn: false });
+  otherManagerId = other.id;
 
   const route = await Route.create({
     routeId: `VEH-R-${Date.now()}`,
@@ -46,11 +40,6 @@ beforeAll(async () => {
     estimatedTime: 90
   });
   routeId = route.routeId;
-
-  const res = await request(app).post('/api/auth/login').send({
-    email: manager.email, password: 'P@ssw0rd!'
-  });
-  managerToken = res.body.accessToken;
 });
 
 afterAll(async () => {
@@ -58,7 +47,16 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${managerToken}`];
+// Every test gets its own empty-fleet manager, so "creates outright" behaviour
+// stays testable even though a manager's second-and-later vehicle now requires
+// super-admin approval.
+beforeEach(async () => {
+  const manager = await createManager({ name: 'Fleet Owner' });
+  managerId = manager.id;
+  managerToken = manager.token;
+});
+
+const auth = () => authHeader(managerToken);
 
 let seq = 0;
 const newVehicle = (overrides = {}) => ({

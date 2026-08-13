@@ -1,13 +1,12 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
-const User = require('../../src/models/User');
 const DriverEnrollment = require('../../src/models/DriverEnrollment');
 const Vehicle = require('../../src/models/Vehicle');
 const { ensureDriverEnrollmentKey } = require('../../src/utils/enrollmentKey');
 const { resetAttempts } = require('../../src/controllers/enrollmentController');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createRider, authHeader } = require('./factories');
 
 // Redeeming a driver's enrollment key. A public driver enrols the passenger on
 // the spot; a private one only raises a request that the owning manager decides.
@@ -20,12 +19,9 @@ let managerId;
 let otherManagerId;
 let passengerId;
 
-const login = (email, password) =>
-  request(app).post('/api/auth/login').send({ email, password });
-
-const asManager = () => ['Authorization', `Bearer ${managerToken}`];
-const asOtherManager = () => ['Authorization', `Bearer ${otherManagerToken}`];
-const asPassenger = () => ['Authorization', `Bearer ${passengerToken}`];
+const asManager = () => authHeader(managerToken);
+const asOtherManager = () => authHeader(otherManagerToken);
+const asPassenger = () => authHeader(passengerToken);
 
 const stamp = Date.now();
 
@@ -66,35 +62,17 @@ beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   await Driver.syncIndexes();
 
-  const manager = await Manager.create({
-    name: 'Enrolment Manager',
-    email: `mgr-enr-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  managerId = manager._id;
+  const manager = await createManager({ name: 'Enrolment Manager' });
+  managerId = manager.id;
+  managerToken = manager.token;
 
-  const other = await Manager.create({
-    name: 'Other Manager',
-    email: `mgr-enr-other-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  otherManagerId = other._id;
+  const other = await createManager({ name: 'Other Manager' });
+  otherManagerId = other.id;
+  otherManagerToken = other.token;
 
-  const passenger = await User.create({
-    name: 'Enrolment Rider',
-    email: `rider-enr-${stamp}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true
-  });
-  passengerId = passenger._id;
-
-  managerToken = (await login(manager.email, 'P@ssw0rd!')).body.accessToken;
-  otherManagerToken = (await login(other.email, 'P@ssw0rd!')).body.accessToken;
-  passengerToken = (await login(passenger.email, 'P@ssw0rd!')).body.accessToken;
+  const passenger = await createRider({ name: 'Enrolment Rider' });
+  passengerId = passenger.id;
+  passengerToken = passenger.token;
 });
 
 afterAll(async () => {

@@ -1,8 +1,7 @@
 const jwt = require('jsonwebtoken');
 const Route = require('../models/Route');
-const RiderProfile = require('../models/RiderProfile');
-const DriverEnrollment = require('../models/DriverEnrollment');
-const Vehicle = require('../models/Vehicle');
+const User = require('../models/User');
+const { findHouseholdProfiles } = require('../utils/identityRegistry');
 
 // Socket layer, reduced to what QR attendance needs.
 //
@@ -51,16 +50,24 @@ const setupSocket = (io) => {
         activeRoute: null
       };
 
-      // Every authenticated rider auto-joins their own notification room so
-      // server-side emits targeted at `student:<userId>` (QR attendance status
-      // flips) always have a listener.
-      socket.join(`student:${socket.userId}`);
+      // Every authenticated rider auto-joins a notification room per profile in
+      // their household, not just their own connected one — an attendance event
+      // for a managed profile must still reach the connection while a different
+      // profile's session happens to be the one active. Only role 'user' has a
+      // household concept; every other role keeps the original single-room join.
       if (socket.userRole === 'user') {
-        const studentIds = await RiderProfile.find({
-          accountId: socket.userId,
-          isActive: { $ne: false }
-        }).distinct('_id');
-        studentIds.forEach((studentId) => socket.join(`student:${String(studentId)}`));
+        const self = await User.findById(socket.userId).select('identityId').lean();
+        const household = self?.identityId ? await findHouseholdProfiles(self.identityId) : null;
+
+        if (household?.length) {
+          for (const profile of household) {
+            socket.join(`student:${profile._id}`);
+          }
+        } else {
+          socket.join(`student:${socket.userId}`);
+        }
+      } else {
+        socket.join(`student:${socket.userId}`);
       }
 
       socket.emit('connection-success', {

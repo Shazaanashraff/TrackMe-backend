@@ -1,11 +1,11 @@
 const request = require('supertest');
 const app = require('../../src/server');
-const Manager = require('../../src/models/Manager');
 const Driver = require('../../src/models/Driver');
 const Vehicle = require('../../src/models/Vehicle');
 const Route = require('../../src/models/Route');
 const ManagerAuditLog = require('../../src/models/ManagerAuditLog');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
+const { createManager, createDriver, authHeader } = require('./factories');
 
 // Number plates are Sri Lankan and are stored canonically, so the same plate
 // typed with any spacing or case is one vehicle. These cover the two endpoints a
@@ -21,23 +21,9 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const manager = await Manager.create({
-    name: 'Plate Manager',
-    email: `mgr-plate-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  managerId = manager._id;
-
-  const other = await Manager.create({
-    name: 'Other Plate Manager',
-    email: `mgr-plate-other-${Date.now()}@t.com`,
-    password: 'P@ssw0rd!',
-    isEmailVerified: true,
-    isActive: true
-  });
-  otherManagerId = other._id;
+  // Only ever referenced as somebody else's managerId, so it never signs in.
+  const other = await createManager({ name: 'Other Plate Manager', signIn: false });
+  otherManagerId = other.id;
 
   const route = await Route.create({
     routeId: `PLATE-R-${Date.now()}`,
@@ -49,11 +35,6 @@ beforeAll(async () => {
     estimatedTime: 60
   });
   routeId = route.routeId;
-
-  const res = await request(app).post('/api/auth/login').send({
-    email: manager.email, password: 'P@ssw0rd!'
-  });
-  managerToken = res.body.accessToken;
 });
 
 afterAll(async () => {
@@ -61,7 +42,19 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-const auth = () => ['Authorization', `Bearer ${managerToken}`];
+// A manager's first vehicle is created outright; every one after that goes
+// through a super-admin-approved request instead. A fresh, vehicle-less
+// manager per test keeps every `add()`/`vehicleAccount()` call here landing on
+// the immediate-creation path this file is actually about, and a plate
+// conflict is still caught before that branch either way (see
+// vehicle-create-approval.test.js for the request-path behaviour itself).
+beforeEach(async () => {
+  const manager = await createManager({ name: 'Plate Manager' });
+  managerId = manager.id;
+  managerToken = manager.token;
+});
+
+const auth = () => authHeader(managerToken);
 
 let seq = 0;
 const vehicleAccount = (overrides = {}) => ({
