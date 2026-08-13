@@ -2,7 +2,7 @@ const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const StudentOrganizationProfile = require('../models/StudentOrganizationProfile');
 const HouseholdPlace = require('../models/HouseholdPlace');
 const { mapValuesToObject } = require('../utils/students');
@@ -87,7 +87,7 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
       .lean();
 
     const students = enrollments.length
-      ? await StudentProfile.find({ _id: { $in: enrollments.map((enrollment) => enrollment.studentId) } }).lean()
+      ? await RiderProfile.find({ _id: { $in: enrollments.map((enrollment) => enrollment.studentId) } }).lean()
       : [];
     const studentById = new Map(students.map((student) => [String(student._id), student]));
     const [accounts, organizationProfiles, places] = await Promise.all([
@@ -156,7 +156,7 @@ const decide = (approved) => async (req, res, next) => {
     enrollment.managerId = driver.managerId || null;
     await enrollment.save();
 
-    const student = await StudentProfile.findById(enrollment.studentId);
+    const student = await RiderProfile.findById(enrollment.studentId);
     if (student) await notifyPassenger(enrollment, driver, approved, student);
 
     const account = student ? await User.findById(student.accountId).select('email phoneNumber').lean() : null;

@@ -1,7 +1,7 @@
 // Manager-facing attendance rollup — see docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md.
 const BoardingEvent = require('../models/BoardingEvent');
 const Route = require('../models/Route');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const { resolveRange } = require('../utils/dateRange');
 
 // @desc    Per-student attendance rollup + ranking across the manager's own routes
@@ -47,7 +47,7 @@ exports.getManagerAttendance = async (req, res, next) => {
       byStudent.set(key, entry);
     }
 
-    const students = await StudentProfile.find({ _id: { $in: [...byStudent.keys()] } }).select('fullName riderCode').lean();
+    const students = await RiderProfile.find({ _id: { $in: [...byStudent.keys()] } }).select('fullName riderCode').lean();
     const nameById = new Map(students.map((student) => [String(student._id), student.fullName]));
 
     const rollup = [...byStudent.values()]

@@ -2,11 +2,12 @@ const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Vehicle = require('../models/Vehicle');
 const Organization = require('../models/Organization');
-const StudentOrganizationProfile = require('../models/StudentOrganizationProfile');
+const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
 const { publicOrganization } = require('../utils/organizations');
 const { findDriverIdByEnrollmentKey } = require('../utils/enrollmentKey');
 const { normalizedEnrollmentConfig, validateEnrollmentResponses } = require('../utils/enrollmentSchema');
-const { findOwnedStudent, assertOwnedPlaces, effectiveGuardianPhone, validGuardianPhone, publicStudent, mapValuesToObject } = require('../utils/students');
+const { findOwnedRider, assertOwnedPlaces, effectiveContactPhone, validContactPhone, publicRider, mapValuesToObject } = require('../utils/riders');
+const { riderRoleForResolvedService } = require('../utils/riderRole');
 
 const INVALID_KEY = 'That enrollment key is not valid';
 const MAX_FAILED_ATTEMPTS = 8;
@@ -54,6 +55,8 @@ const driverSummary = (driver, organization, vehicle, includeContact = false) =>
 
 const enrollmentSummary = (enrollment, driver, organization, vehicle) => ({
   _id: enrollment._id,
+  riderId: enrollment.studentId,
+  // Compatibility for clients released before rider-neutral terminology.
   studentId: enrollment.studentId,
   status: enrollment.status,
   requiredApproval: enrollment.requiredApproval,
@@ -64,9 +67,9 @@ const enrollmentSummary = (enrollment, driver, organization, vehicle) => ({
   driver: driver ? driverSummary(driver, organization, vehicle, enrollment.status === 'ACTIVE') : null
 });
 
-async function resolveKeyContext(account, key, studentId) {
-  const student = await findOwnedStudent(account, studentId);
-  if (!student) return { error: { status: 404, message: 'Student not found' } };
+async function resolveKeyContext(account, key, riderId) {
+  const rider = await findOwnedRider(account, riderId);
+  if (!rider) return { error: { status: 404, message: 'Rider not found' } };
   if (isThrottled(account._id)) {
     return { error: { status: 429, message: 'Too many incorrect keys. Please wait a few minutes and try again.' } };
   }
@@ -84,24 +87,26 @@ async function resolveKeyContext(account, key, studentId) {
   const [organization, vehicle, existingEnrollment] = await Promise.all([
     driver.organization ? Organization.findById(driver.organization) : null,
     Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
-    DriverEnrollment.findOne({ studentId: student._id, driverId: driver._id })
+    DriverEnrollment.findOne({ studentId: rider._id, driverId: driver._id })
   ]);
   const organizationProfile = organization
-    ? await StudentOrganizationProfile.findOne({ studentId: student._id, organizationId: organization._id })
+    ? await RiderOrganizationProfile.findOne({ studentId: rider._id, organizationId: organization._id })
     : null;
 
-  return { raw, student, driver, organization, vehicle, existingEnrollment, organizationProfile };
+  return { raw, rider, driver, organization, vehicle, existingEnrollment, organizationProfile };
 }
 
 exports.resolveEnrollmentKey = async (req, res, next) => {
   try {
-    const context = await resolveKeyContext(req.user, req.body?.key, req.body?.studentId);
+    const context = await resolveKeyContext(req.user, req.body?.key, req.body?.riderId || req.body?.studentId);
     if (context.error) return res.status(context.error.status).json({ success: false, message: context.error.message });
     const config = context.organization ? normalizedEnrollmentConfig(context.organization) : { schemaVersion: 1, fields: [] };
     return res.status(200).json({
       success: true,
       data: {
-        student: publicStudent(context.student, req.user),
+        rider: publicRider(context.rider, req.user),
+        // Compatibility for clients released before rider-neutral terminology.
+        student: publicRider(context.rider, req.user),
         driver: driverSummary(context.driver, context.organization, context.vehicle, false),
         schemaVersion: config.schemaVersion,
         fields: config.fields.filter((field) => field.enabled),
@@ -116,16 +121,17 @@ exports.resolveEnrollmentKey = async (req, res, next) => {
 };
 
 async function createEnrollment(req, { legacy = false } = {}) {
-  const studentId = req.params?.studentId || req.body?.studentId;
-  const context = await resolveKeyContext(req.user, req.body?.key, studentId);
+  const riderId = req.params?.riderId || req.params?.studentId || req.body?.riderId || req.body?.studentId;
+  const context = await resolveKeyContext(req.user, req.body?.key, riderId);
   if (context.error) return context;
 
-  if (!validGuardianPhone(effectiveGuardianPhone(context.student, req.user))) {
-    return { error: { status: 400, message: 'Add a valid guardian phone number before enrolling this student', errors: { guardianPhone: 'Required' } } };
+  if (!validContactPhone(effectiveContactPhone(context.rider, req.user))) {
+    const role = riderRoleForResolvedService(context.organization?.serviceType);
+    return { error: { status: 400, message: `Add a valid contact phone number before enrolling this ${role}`, errors: { guardianPhone: 'Required' } } };
   }
 
-  const pickupPlaceId = req.body?.pickupPlaceId ?? context.student.defaultPickupPlaceId ?? null;
-  const dropoffPlaceId = req.body?.dropoffPlaceId ?? context.student.defaultDropoffPlaceId ?? null;
+  const pickupPlaceId = req.body?.pickupPlaceId ?? context.rider.defaultPickupPlaceId ?? null;
+  const dropoffPlaceId = req.body?.dropoffPlaceId ?? context.rider.defaultDropoffPlaceId ?? null;
   const ownedPlaces = await assertOwnedPlaces(req.user._id, [pickupPlaceId, dropoffPlaceId]);
   if (!ownedPlaces.valid) {
     return { error: { status: 400, message: 'Pickup or drop-off location does not belong to this account' } };
@@ -141,8 +147,8 @@ async function createEnrollment(req, { legacy = false } = {}) {
     if (!legacy && !validation.valid) {
       return { error: { status: 400, message: 'Complete the required enrollment fields', errors: validation.errors } };
     }
-    organizationProfile = await StudentOrganizationProfile.findOneAndUpdate(
-      { studentId: context.student._id, organizationId: context.organization._id },
+    organizationProfile = await RiderOrganizationProfile.findOneAndUpdate(
+      { studentId: context.rider._id, organizationId: context.organization._id },
       {
         $set: {
           schemaVersion: config.schemaVersion,
@@ -156,13 +162,13 @@ async function createEnrollment(req, { legacy = false } = {}) {
   }
 
   if (context.existingEnrollment?.status === 'ACTIVE') {
-    return { error: { status: 409, message: `${context.student.fullName} is already enrolled with ${context.driver.name}`, data: enrollmentSummary(context.existingEnrollment, context.driver, context.organization, context.vehicle) } };
+    return { error: { status: 409, message: `${context.rider.fullName} is already enrolled with ${context.driver.name}`, data: enrollmentSummary(context.existingEnrollment, context.driver, context.organization, context.vehicle) } };
   }
   if (context.existingEnrollment?.status === 'PENDING') {
     return {
       success: true,
       status: 200,
-      message: `${context.student.fullName}'s request is waiting for approval`,
+      message: `${context.rider.fullName}'s request is waiting for approval`,
       data: enrollmentSummary(context.existingEnrollment, context.driver, context.organization, context.vehicle)
     };
   }
@@ -170,11 +176,11 @@ async function createEnrollment(req, { legacy = false } = {}) {
   const requiredApproval = Boolean(context.driver.isPrivate);
   const status = requiredApproval ? 'PENDING' : 'ACTIVE';
   const enrollment = await DriverEnrollment.findOneAndUpdate(
-    { studentId: context.student._id, driverId: context.driver._id },
+    { studentId: context.rider._id, driverId: context.driver._id },
     {
       $set: {
         userId: null,
-        studentId: context.student._id,
+        studentId: context.rider._id,
         driverId: context.driver._id,
         managerId: context.driver.managerId || null,
         status,
@@ -193,8 +199,8 @@ async function createEnrollment(req, { legacy = false } = {}) {
     success: true,
     status: 201,
     message: requiredApproval
-      ? `${context.student.fullName}'s request was sent for approval.`
-      : `${context.student.fullName} is now enrolled with ${context.driver.name}`,
+      ? `${context.rider.fullName}'s request was sent for approval.`
+      : `${context.rider.fullName} is now enrolled with ${context.driver.name}`,
     data: enrollmentSummary(enrollment, context.driver, context.organization, context.vehicle)
   };
 }
@@ -206,6 +212,10 @@ exports.enrollStudent = async (req, res, next) => {
     return res.status(result.status).json({ success: true, message: result.message, data: result.data });
   } catch (error) { next(error); }
 };
+
+// Rider-neutral endpoint used by current clients. The legacy function remains
+// exported because older app versions still call /students/:studentId.
+exports.enrollRider = exports.enrollStudent;
 
 // Temporary compatibility endpoint for an app build released before the
 // student wizard. It enrolls the account's first migrated student without
@@ -220,13 +230,18 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
 
 exports.getMyEnrollments = async (req, res, next) => {
   try {
-    const student = await findOwnedStudent(req.user, req.query.studentId);
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const rider = await findOwnedRider(req.user, req.query.riderId || req.query.studentId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
     const enrollments = await DriverEnrollment.find({
-      studentId: student._id,
+      studentId: rider._id,
       status: { $in: ['ACTIVE', 'PENDING'] }
     }).sort({ createdAt: -1 }).lean();
-    if (!enrollments.length) return res.status(200).json({ success: true, student: publicStudent(student, req.user), data: [] });
+    if (!enrollments.length) return res.status(200).json({
+      success: true,
+      rider: publicRider(rider, req.user),
+      student: publicRider(rider, req.user),
+      data: []
+    });
 
     const driverIds = enrollments.map((item) => item.driverId);
     const drivers = await Driver.find({ _id: { $in: driverIds } }).select('name driverCode organization isActive phoneNumber').lean();
@@ -242,13 +257,18 @@ exports.getMyEnrollments = async (req, res, next) => {
       const driver = driverById.get(String(enrollment.driverId));
       return enrollmentSummary(enrollment, driver, driver?.organization ? orgById.get(String(driver.organization)) : null, vehicleByDriver.get(String(enrollment.driverId)));
     });
-    return res.status(200).json({ success: true, student: publicStudent(student, req.user), data });
+    return res.status(200).json({
+      success: true,
+      rider: publicRider(rider, req.user),
+      student: publicRider(rider, req.user),
+      data
+    });
   } catch (error) { next(error); }
 };
 
 exports.leaveEnrollment = async (req, res, next) => {
   try {
-    const studentIds = await require('../models/StudentProfile').find({ accountId: req.user._id }).distinct('_id');
+    const studentIds = await require('../models/RiderProfile').find({ accountId: req.user._id }).distinct('_id');
     const enrollment = await DriverEnrollment.findOneAndDelete({ _id: req.params.id, studentId: { $in: studentIds } });
     if (!enrollment) return res.status(404).json({ success: false, message: 'Enrollment not found' });
     return res.status(200).json({ success: true, message: 'Enrollment removed' });

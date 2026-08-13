@@ -1,11 +1,11 @@
 const Notification = require('../models/Notification');
 const User = require('../models/User');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 
-async function studentFilterForRequest(req) {
-  const requested = String(req.query?.studentId || '').trim();
+async function riderFilterForRequest(req) {
+  const requested = String(req.query?.riderId || req.query?.studentId || '').trim();
   if (!requested || requested === 'all') return {};
-  const owned = await StudentProfile.exists({ _id: requested, accountId: req.user._id, isActive: { $ne: false } });
+  const owned = await RiderProfile.exists({ _id: requested, accountId: req.user._id, isActive: { $ne: false } });
   if (!owned) return null;
   return { $or: [{ studentId: requested }, { studentId: null }] };
 }
@@ -18,9 +18,9 @@ exports.getUserNotifications = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const filter = { userId: req.user._id };
-    const studentFilter = await studentFilterForRequest(req);
-    if (studentFilter === null) return res.status(404).json({ success: false, message: 'Student not found' });
-    Object.assign(filter, studentFilter);
+    const riderFilter = await riderFilterForRequest(req);
+    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
+    Object.assign(filter, riderFilter);
     if (unreadOnly === 'true') {
       filter.isRead = false;
     }
@@ -77,10 +77,10 @@ exports.markAsRead = async (req, res, next) => {
 // @route   PUT /api/notifications/read-all
 exports.markAllAsRead = async (req, res, next) => {
   try {
-    const studentFilter = await studentFilterForRequest(req);
-    if (studentFilter === null) return res.status(404).json({ success: false, message: 'Student not found' });
+    const riderFilter = await riderFilterForRequest(req);
+    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
     await Notification.updateMany(
-      { userId: req.user._id, isRead: false, ...studentFilter },
+      { userId: req.user._id, isRead: false, ...riderFilter },
       { isRead: true, readAt: new Date() }
     );
 
@@ -121,12 +121,12 @@ exports.deleteNotification = async (req, res, next) => {
 // @route   GET /api/notifications/count/unread
 exports.getUnreadCount = async (req, res, next) => {
   try {
-    const studentFilter = await studentFilterForRequest(req);
-    if (studentFilter === null) return res.status(404).json({ success: false, message: 'Student not found' });
+    const riderFilter = await riderFilterForRequest(req);
+    if (riderFilter === null) return res.status(404).json({ success: false, message: 'Rider not found' });
     const count = await Notification.countDocuments({
       userId: req.user._id,
       isRead: false,
-      ...studentFilter
+      ...riderFilter
     });
 
     res.status(200).json({

@@ -1,16 +1,16 @@
-# Parent account and student profiles
+# Account and rider profiles
 
 Status: implemented 2026-08-13
 
 ## Decision
 
-TrackMe treats authentication and ridership as separate concerns. A `User` is the parent or guardian account that owns the login, email, phone, refresh tokens, devices, and push tokens. A `StudentProfile` is a rider managed by that account.
+TrackMe treats authentication and ridership as separate concerns. A `User` is the account holder that owns the login, email, phone, refresh tokens, devices, and push tokens. A `RiderProfile` is a person managed by that account. The profile is neutral until an enrollment supplies organization context.
 
-The mobile app stores one `activeStudentId`. Changing it is a local selection, not an authentication event. Every student-specific request carries that identifier, and the backend verifies that the authenticated account owns it.
+The mobile app stores one `activeRiderId`. Changing it is a local selection, not an authentication event. Every rider-specific request carries that identifier, and the backend verifies ownership.
 
 ## Data model
 
-- `StudentProfile`: independent rider code, name, optional phone override, default household places, QR version, and active state.
+- `RiderProfile`: independent rider code, name, optional contact override, default household places, QR version, and active state. It uses the existing `studentprofiles` collection for compatibility.
 - `StudentOrganizationProfile`: organization-specific field values and schema version for one student.
 - `HouseholdPlace`: reusable pickup/drop-off place owned by the parent account.
 - `DriverEnrollment`: points to `studentId`, with independent shuttle status, organization details, and locations.
@@ -18,11 +18,11 @@ The mobile app stores one `activeStudentId`. Changing it is a local selection, n
 
 ## Enrollment flow
 
-1. The parent selects or creates a student.
-2. The app resolves the driver key with that `studentId`.
+1. The account holder selects or creates a rider.
+2. The app resolves the driver key with that `riderId`.
 3. The backend returns the driver's organization and its configured standard fields.
 4. The app renders only enabled fields, prefills saved organization values, and validates required fields.
-5. The backend checks schema version, ownership, phone, locations, and organization responses before creating that student's enrollment.
+5. The backend derives Student, Employee, or Passenger from the resolved service type and validates before creating that rider's enrollment.
 
 Managers configure their own organization's form. Superadmins can override any organization. Schema changes mark incomplete existing organization profiles as `needsUpdate`; existing shuttle access remains active.
 

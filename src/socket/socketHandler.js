@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const Route = require('../models/Route');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Vehicle = require('../models/Vehicle');
 
@@ -56,7 +56,7 @@ const setupSocket = (io) => {
       // flips) always have a listener.
       socket.join(`student:${socket.userId}`);
       if (socket.userRole === 'user') {
-        const studentIds = await StudentProfile.find({
+        const studentIds = await RiderProfile.find({
           accountId: socket.userId,
           isActive: { $ne: false }
         }).distinct('_id');
@@ -75,7 +75,8 @@ const setupSocket = (io) => {
     // Join a route room to receive that route's attendance events.
     socket.on('join-route', async (data, callback) => {
       try {
-        const { routeId, studentId } = data || {};
+        const { routeId } = data || {};
+        const riderId = data?.riderId || data?.studentId;
 
         if (!routeId || typeof routeId !== 'string') {
           return callback?.({ success: false, error: 'Valid Route ID is required' });
@@ -87,19 +88,19 @@ const setupSocket = (io) => {
         }
 
         if (socket.userRole === 'user') {
-          const student = await StudentProfile.exists({
-            _id: studentId,
+          const student = await RiderProfile.exists({
+            _id: riderId,
             accountId: socket.userId,
             isActive: { $ne: false }
           });
-          if (!student) return callback?.({ success: false, error: 'Student not found' });
+          if (!student) return callback?.({ success: false, error: 'Rider not found' });
           const driverIds = await Vehicle.find({ routeId, isDeleted: false }).distinct('driverId');
           const enrolled = await DriverEnrollment.exists({
-            studentId,
+            studentId: riderId,
             driverId: { $in: driverIds.filter(Boolean) },
             status: 'ACTIVE'
           });
-          if (!enrolled) return callback?.({ success: false, error: 'Student is not enrolled on this route' });
+          if (!enrolled) return callback?.({ success: false, error: 'Rider is not enrolled on this route' });
         }
 
         socket.join(`route:${routeId}`);

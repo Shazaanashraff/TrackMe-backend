@@ -8,7 +8,7 @@ const notificationSchema = new mongoose.Schema({
   },
   studentId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'StudentProfile',
+    ref: 'RiderProfile',
     default: null,
     index: true
   },

@@ -1,5 +1,5 @@
 const HouseholdPlace = require('../models/HouseholdPlace');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const DriverEnrollment = require('../models/DriverEnrollment');
 
 function normalizedPlace(body) {
@@ -49,11 +49,11 @@ exports.archivePlace = async (req, res, next) => {
     const place = await HouseholdPlace.findOne({ _id: req.params.placeId, accountId: req.user._id, isActive: { $ne: false } });
     if (!place) return res.status(404).json({ success: false, message: 'Location not found' });
     const [studentUses, enrollmentUses] = await Promise.all([
-      StudentProfile.exists({ accountId: req.user._id, isActive: { $ne: false }, $or: [{ defaultPickupPlaceId: place._id }, { defaultDropoffPlaceId: place._id }] }),
+      RiderProfile.exists({ accountId: req.user._id, isActive: { $ne: false }, $or: [{ defaultPickupPlaceId: place._id }, { defaultDropoffPlaceId: place._id }] }),
       DriverEnrollment.exists({ $or: [{ pickupPlaceId: place._id }, { dropoffPlaceId: place._id }], status: { $in: ['ACTIVE', 'PENDING'] } })
     ]);
     if (studentUses || enrollmentUses) {
-      return res.status(409).json({ success: false, message: 'This location is still assigned to a student or shuttle' });
+      return res.status(409).json({ success: false, message: 'This location is still assigned to a rider or shuttle' });
     }
     place.isActive = false;
     await place.save();

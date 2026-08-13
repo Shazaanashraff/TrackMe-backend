@@ -1,25 +1,25 @@
 const DriverEnrollment = require('../models/DriverEnrollment');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const { generateUniqueRiderCode } = require('../utils/riderCode');
 const {
-  ensureLegacyStudent,
-  findOwnedStudent,
+  ensureLegacyRider,
+  findOwnedRider,
   assertOwnedPlaces,
-  validGuardianPhone,
-  publicStudent
-} = require('../utils/students');
+  validContactPhone,
+  publicRider
+} = require('../utils/riders');
 
-exports.listStudents = async (req, res, next) => {
+const listRiders = async (req, res, next) => {
   try {
-    await ensureLegacyStudent(req.user);
-    const students = await StudentProfile.find({
+    await ensureLegacyRider(req.user);
+    const riders = await RiderProfile.find({
       accountId: req.user._id,
       isActive: { $ne: false }
     }).sort({ createdAt: 1 });
 
     return res.status(200).json({
       success: true,
-      data: students.map((student) => publicStudent(student, req.user)),
+      data: riders.map((rider) => publicRider(rider, req.user)),
       account: {
         _id: req.user._id,
         name: req.user.name,
@@ -32,15 +32,15 @@ exports.listStudents = async (req, res, next) => {
   }
 };
 
-exports.createStudent = async (req, res, next) => {
+const createRider = async (req, res, next) => {
   try {
     const fullName = String(req.body?.fullName || '').trim();
-    const guardianPhone = String(req.body?.guardianPhone || req.user.phoneNumber || '').trim();
+    const contactPhone = String(req.body?.contactPhone || req.body?.guardianPhone || req.user.phoneNumber || '').trim();
     if (!fullName) {
-      return res.status(400).json({ success: false, message: 'Student full name is required', errors: { fullName: 'Required' } });
+      return res.status(400).json({ success: false, message: 'Rider full name is required', errors: { fullName: 'Required' } });
     }
-    if (!validGuardianPhone(guardianPhone)) {
-      return res.status(400).json({ success: false, message: 'A valid guardian phone number is required', errors: { guardianPhone: 'Enter a valid phone number' } });
+    if (!validContactPhone(contactPhone)) {
+      return res.status(400).json({ success: false, message: 'A valid contact phone number is required', errors: { guardianPhone: 'Enter a valid phone number' } });
     }
 
     const pickupId = req.body?.defaultPickupPlaceId || null;
@@ -50,40 +50,41 @@ exports.createStudent = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Pickup or drop-off location does not belong to this account' });
     }
 
-    const student = await StudentProfile.create({
+    const rider = await RiderProfile.create({
       accountId: req.user._id,
-      riderCode: await generateUniqueRiderCode(StudentProfile),
+      riderCode: await generateUniqueRiderCode(RiderProfile),
       fullName,
-      guardianPhoneOverride: guardianPhone === String(req.user.phoneNumber || '').trim() ? '' : guardianPhone,
+      guardianPhoneOverride: contactPhone === String(req.user.phoneNumber || '').trim() ? '' : contactPhone,
       avatarUrl: String(req.body?.avatarUrl || ''),
       defaultPickupPlaceId: pickupId,
       defaultDropoffPlaceId: dropoffId
     });
 
-    return res.status(201).json({ success: true, data: publicStudent(student, req.user) });
+    return res.status(201).json({ success: true, data: publicRider(rider, req.user) });
   } catch (error) {
     next(error);
   }
 };
 
-exports.updateStudent = async (req, res, next) => {
+const updateRider = async (req, res, next) => {
   try {
-    const student = await findOwnedStudent(req.user, req.params.studentId);
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const riderId = req.params.riderId || req.params.studentId;
+    const rider = await findOwnedRider(req.user, riderId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
 
     if (req.body?.fullName !== undefined) {
       const fullName = String(req.body.fullName).trim();
-      if (!fullName) return res.status(400).json({ success: false, message: 'Student full name is required' });
-      student.fullName = fullName;
+      if (!fullName) return res.status(400).json({ success: false, message: 'Rider full name is required' });
+      rider.fullName = fullName;
     }
-    if (req.body?.guardianPhone !== undefined) {
-      const phone = String(req.body.guardianPhone).trim();
-      if (!validGuardianPhone(phone)) {
-        return res.status(400).json({ success: false, message: 'Enter a valid guardian phone number' });
+    if (req.body?.contactPhone !== undefined || req.body?.guardianPhone !== undefined) {
+      const phone = String(req.body.contactPhone ?? req.body.guardianPhone).trim();
+      if (!validContactPhone(phone)) {
+        return res.status(400).json({ success: false, message: 'Enter a valid contact phone number' });
       }
-      student.guardianPhoneOverride = phone === String(req.user.phoneNumber || '').trim() ? '' : phone;
+      rider.guardianPhoneOverride = phone === String(req.user.phoneNumber || '').trim() ? '' : phone;
     }
-    if (req.body?.avatarUrl !== undefined) student.avatarUrl = String(req.body.avatarUrl || '');
+    if (req.body?.avatarUrl !== undefined) rider.avatarUrl = String(req.body.avatarUrl || '');
 
     const pickupId = req.body?.defaultPickupPlaceId;
     const dropoffId = req.body?.defaultDropoffPlaceId;
@@ -92,34 +93,46 @@ exports.updateStudent = async (req, res, next) => {
       if (!ownedPlaces.valid) {
         return res.status(400).json({ success: false, message: 'Pickup or drop-off location does not belong to this account' });
       }
-      if (pickupId !== undefined) student.defaultPickupPlaceId = pickupId || null;
-      if (dropoffId !== undefined) student.defaultDropoffPlaceId = dropoffId || null;
+      if (pickupId !== undefined) rider.defaultPickupPlaceId = pickupId || null;
+      if (dropoffId !== undefined) rider.defaultDropoffPlaceId = dropoffId || null;
     }
 
-    await student.save();
-    return res.status(200).json({ success: true, data: publicStudent(student, req.user) });
+    await rider.save();
+    return res.status(200).json({ success: true, data: publicRider(rider, req.user) });
   } catch (error) {
     next(error);
   }
 };
 
-exports.archiveStudent = async (req, res, next) => {
+const archiveRider = async (req, res, next) => {
   try {
-    const student = await findOwnedStudent(req.user, req.params.studentId);
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const riderId = req.params.riderId || req.params.studentId;
+    const rider = await findOwnedRider(req.user, riderId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
 
     const hasEnrollment = await DriverEnrollment.exists({
-      studentId: student._id,
+      studentId: rider._id,
       status: { $in: ['ACTIVE', 'PENDING'] }
     });
     if (hasEnrollment) {
-      return res.status(409).json({ success: false, message: 'Remove this student from their shuttles before archiving the profile' });
+      return res.status(409).json({ success: false, message: 'Remove this rider from their shuttles before archiving the profile' });
     }
 
-    student.isActive = false;
-    await student.save();
-    return res.status(200).json({ success: true, message: 'Student archived' });
+    rider.isActive = false;
+    await rider.save();
+    return res.status(200).json({ success: true, message: 'Rider archived' });
   } catch (error) {
     next(error);
   }
 };
+
+exports.listRiders = listRiders;
+exports.createRider = createRider;
+exports.updateRider = updateRider;
+exports.archiveRider = archiveRider;
+
+// Compatibility exports for the legacy /api/students route.
+exports.listStudents = listRiders;
+exports.createStudent = createRider;
+exports.updateStudent = updateRider;
+exports.archiveStudent = archiveRider;

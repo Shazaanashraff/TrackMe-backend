@@ -8,7 +8,7 @@ const DriverEnrollment = require('../models/DriverEnrollment');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 
-// Debounce window: a repeat scan of the SAME type for the SAME student on the SAME
+// Debounce window: a repeat scan of the SAME type for the SAME rider on the SAME
 // vehicle within this many seconds is treated as a duplicate (idempotent replay, e.g.
 // a driver double-tapping or an offline-queue resend) rather than a new event.
 // Finalized default per todos/active/001-qr-attendance-foundation.md "Blocked" section.
@@ -82,7 +82,7 @@ exports.scanBoarding = async (req, res, next) => {
       status: 'ACTIVE'
     });
     if (!activeEnrollment) {
-      return res.status(403).json({ success: false, message: 'This student is not enrolled with your shuttle' });
+      return res.status(403).json({ success: false, message: 'This rider is not enrolled with your shuttle' });
     }
 
     const tripId = req.body?.tripId ? String(req.body.tripId) : dayTripId(vehicleId);
@@ -97,7 +97,7 @@ exports.scanBoarding = async (req, res, next) => {
       type = lastForTrip?.type === 'BOARD' ? 'ALIGHT' : 'BOARD';
     }
 
-    // Debounce: a duplicate same-type scan for this student+vehicle within the window
+    // Debounce: a duplicate same-type scan for this rider+vehicle within the window
     // is an idempotent replay, not a new attendance record.
     const debounceSince = new Date(Date.now() - DEBOUNCE_SECONDS * 1000);
     const recentDuplicate = await BoardingEvent.findOne({

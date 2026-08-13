@@ -3,7 +3,7 @@
 const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
 const Vehicle = require('../models/Vehicle');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
@@ -26,14 +26,14 @@ function summarize(events) {
 // @route   GET /api/attendance/student/:studentId?from&to
 // Authorized for the rider themselves, or a manager who manages a route this
 // rider has (or had) membership on.
-exports.getStudentAttendance = async (req, res, next) => {
+const getRiderAttendance = async (req, res, next) => {
   try {
-    const { studentId } = req.params;
+    const studentId = req.params.riderId || req.params.studentId;
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
-      return res.status(400).json({ success: false, message: 'Invalid studentId' });
+      return res.status(400).json({ success: false, message: 'Invalid riderId' });
     }
 
-    const isSelf = req.user.role === 'user' && Boolean(await StudentProfile.exists({
+    const isSelf = req.user.role === 'user' && Boolean(await RiderProfile.exists({
       _id: studentId,
       accountId: req.user._id,
       isActive: { $ne: false }
@@ -81,3 +81,6 @@ exports.getStudentAttendance = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getRiderAttendance = getRiderAttendance;
+exports.getStudentAttendance = getRiderAttendance;

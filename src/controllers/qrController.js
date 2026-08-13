@@ -1,7 +1,7 @@
 // Rider-facing QR endpoints — see docs/features/qr-attendance/QR_SYSTEM.md.
 const jwt = require('jsonwebtoken');
 const { signQr } = require('../utils/qrToken');
-const { findOwnedStudent } = require('../utils/students');
+const { findOwnedRider } = require('../utils/riders');
 const DriverEnrollment = require('../models/DriverEnrollment');
 
 function toIssuedToken(user) {
@@ -20,17 +20,17 @@ function toIssuedToken(user) {
 // @route   POST /api/qr/issue
 exports.issueQr = async (req, res, next) => {
   try {
-    const student = await findOwnedStudent(req.user, req.body?.studentId);
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    const hasActiveEnrollment = await DriverEnrollment.exists({ studentId: student._id, status: 'ACTIVE' });
+    const rider = await findOwnedRider(req.user, req.body?.riderId || req.body?.studentId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
+    const hasActiveEnrollment = await DriverEnrollment.exists({ studentId: rider._id, status: 'ACTIVE' });
     if (!hasActiveEnrollment) {
-      return res.status(409).json({ success: false, message: 'This student needs an active shuttle before a vehicle pass can be issued' });
+      return res.status(409).json({ success: false, message: 'This rider needs an active shuttle before a vehicle pass can be issued' });
     }
-    const entry = toIssuedToken(student);
-    student.qrIssuedAt = new Date();
-    await student.save();
+    const entry = toIssuedToken(rider);
+    rider.qrIssuedAt = new Date();
+    await rider.save();
 
-    return res.status(200).json({ success: true, data: { ...entry, studentId: student._id, riderCode: student.riderCode } });
+    return res.status(200).json({ success: true, data: { ...entry, riderId: rider._id, studentId: rider._id, riderCode: rider.riderCode } });
   } catch (error) {
     next(error);
   }
@@ -40,12 +40,12 @@ exports.issueQr = async (req, res, next) => {
 // @route   POST /api/qr/rotate
 exports.rotateQr = async (req, res, next) => {
   try {
-    const student = await findOwnedStudent(req.user, req.body?.studentId);
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    student.qrTokenVersion += 1;
-    await student.save();
+    const rider = await findOwnedRider(req.user, req.body?.riderId || req.body?.studentId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
+    rider.qrTokenVersion += 1;
+    await rider.save();
 
-    return res.status(200).json({ success: true, data: { studentId: student._id, tokenVersion: student.qrTokenVersion } });
+    return res.status(200).json({ success: true, data: { riderId: rider._id, studentId: rider._id, tokenVersion: rider.qrTokenVersion } });
   } catch (error) {
     next(error);
   }

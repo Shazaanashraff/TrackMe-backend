@@ -1,7 +1,7 @@
 # ADR 001: Separate parent authentication from student rider identity
 
 Date: 2026-08-13  
-Status: accepted
+Status: superseded by repository ADR 002 (neutral rider identity)
 
 ## Context
 
@@ -9,7 +9,7 @@ The previous prototype treated a rider-like profile as the authenticated user an
 
 ## Decision
 
-Keep one stable parent/guardian session and model each child or employee as an owned `StudentProfile`. Scope queries, QR passes, enrollments, attendance, tracking rooms, and notifications by an explicitly selected student ID.
+Keep one stable account session and model each person as an owned rider profile. The original `StudentProfile` name was corrected by ADR 002 because service-specific roles cannot be known before enrollment.
 
 ## Consequences
 

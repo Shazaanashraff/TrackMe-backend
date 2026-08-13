@@ -3,7 +3,7 @@
 // QR token can never be replayed as (or forged into) an auth session token.
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const StudentProfile = require('../models/StudentProfile');
+const RiderProfile = require('../models/RiderProfile');
 
 const QR_JWT_SECRET = process.env.QR_JWT_SECRET;
 // Moderate TTL — finalized default per todos/active/001-qr-attendance-foundation.md
@@ -47,7 +47,7 @@ async function verifyQr(token) {
     return { valid: false, reason: 'INVALID' };
   }
 
-  const student = await StudentProfile.findById(decoded.sub);
+  const student = await RiderProfile.findById(decoded.sub);
   if (!student || !student.isActive) {
     return { valid: false, reason: 'USER_NOT_FOUND', decoded };
   }

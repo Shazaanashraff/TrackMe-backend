@@ -26,6 +26,7 @@ const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
 const driverAccountRoutes = require('./routes/driverAccountRoutes');
 const studentRoutes = require('./routes/studentRoutes');
+const riderRoutes = require('./routes/riderRoutes');
 const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 
 // Initialize Express app
@@ -84,6 +85,8 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
+app.use('/api/riders', riderRoutes);
+// Compatibility for clients released before rider-neutral terminology.
 app.use('/api/students', studentRoutes);
 app.use('/api/household/places', householdPlaceRoutes);
 app.use('/api/driver/trips', driverTripRoutes);
