@@ -22,7 +22,14 @@ exports.issueQr = async (req, res, next) => {
   try {
     const rider = await findOwnedRider(req.user, req.body?.riderId || req.body?.studentId);
     if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
-    const hasActiveEnrollment = await DriverEnrollment.exists({ studentId: rider._id, status: 'ACTIVE' });
+    // Rows predating the rider-profile split still carry the rider on the
+    // deprecated `userId` (see models/DriverEnrollment.js). Until the migration
+    // has translated them, match either field — checking only `studentId` denies
+    // a pass to riders who plainly do have an active shuttle.
+    const hasActiveEnrollment = await DriverEnrollment.exists({
+      status: 'ACTIVE',
+      $or: [{ studentId: rider._id }, { userId: rider._id }]
+    });
     if (!hasActiveEnrollment) {
       return res.status(409).json({ success: false, message: 'This rider needs an active shuttle before a vehicle pass can be issued' });
     }
