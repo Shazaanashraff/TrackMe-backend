@@ -572,10 +572,26 @@ exports.getSuperAdminDashboard = async (req, res, next) => {
 
 exports.getOperationsOverview = async (req, res, next) => {
   try {
-    const managers = await Manager.find()
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full list, same as before (same convention as vehicleController.getAllRoutes).
+    // A caller that does ask for a page gets one capped at MAX_LIMIT, so a huge
+    // requested page size can't force the server to load an unbounded amount of data.
+    const MAX_LIMIT = 100;
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const pageNumber = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNumber = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
+
+    let managersQuery = Manager.find()
       .select('name email isActive createdAt')
-      .sort({ createdAt: -1 })
-      .lean();
+      .sort({ createdAt: -1 });
+    if (paginated) {
+      managersQuery = managersQuery.skip((pageNumber - 1) * limitNumber).limit(limitNumber);
+    }
+
+    const [managers, total] = await Promise.all([
+      managersQuery.lean(),
+      Manager.countDocuments()
+    ]);
 
     const managerIds = managers.map((manager) => manager._id);
 
@@ -683,10 +699,19 @@ exports.getOperationsOverview = async (req, res, next) => {
       };
     });
 
-    return res.status(200).json({
+    const response = {
       success: true,
       data
-    });
+    };
+    if (paginated) {
+      response.pagination = {
+        page: pageNumber,
+        limit: limitNumber,
+        total,
+        pages: Math.ceil(total / limitNumber)
+      };
+    }
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -796,17 +821,40 @@ exports.getPendingVehicleRequests = async (req, res, next) => {
       filter.managerId = managerId;
     }
 
-    const requests = await ManagerVehicleRequest.find(filter)
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full list, same as before (same convention as vehicleController.getAllRoutes).
+    const MAX_LIMIT = 100;
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const pageNumber = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNumber = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
+
+    let requestsQuery = ManagerVehicleRequest.find(filter)
       .populate('managerId', 'name email')
       .populate('decisionBy', 'name email')
-      .sort({ createdAt: -1 })
-      .lean();
+      .sort({ createdAt: -1 });
+    if (paginated) {
+      requestsQuery = requestsQuery.skip((pageNumber - 1) * limitNumber).limit(limitNumber);
+    }
 
-    return res.status(200).json({
+    const [requests, total] = await Promise.all([
+      requestsQuery.lean(),
+      ManagerVehicleRequest.countDocuments(filter)
+    ]);
+
+    const response = {
       success: true,
       count: requests.length,
       data: requests
-    });
+    };
+    if (paginated) {
+      response.pagination = {
+        page: pageNumber,
+        limit: limitNumber,
+        total,
+        pages: Math.ceil(total / limitNumber)
+      };
+    }
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }

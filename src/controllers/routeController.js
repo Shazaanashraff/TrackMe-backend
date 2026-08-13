@@ -1,4 +1,5 @@
 const Route = require('../models/Route');
+const Vehicle = require('../models/Vehicle');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
@@ -213,17 +214,27 @@ exports.deleteRoute = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
 
+    // A deleted route can't stay pointed-at — unassign it from any vehicle still
+    // referencing it (same "clear the dangling reference" pattern deleteManager
+    // uses for a deleted manager's vehicles), rather than leaving a dashboard
+    // showing a vehicle "assigned" to a route that no longer effectively exists.
+    const { modifiedCount } = await Vehicle.updateMany(
+      { routeId: route.routeId, isDeleted: false },
+      { $set: { routeId: '' } }
+    );
+
     await writeRouteAuditLog({
       user: req.user,
       route,
       action: 'ROUTE_DELETED',
-      metadata: null
+      metadata: { unassignedVehicles: modifiedCount }
     });
 
     res.status(200).json({
       success: true,
       message: 'Route deleted successfully',
-      data: route
+      data: route,
+      unassignedVehicles: modifiedCount
     });
   } catch (error) {
     next(error);
