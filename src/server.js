@@ -25,6 +25,8 @@ const qrRoutes = require('./routes/qrRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
 const driverAccountRoutes = require('./routes/driverAccountRoutes');
+const studentRoutes = require('./routes/studentRoutes');
+const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 
 // Initialize Express app
 const app = express();
@@ -82,6 +84,8 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
+app.use('/api/students', studentRoutes);
+app.use('/api/household/places', householdPlaceRoutes);
 app.use('/api/driver/trips', driverTripRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);

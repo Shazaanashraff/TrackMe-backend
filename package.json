@@ -14,7 +14,8 @@
     "seed:start-journeys": "node scripts/start-two-vehicles-per-route.js",
     "snap:stops": "node scripts/snap-stops-to-vehiclestops.js",
     "test": "node --test tests/manager-workflow.smoke.test.js",
-    "test:integration": "jest"
+    "test:integration": "jest",
+    "migrate:students": "node scripts/migrate-student-profiles.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

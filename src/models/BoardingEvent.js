@@ -9,7 +9,7 @@ const BOARDING_EVENT_SOURCES = ['QR'];
 const boardingEventSchema = new mongoose.Schema({
   studentId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'StudentProfile',
     required: true
   },
   vehicleId: {

@@ -6,12 +6,18 @@ const notificationSchema = new mongoose.Schema({
     ref: 'User',
     required: [true, 'User ID is required']
   },
+  studentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'StudentProfile',
+    default: null,
+    index: true
+  },
   type: {
     type: String,
     enum: [
       'VEHICLE_ARRIVAL', 'VEHICLE_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
       'ROUTE_ACCESS_REQUEST', 'ROUTE_ACCESS_APPROVED', 'ROUTE_ACCESS_REJECTED', 'ROUTE_ACCESS_REVOKED',
-      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED'
+      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT'
     ],
     required: [true, 'Notification type is required']
   },
@@ -27,7 +33,8 @@ const notificationSchema = new mongoose.Schema({
     vehicleId: String,
     routeId: String,
     bookingId: String,
-    relatedId: String
+    relatedId: String,
+    studentId: String
   },
   isRead: {
     type: Boolean,
@@ -50,6 +57,7 @@ const notificationSchema = new mongoose.Schema({
 // Index for faster queries
 notificationSchema.index({ userId: 1, isRead: 1 });
 notificationSchema.index({ userId: 1, createdAt: -1 });
+notificationSchema.index({ userId: 1, studentId: 1, createdAt: -1 });
 notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index
 
 module.exports = mongoose.model('Notification', notificationSchema);

@@ -29,6 +29,22 @@ const organizationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     default: null
+  },
+  enrollmentConfig: {
+    schemaVersion: {
+      type: Number,
+      default: 1,
+      min: 1
+    },
+    fields: [{
+      key: { type: String, required: true },
+      label: { type: String, required: true },
+      type: { type: String, enum: ['text'], default: 'text' },
+      enabled: { type: Boolean, default: false },
+      required: { type: Boolean, default: false },
+      order: { type: Number, default: 0 },
+      _id: false
+    }]
   }
 }, {
   timestamps: true

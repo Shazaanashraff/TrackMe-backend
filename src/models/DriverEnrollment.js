@@ -8,9 +8,17 @@ const mongoose = require('mongoose');
 // row to fall out of sync with the membership it granted.
 const driverEnrollmentSchema = new mongoose.Schema(
   {
+    // Deprecated legacy owner. Kept temporarily so the idempotent migration can
+    // translate existing rows without making old deployments unreadable.
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      default: null,
+      index: true
+    },
+    studentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StudentProfile',
       required: true,
       index: true
     },
@@ -42,6 +50,21 @@ const driverEnrollmentSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
+    organizationProfileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StudentOrganizationProfile',
+      default: null
+    },
+    pickupPlaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'HouseholdPlace',
+      default: null
+    },
+    dropoffPlaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'HouseholdPlace',
+      default: null
+    },
     decidedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Manager',
@@ -57,7 +80,7 @@ const driverEnrollmentSchema = new mongoose.Schema(
 
 // One record per passenger per driver. A second redeem of the same key updates this
 // row rather than stacking duplicates, so a passenger cannot flood the queue.
-driverEnrollmentSchema.index({ userId: 1, driverId: 1 }, { unique: true });
+driverEnrollmentSchema.index({ studentId: 1, driverId: 1 }, { unique: true });
 
 // The manager queue: pending first, newest first.
 driverEnrollmentSchema.index({ managerId: 1, status: 1, createdAt: -1 });

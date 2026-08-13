@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
 const Vehicle = require('../models/Vehicle');
+const StudentProfile = require('../models/StudentProfile');
 const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
@@ -32,7 +33,11 @@ exports.getStudentAttendance = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid studentId' });
     }
 
-    const isSelf = String(req.user._id) === String(studentId);
+    const isSelf = req.user.role === 'user' && Boolean(await StudentProfile.exists({
+      _id: studentId,
+      accountId: req.user._id,
+      isActive: { $ne: false }
+    }));
     const isManager = ['admin', 'super-admin'].includes(req.user.role);
     if (!isSelf) {
       if (!isManager) {

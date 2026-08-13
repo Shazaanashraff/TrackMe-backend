@@ -32,6 +32,10 @@ const {
   rejectManagerEnrollmentRequest
 } = require('../controllers/managerEnrollmentsController');
 const { protect, requireManager } = require('../middleware/auth');
+const {
+  getManagerEnrollmentSchema,
+  updateManagerEnrollmentSchema
+} = require('../controllers/organizationEnrollmentController');
 
 router.use(protect, requireManager);
 
@@ -49,6 +53,8 @@ router.post('/vehicles/:vehicleId/delete-request', requestVehicleDelete);
 // Driver directory
 router.get('/organizations', getOrganizationsForManager);
 router.post('/organizations', createOrganizationForManager);
+router.get('/organization/enrollment-schema', getManagerEnrollmentSchema);
+router.put('/organization/enrollment-schema', updateManagerEnrollmentSchema);
 router.get('/drivers', getManagerDrivers);
 router.post('/drivers', createManagerDriver);
 router.put('/drivers/:driverId', updateManagerDriver);

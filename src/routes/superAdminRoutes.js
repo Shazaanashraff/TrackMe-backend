@@ -31,6 +31,10 @@ const {
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireSuperAdmin } = require('../middleware/auth');
+const {
+  getSuperAdminEnrollmentSchema,
+  updateSuperAdminEnrollmentSchema
+} = require('../controllers/organizationEnrollmentController');
 
 router.use(protect, requireSuperAdmin);
 
@@ -43,6 +47,8 @@ router.get('/audit-logs', validateManagerIdQuery, handleValidationErrors, getAud
 
 router.get('/organizations', getOrganizations);
 router.post('/organizations', validateCreateOrganization, handleValidationErrors, createOrganization);
+router.get('/organizations/:organizationId/enrollment-schema', getSuperAdminEnrollmentSchema);
+router.put('/organizations/:organizationId/enrollment-schema', updateSuperAdminEnrollmentSchema);
 
 router.post('/managers', validateCreateManager, handleValidationErrors, createManager);
 router.get('/managers', getManagers);

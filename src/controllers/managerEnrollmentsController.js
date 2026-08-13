@@ -2,17 +2,30 @@ const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const StudentProfile = require('../models/StudentProfile');
+const StudentOrganizationProfile = require('../models/StudentOrganizationProfile');
+const HouseholdPlace = require('../models/HouseholdPlace');
+const { mapValuesToObject } = require('../utils/students');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 
-const requestSummary = (enrollment, driver, passenger) => ({
+const requestSummary = (enrollment, driver, student, account, organizationProfile, pickupPlace, dropoffPlace) => ({
   _id: enrollment._id,
   status: enrollment.status,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
   driver: driver ? { _id: driver._id, name: driver.name, driverCode: driver.driverCode || null } : null,
-  passenger: passenger
-    ? { _id: passenger._id, name: passenger.name, email: passenger.email || '' }
+  passenger: student
+    ? {
+        _id: student._id,
+        name: student.fullName,
+        riderCode: student.riderCode,
+        isManagedProfile: true,
+        account: account ? { email: account.email || '', phoneNumber: student.guardianPhoneOverride || account.phoneNumber || '' } : null,
+        organizationValues: mapValuesToObject(organizationProfile?.values),
+        pickupPlace: pickupPlace || null,
+        dropoffPlace: dropoffPlace || null
+      }
     : null
 });
 
@@ -31,16 +44,17 @@ async function findOwnedEnrollment(managerId, enrollmentId) {
 
 // Tells the passenger what happened. Best effort: a notification that fails to
 // write must not roll back a decision the manager already made.
-async function notifyPassenger(enrollment, driver, approved) {
+async function notifyPassenger(enrollment, driver, approved, student) {
   try {
     await Notification.create({
-      userId: enrollment.userId,
+      userId: student.accountId,
+      studentId: student._id,
       type: approved ? 'ENROLLMENT_APPROVED' : 'ENROLLMENT_REJECTED',
       title: approved ? 'Enrollment approved' : 'Enrollment declined',
       message: approved
-        ? `You are now enrolled with ${driver.name}.`
-        : `Your request to enrol with ${driver.name} was declined.`,
-      data: { relatedId: String(enrollment._id) },
+        ? `${student.fullName} is now enrolled with ${driver.name}.`
+        : `${student.fullName}'s request to enrol with ${driver.name} was declined.`,
+      data: { relatedId: String(enrollment._id), studentId: String(student._id) },
       priority: 'MEDIUM'
     });
   } catch (error) {
@@ -72,18 +86,28 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const passengers = enrollments.length
-      ? await User.find({ _id: { $in: enrollments.map((e) => e.userId) } })
-        .select('name email')
-        .lean()
+    const students = enrollments.length
+      ? await StudentProfile.find({ _id: { $in: enrollments.map((enrollment) => enrollment.studentId) } }).lean()
       : [];
-    const passengerById = new Map(passengers.map((p) => [String(p._id), p]));
+    const studentById = new Map(students.map((student) => [String(student._id), student]));
+    const [accounts, organizationProfiles, places] = await Promise.all([
+      User.find({ _id: { $in: students.map((student) => student.accountId) } }).select('email phoneNumber').lean(),
+      StudentOrganizationProfile.find({ _id: { $in: enrollments.map((enrollment) => enrollment.organizationProfileId).filter(Boolean) } }).lean(),
+      HouseholdPlace.find({ _id: { $in: enrollments.flatMap((enrollment) => [enrollment.pickupPlaceId, enrollment.dropoffPlaceId]).filter(Boolean) } }).lean()
+    ]);
+    const accountById = new Map(accounts.map((account) => [String(account._id), account]));
+    const orgProfileById = new Map(organizationProfiles.map((profile) => [String(profile._id), profile]));
+    const placeById = new Map(places.map((place) => [String(place._id), place]));
 
     const data = enrollments.map((enrollment) =>
       requestSummary(
         enrollment,
         driverById.get(String(enrollment.driverId)),
-        passengerById.get(String(enrollment.userId))
+        studentById.get(String(enrollment.studentId)),
+        accountById.get(String(studentById.get(String(enrollment.studentId))?.accountId)),
+        orgProfileById.get(String(enrollment.organizationProfileId)),
+        placeById.get(String(enrollment.pickupPlaceId)),
+        placeById.get(String(enrollment.dropoffPlaceId))
       )
     );
 
@@ -132,14 +156,15 @@ const decide = (approved) => async (req, res, next) => {
     enrollment.managerId = driver.managerId || null;
     await enrollment.save();
 
-    await notifyPassenger(enrollment, driver, approved);
+    const student = await StudentProfile.findById(enrollment.studentId);
+    if (student) await notifyPassenger(enrollment, driver, approved, student);
 
-    const passenger = await User.findById(enrollment.userId).select('name email').lean();
+    const account = student ? await User.findById(student.accountId).select('email phoneNumber').lean() : null;
 
     return res.status(200).json({
       success: true,
       message: approved ? 'Enrollment approved' : 'Enrollment declined',
-      data: requestSummary(enrollment, driver, passenger)
+      data: requestSummary(enrollment, driver, student, account, null, null, null)
     });
   } catch (error) {
     next(error);

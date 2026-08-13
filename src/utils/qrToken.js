@@ -3,7 +3,7 @@
 // QR token can never be replayed as (or forged into) an auth session token.
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const User = require('../models/User');
+const StudentProfile = require('../models/StudentProfile');
 
 const QR_JWT_SECRET = process.env.QR_JWT_SECRET;
 // Moderate TTL — finalized default per todos/active/001-qr-attendance-foundation.md
@@ -20,11 +20,11 @@ function requireSecret() {
 // Signs a fresh QR token for a rider's account. Payload shape is part of the documented
 // cross-repo contract: { sub: userId, ver, jti }. The token is account-scoped — it is not
 // tied to any particular route, so one pass is valid everywhere the rider boards.
-function signQr(user) {
+function signQr(student) {
   const secret = requireSecret();
   const payload = {
-    sub: String(user._id),
-    ver: user.qrTokenVersion,
+    sub: String(student._id),
+    ver: student.qrTokenVersion,
     jti: crypto.randomUUID()
   };
   const token = jwt.sign(payload, secret, { expiresIn: QR_TOKEN_TTL });
@@ -47,16 +47,16 @@ async function verifyQr(token) {
     return { valid: false, reason: 'INVALID' };
   }
 
-  const user = await User.findById(decoded.sub);
-  if (!user || !user.isActive) {
+  const student = await StudentProfile.findById(decoded.sub);
+  if (!student || !student.isActive) {
     return { valid: false, reason: 'USER_NOT_FOUND', decoded };
   }
 
-  if (user.qrTokenVersion !== decoded.ver) {
-    return { valid: false, reason: 'STALE_VERSION', decoded, user };
+  if (student.qrTokenVersion !== decoded.ver) {
+    return { valid: false, reason: 'STALE_VERSION', decoded, student };
   }
 
-  return { valid: true, decoded, user };
+  return { valid: true, decoded, student };
 }
 
 module.exports = { signQr, verifyQr, QR_TOKEN_TTL };

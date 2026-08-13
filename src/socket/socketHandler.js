@@ -1,5 +1,8 @@
 const jwt = require('jsonwebtoken');
 const Route = require('../models/Route');
+const StudentProfile = require('../models/StudentProfile');
+const DriverEnrollment = require('../models/DriverEnrollment');
+const Vehicle = require('../models/Vehicle');
 
 // Socket layer, reduced to what QR attendance needs.
 //
@@ -52,6 +55,13 @@ const setupSocket = (io) => {
       // server-side emits targeted at `student:<userId>` (QR attendance status
       // flips) always have a listener.
       socket.join(`student:${socket.userId}`);
+      if (socket.userRole === 'user') {
+        const studentIds = await StudentProfile.find({
+          accountId: socket.userId,
+          isActive: { $ne: false }
+        }).distinct('_id');
+        studentIds.forEach((studentId) => socket.join(`student:${String(studentId)}`));
+      }
 
       socket.emit('connection-success', {
         socketId: socket.id,
@@ -65,7 +75,7 @@ const setupSocket = (io) => {
     // Join a route room to receive that route's attendance events.
     socket.on('join-route', async (data, callback) => {
       try {
-        const { routeId } = data || {};
+        const { routeId, studentId } = data || {};
 
         if (!routeId || typeof routeId !== 'string') {
           return callback?.({ success: false, error: 'Valid Route ID is required' });
@@ -74,6 +84,22 @@ const setupSocket = (io) => {
         const route = await Route.findOne({ routeId, isDeleted: false }).select('_id');
         if (!route) {
           return callback?.({ success: false, error: 'Route not found' });
+        }
+
+        if (socket.userRole === 'user') {
+          const student = await StudentProfile.exists({
+            _id: studentId,
+            accountId: socket.userId,
+            isActive: { $ne: false }
+          });
+          if (!student) return callback?.({ success: false, error: 'Student not found' });
+          const driverIds = await Vehicle.find({ routeId, isDeleted: false }).distinct('driverId');
+          const enrolled = await DriverEnrollment.exists({
+            studentId,
+            driverId: { $in: driverIds.filter(Boolean) },
+            status: 'ACTIVE'
+          });
+          if (!enrolled) return callback?.({ success: false, error: 'Student is not enrolled on this route' });
         }
 
         socket.join(`route:${routeId}`);

@@ -11,10 +11,10 @@ function formatTime(date) {
 // Sends a "<Child> boarded/alighted <Vehicle> at HH:MM" push to every registered Expo
 // token on `user`. Never throws — push delivery failures must not block the scan
 // endpoint or attendance recording. Returns a small delivery summary for logging/tests.
-async function sendBoardingPush(user, event, vehicleName) {
+async function sendBoardingPush(student, account, event, vehicleName) {
   try {
-    const tokens = Array.isArray(user?.pushTokens)
-      ? user.pushTokens.filter((t) => Expo.isExpoPushToken(t))
+    const tokens = Array.isArray(account?.pushTokens)
+      ? account.pushTokens.filter((t) => Expo.isExpoPushToken(t))
       : [];
 
     if (tokens.length === 0) {
@@ -25,10 +25,11 @@ async function sendBoardingPush(user, event, vehicleName) {
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
-      title: `${user.name || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
+      title: `${student.fullName || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
       body: `at ${formatTime(event.timestamp)}`,
       data: {
         type: 'BOARDING_EVENT',
+        studentId: String(student._id),
         eventId: String(event._id),
         boardingType: event.type,
         routeId: event.routeId,

@@ -4,6 +4,9 @@ const Route = require('../models/Route');
 const BoardingEvent = require('../models/BoardingEvent');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
+const DriverEnrollment = require('../models/DriverEnrollment');
+const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 // Debounce window: a repeat scan of the SAME type for the SAME student on the SAME
 // vehicle within this many seconds is treated as a duplicate (idempotent replay, e.g.
@@ -61,7 +64,7 @@ exports.scanBoarding = async (req, res, next) => {
     if (!verification.valid) {
       return res.status(401).json({ success: false, message: `Invalid QR token: ${verification.reason}` });
     }
-    const { user: rider } = verification;
+    const { student } = verification;
 
     const vehicle = await Vehicle.findOne({ vehicleId, driverId: req.user._id, isDeleted: false });
     if (!vehicle) {
@@ -73,6 +76,15 @@ exports.scanBoarding = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'QR attendance is not enabled for this route' });
     }
 
+    const activeEnrollment = await DriverEnrollment.exists({
+      studentId: student._id,
+      driverId: req.user._id,
+      status: 'ACTIVE'
+    });
+    if (!activeEnrollment) {
+      return res.status(403).json({ success: false, message: 'This student is not enrolled with your shuttle' });
+    }
+
     const tripId = req.body?.tripId ? String(req.body.tripId) : dayTripId(vehicleId);
 
     let type = typeof req.body?.type === 'string' ? req.body.type.toUpperCase() : null;
@@ -80,7 +92,7 @@ exports.scanBoarding = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'type must be BOARD or ALIGHT' });
     }
     if (!type) {
-      const lastForTrip = await BoardingEvent.findOne({ studentId: rider._id, tripId })
+      const lastForTrip = await BoardingEvent.findOne({ studentId: student._id, tripId })
         .sort({ timestamp: -1 });
       type = lastForTrip?.type === 'BOARD' ? 'ALIGHT' : 'BOARD';
     }
@@ -89,18 +101,22 @@ exports.scanBoarding = async (req, res, next) => {
     // is an idempotent replay, not a new attendance record.
     const debounceSince = new Date(Date.now() - DEBOUNCE_SECONDS * 1000);
     const recentDuplicate = await BoardingEvent.findOne({
-      studentId: rider._id,
+      studentId: student._id,
       vehicleId,
       type,
       timestamp: { $gte: debounceSince }
     }).sort({ timestamp: -1 });
 
     if (recentDuplicate) {
-      return res.status(200).json({ success: true, debounced: true, data: eventPayload(recentDuplicate) });
+      return res.status(200).json({
+        success: true,
+        debounced: true,
+        data: { ...eventPayload(recentDuplicate), studentName: student.fullName, riderCode: student.riderCode }
+      });
     }
 
     const event = await BoardingEvent.create({
-      studentId: rider._id,
+      studentId: student._id,
       vehicleId,
       routeId: vehicle.routeId,
       driverId: req.user._id,
@@ -115,16 +131,35 @@ exports.scanBoarding = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       io.to(`route:${vehicle.routeId}`).emit('attendance:event', eventPayload(event));
-      io.to(`student:${String(rider._id)}`).emit('attendance:event', eventPayload(event));
+      io.to(`student:${String(student._id)}`).emit('attendance:event', eventPayload(event));
     }
 
     try {
-      await sendBoardingPush(rider, event, vehicle.vehicleName);
+      const account = await User.findById(student.accountId).select('pushTokens');
+      await sendBoardingPush(student, account, event, vehicle.vehicleName);
+      await Notification.create({
+        userId: student.accountId,
+        studentId: student._id,
+        type: 'BOARDING_EVENT',
+        title: event.type === 'BOARD' ? 'Boarded shuttle' : 'Left shuttle',
+        message: `${student.fullName} ${event.type === 'BOARD' ? 'boarded' : 'left'} ${vehicle.vehicleName || vehicle.vehicleId}.`,
+        data: {
+          studentId: String(student._id),
+          vehicleId: vehicle.vehicleId,
+          routeId: vehicle.routeId,
+          relatedId: String(event._id)
+        },
+        priority: 'HIGH'
+      });
     } catch (err) {
       console.error('Error dispatching boarding push:', err.message);
     }
 
-    return res.status(201).json({ success: true, debounced: false, data: eventPayload(event) });
+    return res.status(201).json({
+      success: true,
+      debounced: false,
+      data: { ...eventPayload(event), studentName: student.fullName, riderCode: student.riderCode }
+    });
   } catch (error) {
     next(error);
   }

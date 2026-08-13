@@ -1,6 +1,8 @@
 // Rider-facing QR endpoints — see docs/features/qr-attendance/QR_SYSTEM.md.
 const jwt = require('jsonwebtoken');
 const { signQr } = require('../utils/qrToken');
+const { findOwnedStudent } = require('../utils/students');
+const DriverEnrollment = require('../models/DriverEnrollment');
 
 function toIssuedToken(user) {
   const { token, payload } = signQr(user);
@@ -18,11 +20,17 @@ function toIssuedToken(user) {
 // @route   POST /api/qr/issue
 exports.issueQr = async (req, res, next) => {
   try {
-    const entry = toIssuedToken(req.user);
-    req.user.qrIssuedAt = new Date();
-    await req.user.save();
+    const student = await findOwnedStudent(req.user, req.body?.studentId);
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const hasActiveEnrollment = await DriverEnrollment.exists({ studentId: student._id, status: 'ACTIVE' });
+    if (!hasActiveEnrollment) {
+      return res.status(409).json({ success: false, message: 'This student needs an active shuttle before a vehicle pass can be issued' });
+    }
+    const entry = toIssuedToken(student);
+    student.qrIssuedAt = new Date();
+    await student.save();
 
-    return res.status(200).json({ success: true, data: entry });
+    return res.status(200).json({ success: true, data: { ...entry, studentId: student._id, riderCode: student.riderCode } });
   } catch (error) {
     next(error);
   }
@@ -32,10 +40,12 @@ exports.issueQr = async (req, res, next) => {
 // @route   POST /api/qr/rotate
 exports.rotateQr = async (req, res, next) => {
   try {
-    req.user.qrTokenVersion += 1;
-    await req.user.save();
+    const student = await findOwnedStudent(req.user, req.body?.studentId);
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    student.qrTokenVersion += 1;
+    await student.save();
 
-    return res.status(200).json({ success: true, data: { tokenVersion: req.user.qrTokenVersion } });
+    return res.status(200).json({ success: true, data: { studentId: student._id, tokenVersion: student.qrTokenVersion } });
   } catch (error) {
     next(error);
   }
