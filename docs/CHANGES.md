@@ -23,6 +23,49 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-13 — Vehicle creation past the first requires super-admin approval
+- **Branch:** main
+- **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, not updated)
+- **What changed:**
+  - `POST /api/manager/vehicle-accounts` now creates a manager's *first* vehicle
+    outright (unchanged), but every vehicle after that raises a `PENDING`
+    `ManagerVehicleRequest` (`type: CREATE_VEHICLE_ACCOUNT`) instead of creating
+    it — mirroring how `DELETE_VEHICLE` already works.
+  - Fixed two dormant bugs in `reviewVehicleRequest`'s `CREATE_VEHICLE_ACCOUNT`
+    approval branch while wiring it up for the first time: an approved driver
+    got no `managerId` (invisible in the manager's own directory), and an email
+    already on another manager's driver could be reused with a new password on
+    approval (account takeover).
+- **Why:** vehicles are what the rest of the system sees (routes, tracking,
+  bookings), so growing a fleet past the first vehicle should go through the
+  same super-admin approval as deleting one already does. The
+  `CREATE_VEHICLE_ACCOUNT` type and its approval branch already existed but
+  were never reachable from any manager-facing endpoint — commit `bdcabeb`
+  deliberately reverted approval-gated creation because it deadlocked a
+  brand-new manager (empty fleet, no way to fill it, no way to add a driver
+  either since that form needs an existing vehicle). The bootstrap rule (first
+  vehicle free) keeps that fixed while gating everything after it.
+- **Contract impact:** `POST /api/manager/vehicle-accounts` response shape now
+  depends on whether the manager already has a vehicle — `data.vehicle` present
+  (unchanged shape) for an immediate creation, or a `ManagerVehicleRequest` doc
+  (`status: 'PENDING'`, no `data.vehicle`) when queued. web-admin's
+  `ManagerVehiclesPage` updated in the same session to branch on this.
+- **Tests:** added `tests/integration/vehicle-create-approval.test.js` (bootstrap
+  rule, duplicate-pending-request guard, approve/reject, the driver-email
+  ownership regression, non-super-admin review refused). Updated
+  `tests/integration/manager-vehicle-create.test.js` and
+  `tests/integration/vehicle-plates.test.js` to give each test a fresh,
+  vehicle-less manager, since they previously relied on every vehicle a manager
+  creates being immediate.
+- **Docs updated:** `docs/TESTING_GUIDE.md` row added.
+- **Migration:** none — no schema change, reuses the existing
+  `ManagerVehicleRequest` model and its `CREATE_VEHICLE_ACCOUNT` type.
+- **Follow-ups / known issues:** `tests/integration/delete-vehicle-orphan-driver.test.js`
+  and `tests/integration/review-vehicle-request-whitelist.test.js` fail with
+  401s independent of this change — they build accounts via `Manager.create`/
+  `SuperAdmin.create` directly instead of the identity-aware test factories, a
+  pre-existing issue flagged separately.
+
 ## 2026-08-12 — Multiple rider profiles under one account
 - **Branch:** feat/multi-rider-profiles
 - **Modules touched:** auth ([`docs/modules/AUTH.md`](modules/AUTH.md), rewritten — it still

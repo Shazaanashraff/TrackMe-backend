@@ -7,11 +7,13 @@ const ManagerVehicleRequest = require('../../src/models/ManagerVehicleRequest');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 const { createManager, authHeader } = require('./factories');
 
-// A manager owns their own fleet, so POST /api/manager/vehicle-accounts creates
-// the vehicle and its driver outright. It used to raise a request for a super
-// admin to approve, which left a new manager unable to add anything at all
-// until somebody else acted, and unable to add a driver either since the driver
-// form needs an existing vehicle.
+// A manager's first vehicle is created outright, so POST /api/manager/vehicle-accounts
+// creates the vehicle and its driver immediately for a fleet that is still empty.
+// That used to be true for every vehicle a manager created, but a manager's fleet
+// showing up in the system now means every vehicle after the first goes through a
+// super-admin-approved request instead (see vehicle-create-approval.test.js) — so
+// every test in this file uses a brand new, vehicle-less manager to keep exercising
+// the immediate-creation path this file is actually about.
 
 let managerToken;
 let managerId;
@@ -23,10 +25,6 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
   await Driver.syncIndexes();
-
-  const manager = await createManager({ name: 'Fleet Owner' });
-  managerId = manager.id;
-  managerToken = manager.token;
 
   // Only ever referenced as somebody else's managerId, so it never signs in.
   const other = await createManager({ name: 'Other Owner', signIn: false });
@@ -47,6 +45,15 @@ beforeAll(async () => {
 afterAll(async () => {
   await clearTestDb();
   await closeTestDb();
+});
+
+// Every test gets its own empty-fleet manager, so "creates outright" behaviour
+// stays testable even though a manager's second-and-later vehicle now requires
+// super-admin approval.
+beforeEach(async () => {
+  const manager = await createManager({ name: 'Fleet Owner' });
+  managerId = manager.id;
+  managerToken = manager.token;
 });
 
 const auth = () => authHeader(managerToken);

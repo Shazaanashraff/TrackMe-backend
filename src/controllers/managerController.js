@@ -328,9 +328,11 @@ async function resolveVehicleOrganization(body) {
   return { organizationId: organization._id, serviceType: organization.serviceType };
 }
 
-// A manager creates vehicles in their own fleet outright. This used to raise a
-// request for a super admin to approve, which left a new manager unable to add
-// anything at all until somebody else acted.
+// A manager's first vehicle is created outright, so a new manager is never
+// stuck with an empty fleet and no way to fill it. Every vehicle after that
+// raises a request for a super admin to approve instead (see the bootstrap
+// check below) — vehicles are what the rest of the system sees, so a super
+// admin signs off on growing the fleet past the first one.
 exports.createManagerVehicle = async (req, res, next) => {
   try {
     const {
@@ -463,9 +465,79 @@ exports.createManagerVehicle = async (req, res, next) => {
       });
     }
 
-    // A manager owns their own fleet, so the vehicle is created here rather than
-    // queued for a super admin to approve. Its driver, if one was named, comes
-    // with it.
+    // A manager's very first vehicle is created outright, so a brand new manager
+    // is never stuck with an empty fleet and no way to fill it (the driver form
+    // needs an existing vehicle, so that would also block adding a driver).
+    // Every vehicle after that goes through the same request/approval flow as
+    // deleting one already does — vehicles are what the rest of the system sees
+    // (routes, tracking, bookings), so a super admin signs off on adding more.
+    const existingVehicleCount = await Vehicle.countDocuments({
+      managerId: req.user._id,
+      isDeleted: false
+    });
+    const isBootstrapVehicle = existingVehicleCount === 0;
+
+    if (!isBootstrapVehicle) {
+      const existingPendingCreate = await ManagerVehicleRequest.findOne({
+        managerId: req.user._id,
+        vehicleId: normalizedVehicleId,
+        type: 'CREATE_VEHICLE_ACCOUNT',
+        status: 'PENDING'
+      });
+      if (existingPendingCreate) {
+        return res.status(409).json({
+          success: false,
+          message: 'A pending creation request already exists for this vehicle'
+        });
+      }
+
+      const requestDoc = await ManagerVehicleRequest.create({
+        type: 'CREATE_VEHICLE_ACCOUNT',
+        managerId: req.user._id,
+        vehicleId: normalizedVehicleId,
+        reason: String(reason || '').trim(),
+        payload: {
+          vehicle: {
+            vehicleId: normalizedVehicleId,
+            vehicleName: String(vehicleName || '').trim() || normalizedNumberPlate,
+            numberPlate: normalizedNumberPlate,
+            registrationNumber: normalizedReg,
+            routeId: normalizedRouteId,
+            vehicleType: vehicleType || 'AC',
+            serviceType: normalizedServiceType,
+            bookingEnabled: bookingEnabled !== undefined ? Boolean(bookingEnabled) : true,
+            organization: org.organizationId
+          },
+          driver: wantsDriver
+            ? {
+              name: String(driverName).trim(),
+              ...(normalizedEmail ? { email: normalizedEmail } : {}),
+              phoneNumber: normalizedDriverPhone,
+              nicNumber: String(driverNicNumber || '').trim(),
+              licenseCardNumber: String(driverLicenseCardNumber || '').trim(),
+              password
+            }
+            : null
+        }
+      });
+
+      await writeAuditLog({
+        managerId: req.user._id,
+        actorId: req.user._id,
+        actorRole: 'admin',
+        action: 'VEHICLE_CREATE_REQUESTED',
+        entityType: 'VEHICLE_REQUEST',
+        entityId: requestDoc._id.toString(),
+        metadata: { vehicleId: normalizedVehicleId, routeId: normalizedRouteId }
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Vehicle creation request submitted for super admin approval',
+        data: requestDoc
+      });
+    }
+
     if (wantsDriver) {
       const driverFields = {
         name: String(driverName).trim(),

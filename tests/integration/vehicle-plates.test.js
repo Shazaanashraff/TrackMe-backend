@@ -21,10 +21,6 @@ beforeAll(async () => {
   await clearTestDb();
   process.env.NODE_ENV = 'test';
 
-  const manager = await createManager({ name: 'Plate Manager' });
-  managerId = manager.id;
-  managerToken = manager.token;
-
   // Only ever referenced as somebody else's managerId, so it never signs in.
   const other = await createManager({ name: 'Other Plate Manager', signIn: false });
   otherManagerId = other.id;
@@ -44,6 +40,18 @@ beforeAll(async () => {
 afterAll(async () => {
   await clearTestDb();
   await closeTestDb();
+});
+
+// A manager's first vehicle is created outright; every one after that goes
+// through a super-admin-approved request instead. A fresh, vehicle-less
+// manager per test keeps every `add()`/`vehicleAccount()` call here landing on
+// the immediate-creation path this file is actually about, and a plate
+// conflict is still caught before that branch either way (see
+// vehicle-create-approval.test.js for the request-path behaviour itself).
+beforeEach(async () => {
+  const manager = await createManager({ name: 'Plate Manager' });
+  managerId = manager.id;
+  managerToken = manager.token;
 });
 
 const auth = () => authHeader(managerToken);

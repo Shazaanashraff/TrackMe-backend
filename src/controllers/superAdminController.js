@@ -933,8 +933,27 @@ exports.reviewVehicleRequest = async (req, res, next) => {
         nicNumber: String(driverPayload.nicNumber || '').trim(),
         licenseCardNumber: String(driverPayload.licenseCardNumber || '').trim(),
         isActive: true,
-        isEmailVerified: true
+        isEmailVerified: true,
+        // Without this, an approved driver never shows up in the requesting
+        // manager's own directory — it belongs to nobody.
+        managerId: requestDoc.managerId
       };
+
+      // An email already on a driver may only be reused when that driver
+      // belongs to the manager who requested this vehicle. Reusing anybody
+      // else's would hand their account over, since the request carries a new
+      // password.
+      if (driverEmail) {
+        const existingDriverAccount = await Driver.findOne({ email: driverEmail });
+        if (existingDriverAccount
+          && String(existingDriverAccount.managerId || '') !== String(requestDoc.managerId)) {
+          await releaseClaim();
+          return res.status(409).json({
+            success: false,
+            message: 'Cannot approve request: a driver with this email already exists'
+          });
+        }
+      }
 
       const existingIdentity = await findIdentityByEmail(driverEmail);
       let driver;
@@ -967,6 +986,7 @@ exports.reviewVehicleRequest = async (req, res, next) => {
           // re-enable it, but never the credentials.
           if (!attached.created) {
             driver.isActive = true;
+            driver.managerId = requestDoc.managerId;
             if (driverPayload.phoneNumber) driver.phoneNumber = String(driverPayload.phoneNumber).trim();
             if (driverPayload.nicNumber) driver.nicNumber = String(driverPayload.nicNumber).trim();
             if (driverPayload.licenseCardNumber) driver.licenseCardNumber = String(driverPayload.licenseCardNumber).trim();
