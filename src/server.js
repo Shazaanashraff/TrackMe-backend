@@ -88,6 +88,10 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/profiles', profileRoutes);
+app.use('/api/riders', riderRoutes);
+// Compatibility for clients released before rider-neutral terminology.
+app.use('/api/students', studentRoutes);
+app.use('/api/household/places', householdPlaceRoutes);
 app.use('/api/driver/trips', driverTripRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);

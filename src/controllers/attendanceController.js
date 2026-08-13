@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
 const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
+const RiderProfile = require('../models/RiderProfile');
 const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
@@ -27,7 +28,7 @@ function summarize(events) {
 // Authorized for the rider themselves, anyone sharing their identity (the
 // account holder reading a managed child's history, or vice versa), or a
 // manager who manages a route this rider has (or had) membership on.
-exports.getStudentAttendance = async (req, res, next) => {
+const getRiderAttendance = async (req, res, next) => {
   try {
     const studentId = req.params.riderId || req.params.studentId;
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
@@ -95,4 +96,5 @@ exports.getStudentAttendance = async (req, res, next) => {
 };
 
 exports.getRiderAttendance = getRiderAttendance;
+// Compatibility for clients released before rider-neutral terminology.
 exports.getStudentAttendance = getRiderAttendance;

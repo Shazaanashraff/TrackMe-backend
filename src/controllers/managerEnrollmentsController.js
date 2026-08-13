@@ -3,6 +3,7 @@ const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Identity = require('../models/Identity');
+const RiderProfile = require('../models/RiderProfile');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 

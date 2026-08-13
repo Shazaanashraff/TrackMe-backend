@@ -1,6 +1,9 @@
 const jwt = require('jsonwebtoken');
 const Route = require('../models/Route');
 const User = require('../models/User');
+const Vehicle = require('../models/Vehicle');
+const DriverEnrollment = require('../models/DriverEnrollment');
+const RiderProfile = require('../models/RiderProfile');
 const { findHouseholdProfiles } = require('../utils/identityRegistry');
 
 // Socket layer, reduced to what QR attendance needs.

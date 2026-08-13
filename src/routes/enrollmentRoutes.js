@@ -11,6 +11,7 @@ const {
 const { protect, requireUser } = require('../middleware/auth');
 
 // Passenger-facing. Managers manage enrollment requests through /api/manager.
+// The household view lives on /api/profiles/household/enrollments.
 router.use(protect, requireUser);
 
 router.post('/redeem', redeemEnrollmentKey);

@@ -2,40 +2,65 @@ const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Vehicle = require('../models/Vehicle');
 const Organization = require('../models/Organization');
-const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
 const { publicOrganization } = require('../utils/organizations');
 const { findDriverIdByEnrollmentKey } = require('../utils/enrollmentKey');
 const { findHouseholdProfiles } = require('../utils/identityRegistry');
 const { riderTagForServiceType } = require('../utils/riderTag');
+const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
+const { normalizedEnrollmentConfig, validateEnrollmentResponses } = require('../utils/enrollmentSchema');
+const {
+  findOwnedRider,
+  assertOwnedPlaces,
+  effectiveContactPhone,
+  validContactPhone,
+  publicRider,
+  mapValuesToObject
+} = require('../utils/riders');
+const { riderRoleForResolvedService } = require('../utils/riderRole');
 
+// One message for every reason a key does not work, so a caller cannot use the
+// response to learn which keys exist or which drivers are private.
 const INVALID_KEY = 'That enrollment key is not valid';
+
+// The key is a bearer credential, so a passenger who starts guessing gets slowed
+// down. Held in memory rather than a collection: this only needs to blunt online
+// guessing, and the key space (12 characters over a 32-symbol alphabet) already
+// makes exhaustion hopeless. A restart clearing the counters is acceptable for
+// that job; if this ever needs to hold across instances it wants a shared store.
 const MAX_FAILED_ATTEMPTS = 8;
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 const failedAttempts = new Map();
 
-function attemptState(accountId) {
-  const key = String(accountId);
-  const record = failedAttempts.get(key);
+function attemptState(userId) {
+  const record = failedAttempts.get(String(userId));
   if (!record) return null;
   if (Date.now() - record.firstAt > ATTEMPT_WINDOW_MS) {
-    failedAttempts.delete(key);
+    failedAttempts.delete(String(userId));
     return null;
   }
   return record;
 }
 
-function recordFailure(accountId) {
-  const key = String(accountId);
-  const record = attemptState(accountId);
-  failedAttempts.set(key, record
-    ? { ...record, count: record.count + 1 }
-    : { count: 1, firstAt: Date.now() });
+function recordFailure(userId) {
+  const key = String(userId);
+  const record = attemptState(userId);
+  if (!record) {
+    failedAttempts.set(key, { count: 1, firstAt: Date.now() });
+    return;
+  }
+  record.count += 1;
 }
 
-const clearFailures = (accountId) => failedAttempts.delete(String(accountId));
-const isThrottled = (accountId) => (attemptState(accountId)?.count || 0) >= MAX_FAILED_ATTEMPTS;
+const clearFailures = (userId) => failedAttempts.delete(String(userId));
+
+const isThrottled = (userId) => (attemptState(userId)?.count || 0) >= MAX_FAILED_ATTEMPTS;
+
+// Exposed so tests can start from a clean slate rather than sharing counters.
 const resetAttempts = () => failedAttempts.clear();
 
+// includeContact / vehicle.routeId back the "which route does this cover, and who
+// do I call" view. Both stay opt-in: the phone is only released once an enrollment
+// is ACTIVE, so a bare key lookup never leaks a driver's number.
 const driverSummary = (driver, organization, vehicle, includeContact = false) => ({
   _id: driver._id,
   name: driver.name,
@@ -61,7 +86,9 @@ const enrollmentSummary = (enrollment, driver, organization, vehicle) => ({
   requiredApproval: enrollment.requiredApproval,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
-  driver: driver ? driverSummary(driver, organization, vehicle) : null,
+  pickupPlaceId: enrollment.pickupPlaceId || null,
+  dropoffPlaceId: enrollment.dropoffPlaceId || null,
+  driver: driver ? driverSummary(driver, organization, vehicle, enrollment.status === 'ACTIVE') : null,
   // Derived from the driver's organization, never stored — see utils/riderTag.js.
   riderTag: riderTagForServiceType(organization?.serviceType)
 });
@@ -85,7 +112,7 @@ const loadEnrollmentsByProfile = async (profileIds) => {
 
   const driverIds = enrollments.map((item) => item.driverId);
   const drivers = await Driver.find({ _id: { $in: driverIds } })
-    .select('name driverCode organization isActive')
+    .select('name driverCode organization isActive phoneNumber')
     .lean();
 
   const orgIds = drivers.map((d) => d.organization).filter(Boolean);
@@ -93,7 +120,7 @@ const loadEnrollmentsByProfile = async (profileIds) => {
     orgIds.length
       ? Organization.find({ _id: { $in: orgIds } }).select('name serviceType').lean()
       : [],
-    Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId').lean()
+    Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId routeId').lean()
   ]);
 
   const driverById = new Map(drivers.map((d) => [String(d._id), d]));
@@ -115,6 +142,199 @@ const loadEnrollmentsByProfile = async (profileIds) => {
 
 // @route POST /api/enrollments/redeem
 exports.redeemEnrollmentKey = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const raw = String(req.body?.key || '').trim();
+
+    if (!raw) {
+      return res.status(400).json({ success: false, message: 'Please provide an enrollment key' });
+    }
+
+    if (isThrottled(userId)) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many incorrect keys. Please wait a few minutes and try again.'
+      });
+    }
+
+    const driverId = await findDriverIdByEnrollmentKey(raw);
+    const driver = driverId ? await Driver.findById(driverId) : null;
+
+    // An inactive driver is treated exactly like an unknown key: a passenger has
+    // no business learning that a suspended driver exists.
+    if (!driver || driver.isActive === false) {
+      recordFailure(userId);
+      return res.status(404).json({ success: false, message: INVALID_KEY });
+    }
+
+    clearFailures(userId);
+
+    const [organization, vehicle, existing] = await Promise.all([
+      driver.organization
+        ? Organization.findById(driver.organization).select('name serviceType').lean()
+        : null,
+      Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
+      DriverEnrollment.findOne({ userId, driverId: driver._id })
+    ]);
+
+    if (existing?.status === 'ACTIVE') {
+      return res.status(409).json({
+        success: false,
+        message: `You are already enrolled with ${driver.name}`,
+        data: enrollmentSummary(existing, driver, organization, vehicle)
+      });
+    }
+
+    // Re-submitting while a request is queued is a no-op rather than an error, so
+    // a double tap on a slow connection does not read as a failure.
+    if (existing?.status === 'PENDING') {
+      return res.status(200).json({
+        success: true,
+        message: `Your request is waiting for ${driver.name}'s manager to approve it`,
+        data: enrollmentSummary(existing, driver, organization, vehicle)
+      });
+    }
+
+    const requiredApproval = Boolean(driver.isPrivate);
+    const status = requiredApproval ? 'PENDING' : 'ACTIVE';
+
+    // Upsert rather than create: a previously REJECTED row is revived here, which
+    // also lets the unique (userId, driverId) index stand guard against duplicates.
+    const enrollment = await DriverEnrollment.findOneAndUpdate(
+      { userId, driverId: driver._id },
+      {
+        $set: {
+          userId,
+          driverId: driver._id,
+          managerId: driver.managerId || null,
+          status,
+          requiredApproval,
+          decidedBy: null,
+          decidedAt: null
+        }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: requiredApproval
+        ? `Request sent. ${driver.name}'s manager needs to approve it.`
+        : `You are now enrolled with ${driver.name}`,
+      data: enrollmentSummary(enrollment, driver, organization, vehicle)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @route GET /api/enrollments/mine
+// Returns joined shuttles and anything still awaiting approval. Rejected records
+// are left out: to the passenger the request simply did not succeed.
+exports.getMyEnrollments = async (req, res, next) => {
+  try {
+    const byProfile = await loadEnrollmentsByProfile([req.user._id]);
+    return res.status(200).json({ success: true, data: byProfile.get(String(req.user._id)) || [] });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @route GET /api/profiles/household/enrollments
+// Every profile on the caller's identity — the account holder plus everyone
+// they manage — with its own ACTIVE/PENDING enrollments, so the app can show
+// one map with every household member's shuttle at once (see
+// docs/modules/PROFILES.md). An identity-less caller (a pre-migration
+// account, in principle) gets an empty list rather than an unscoped query —
+// there is no household to return.
+exports.getHouseholdEnrollments = async (req, res, next) => {
+  try {
+    if (!req.identityId) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const profiles = await findHouseholdProfiles(req.identityId);
+    if (!profiles.length) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const byProfile = await loadEnrollmentsByProfile(profiles.map((p) => p._id));
+
+    const data = profiles.map((profile) => ({
+      profile: {
+        _id: profile._id,
+        name: profile.name,
+        relation: profile.relation || '',
+        profileKind: profile.profileKind,
+        hasAvatar: Boolean(profile.avatarUrl)
+      },
+      enrollments: byProfile.get(String(profile._id)) || []
+    }));
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @route DELETE /api/enrollments/:id
+// Leaving and cancelling a pending request are the same action to the passenger,
+// so both drop the record and let them start over later.
+exports.leaveEnrollment = async (req, res, next) => {
+  try {
+    const enrollment = await DriverEnrollment.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user._id
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Enrollment removed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.resetAttempts = resetAttempts;
+
+// ── Rider-profile enrollment ────────────────────────────────────────────────
+// Additive to the key-redemption flow above: these endpoints enroll a specific
+// rider profile owned by the caller, and answer "which route does this key
+// cover, and who do I call" before the passenger commits to enrolling.
+
+async function resolveKeyContext(account, key, riderId) {
+  const rider = await findOwnedRider(account, riderId);
+  if (!rider) return { error: { status: 404, message: 'Rider not found' } };
+  if (isThrottled(account._id)) {
+    return { error: { status: 429, message: 'Too many incorrect keys. Please wait a few minutes and try again.' } };
+  }
+
+  const raw = String(key || '').trim();
+  if (!raw) return { error: { status: 400, message: 'Please provide an enrollment key' } };
+  const driverId = await findDriverIdByEnrollmentKey(raw);
+  const driver = driverId ? await Driver.findById(driverId) : null;
+  if (!driver || driver.isActive === false) {
+    recordFailure(account._id);
+    return { error: { status: 404, message: INVALID_KEY } };
+  }
+  clearFailures(account._id);
+
+  const [organization, vehicle, existingEnrollment] = await Promise.all([
+    driver.organization ? Organization.findById(driver.organization) : null,
+    Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
+    DriverEnrollment.findOne({ studentId: rider._id, driverId: driver._id })
+  ]);
+  const organizationProfile = organization
+    ? await RiderOrganizationProfile.findOne({ studentId: rider._id, organizationId: organization._id })
+    : null;
+
+  return { raw, rider, driver, organization, vehicle, existingEnrollment, organizationProfile };
+}
+
+
+exports.resolveEnrollmentKey = async (req, res, next) => {
   try {
     const context = await resolveKeyContext(req.user, req.body?.key, req.body?.riderId || req.body?.studentId);
     if (context.error) return res.status(context.error.status).json({ success: false, message: context.error.message });
@@ -238,7 +458,11 @@ exports.enrollRider = exports.enrollStudent;
 // Temporary compatibility endpoint for an app build released before the
 // student wizard. It enrolls the account's first migrated student without
 // enforcing newly-configured organization fields.
-exports.redeemEnrollmentKey = async (req, res, next) => {
+
+// Compatibility for an app build released before the rider wizard: enrolls
+// without enforcing newly-configured organization fields. Named ...Legacy so
+// it no longer shadows the key-redemption handler above.
+exports.redeemEnrollmentKeyLegacy = async (req, res, next) => {
   try {
     const result = await createEnrollment(req, { legacy: true });
     if (result.error) return res.status(result.error.status).json({ success: false, ...result.error });
@@ -246,59 +470,3 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
-exports.getMyEnrollments = async (req, res, next) => {
-  try {
-    const byProfile = await loadEnrollmentsByProfile([req.user._id]);
-    return res.status(200).json({ success: true, data: byProfile.get(String(req.user._id)) || [] });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @route GET /api/profiles/household/enrollments
-// Every profile on the caller's identity — the account holder plus everyone
-// they manage — with its own ACTIVE/PENDING enrollments, so the app can show
-// one map with every household member's shuttle at once (see
-// docs/modules/PROFILES.md). An identity-less caller (a pre-migration
-// account, in principle) gets an empty list rather than an unscoped query —
-// there is no household to return.
-exports.getHouseholdEnrollments = async (req, res, next) => {
-  try {
-    if (!req.identityId) {
-      return res.status(200).json({ success: true, data: [] });
-    }
-
-    const profiles = await findHouseholdProfiles(req.identityId);
-    if (!profiles.length) {
-      return res.status(200).json({ success: true, data: [] });
-    }
-
-    const byProfile = await loadEnrollmentsByProfile(profiles.map((p) => p._id));
-
-    const data = profiles.map((profile) => ({
-      profile: {
-        _id: profile._id,
-        name: profile.name,
-        relation: profile.relation || '',
-        profileKind: profile.profileKind,
-        hasAvatar: Boolean(profile.avatarUrl)
-      },
-      enrollments: byProfile.get(String(profile._id)) || []
-    }));
-
-    return res.status(200).json({ success: true, data });
-  } catch (error) {
-    next(error);
-  }
-};
-
-exports.leaveEnrollment = async (req, res, next) => {
-  try {
-    const studentIds = await require('../models/RiderProfile').find({ accountId: req.user._id }).distinct('_id');
-    const enrollment = await DriverEnrollment.findOneAndDelete({ _id: req.params.id, studentId: { $in: studentIds } });
-    if (!enrollment) return res.status(404).json({ success: false, message: 'Enrollment not found' });
-    return res.status(200).json({ success: true, message: 'Enrollment removed' });
-  } catch (error) { next(error); }
-};
-
-exports.resetAttempts = resetAttempts;

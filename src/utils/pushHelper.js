@@ -30,12 +30,17 @@ async function resolvePushTokensForRider(rider) {
 }
 
 // Sends a "<Child> boarded/alighted <Vehicle> at HH:MM" push to every Expo token
-// registered anywhere in `user`'s household. Never throws — push delivery failures
+// registered anywhere in the household. Never throws — push delivery failures
 // must not block the scan endpoint or attendance recording. Returns a small delivery
 // summary for logging/tests.
-async function sendBoardingPush(user, event, vehicleName) {
+//
+// `student` is the rider profile that was scanned (it names the push); `account`
+// is the account holder that actually owns the device tokens. They are separate
+// because a managed profile has no device of its own. `account` falls back to
+// `student` so a self-owned rider — which is its own account — still resolves.
+async function sendBoardingPush(student, account, event, vehicleName) {
   try {
-    const tokens = await resolvePushTokensForRider(user);
+    const tokens = await resolvePushTokensForRider(account || student);
 
     if (tokens.length === 0) {
       return { sent: 0, skipped: 'NO_TOKENS' };
@@ -45,7 +50,7 @@ async function sendBoardingPush(user, event, vehicleName) {
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
-      title: `${student.fullName || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
+      title: `${student.fullName || student.name || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
       body: `at ${formatTime(event.timestamp)}`,
       data: {
         type: 'BOARDING_EVENT',

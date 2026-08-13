@@ -6,8 +6,6 @@ const DriverEnrollment = require('../models/DriverEnrollment');
 const User = require('../models/User');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
-const DriverEnrollment = require('../models/DriverEnrollment');
-const User = require('../models/User');
 const Notification = require('../models/Notification');
 
 // Debounce window: a repeat scan of the SAME type for the SAME rider on the SAME
