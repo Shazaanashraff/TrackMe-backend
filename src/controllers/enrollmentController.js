@@ -7,8 +7,10 @@ const { findDriverIdByEnrollmentKey } = require('../utils/enrollmentKey');
 const { findHouseholdProfiles } = require('../utils/identityRegistry');
 const { riderTagForServiceType } = require('../utils/riderTag');
 const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
+const RiderProfile = require('../models/RiderProfile');
 const { normalizedEnrollmentConfig, validateEnrollmentResponses } = require('../utils/enrollmentSchema');
 const {
+  ensureLegacyRider,
   findOwnedRider,
   assertOwnedPlaces,
   effectiveContactPhone,
@@ -103,9 +105,22 @@ const loadEnrollmentsByProfile = async (profileIds) => {
   const byProfile = new Map(profileIds.map((id) => [String(id), []]));
   if (!profileIds.length) return byProfile;
 
+  // An enrollment is owned by a RiderProfile (`studentId`); `userId` is the
+  // pre-split owner the schema keeps for the migration. Resolving the account's
+  // riders first is what lets one query find both generations of row — reading
+  // `userId` alone silently hides every enrollment made since the split, because
+  // createEnrollment writes `userId: null`.
+  const riders = await RiderProfile.find({ accountId: { $in: profileIds } })
+    .select('_id accountId')
+    .lean();
+  const accountByRider = new Map(riders.map((r) => [String(r._id), String(r.accountId)]));
+
   const enrollments = await DriverEnrollment.find({
-    userId: { $in: profileIds },
-    status: { $in: ['ACTIVE', 'PENDING'] }
+    status: { $in: ['ACTIVE', 'PENDING'] },
+    $or: [
+      { studentId: { $in: riders.map((r) => r._id) } },
+      { userId: { $in: profileIds } }
+    ]
   }).sort({ createdAt: -1 }).lean();
 
   if (!enrollments.length) return byProfile;
@@ -132,7 +147,9 @@ const loadEnrollmentsByProfile = async (profileIds) => {
     const organization = driver?.organization ? orgById.get(String(driver.organization)) : null;
     const summary = enrollmentSummary(enrollment, driver, organization, vehicleByDriver.get(String(enrollment.driverId)));
 
-    const key = String(enrollment.userId);
+    // Group under the owning account: via the rider for post-split rows, and by
+    // the legacy owner for rows the migration has not translated yet.
+    const key = accountByRider.get(String(enrollment.studentId)) || String(enrollment.userId);
     if (!byProfile.has(key)) byProfile.set(key, []);
     byProfile.get(key).push(summary);
   }
@@ -169,12 +186,18 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
 
     clearFailures(userId);
 
+    // This account-scoped entry point predates rider profiles, but the row it
+    // writes must still name one: `studentId` is required, and an enrollment
+    // saved without it cannot later be approved (a manager's approve calls
+    // enrollment.save(), which validates the whole document and rejects).
+    const rider = await ensureLegacyRider(req.user);
+
     const [organization, vehicle, existing] = await Promise.all([
       driver.organization
         ? Organization.findById(driver.organization).select('name serviceType').lean()
         : null,
       Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
-      DriverEnrollment.findOne({ userId, driverId: driver._id })
+      DriverEnrollment.findOne({ studentId: rider._id, driverId: driver._id })
     ]);
 
     if (existing?.status === 'ACTIVE') {
@@ -199,11 +222,12 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
     const status = requiredApproval ? 'PENDING' : 'ACTIVE';
 
     // Upsert rather than create: a previously REJECTED row is revived here, which
-    // also lets the unique (userId, driverId) index stand guard against duplicates.
+    // also lets the unique (studentId, driverId) index stand guard against duplicates.
     const enrollment = await DriverEnrollment.findOneAndUpdate(
-      { userId, driverId: driver._id },
+      { studentId: rider._id, driverId: driver._id },
       {
         $set: {
+          studentId: rider._id,
           userId,
           driverId: driver._id,
           managerId: driver.managerId || null,
@@ -282,13 +306,32 @@ exports.getHouseholdEnrollments = async (req, res, next) => {
 // so both drop the record and let them start over later.
 exports.leaveEnrollment = async (req, res, next) => {
   try {
+    // Scoped to the caller either way: through a rider they own, or through the
+    // legacy owner field on a row the migration has not translated yet.
+    const riderIds = await RiderProfile.find({ accountId: req.user._id }).distinct('_id');
     const enrollment = await DriverEnrollment.findOneAndDelete({
       _id: req.params.id,
-      userId: req.user._id
+      $or: [{ studentId: { $in: riderIds } }, { userId: req.user._id }]
     });
 
     if (!enrollment) {
       return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    // This is the only place a rider ever comes off ACTIVE — there is no
+    // manager-side removal. If they had a live-tracking socket open on this
+    // vehicle it stays joined to the room until it disconnects or explicitly
+    // unsubscribes, so tell it to leave now rather than on a timeout.
+    if (enrollment.status === 'ACTIVE') {
+      const vehicle = await Vehicle.findOne({ driverId: enrollment.driverId, isDeleted: false })
+        .select('vehicleId')
+        .lean();
+      if (vehicle) {
+        req.app.get('io')?.to(`vehicle:${vehicle.vehicleId}`).emit('vehicle:access-revoked', {
+          vehicleId: vehicle.vehicleId,
+          riderId: String(enrollment.studentId || '')
+        });
+      }
     }
 
     return res.status(200).json({ success: true, message: 'Enrollment removed' });

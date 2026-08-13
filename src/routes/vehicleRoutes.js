@@ -23,6 +23,7 @@ const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect, requireDriver, requireRoles, optionalAuth } = require('../middleware/auth');
 const { getRoutePath } = require('../controllers/routeGeometryController');
 const { getWalkPath } = require('../controllers/walkController');
+const { getVehicleLive } = require('../controllers/liveLocationController');
 
 // POST /api/vehicle/register - Register vehicle (driver only)
 router.post('/register', protect, requireDriver, validateCreateVehicle, handleValidationErrors, registerVehicle);
@@ -53,6 +54,11 @@ router.get('/my-vehicle', protect, requireDriver, getMyVehicle);
 
 // GET /api/vehicle/route/:routeId - Get vehicles by route
 router.get('/route/:routeId', optionalAuth, getVehiclesByRoute);
+
+// GET /api/vehicle/:vehicleId/live - Current position, for a caller allowed to
+// see it. Declared before the bare /:vehicleId read so the more specific path
+// wins; authorization is in the controller because it differs per role.
+router.get('/:vehicleId/live', protect, getVehicleLive);
 
 // GET /api/vehicle/:vehicleId - Get single vehicle by ID
 router.get('/:vehicleId', validateVehicleId, handleValidationErrors, getVehicleById);

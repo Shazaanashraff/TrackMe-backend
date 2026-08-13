@@ -23,6 +23,95 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-14 — Live vehicle location: driver GO → enrolled riders + manager
+
+- **Branch:** main
+- **Modules touched:** realtime — [`docs/modules/REALTIME.md`](modules/REALTIME.md) (rewritten;
+  the previous version documented a `bus:update`/`manager:join-bus` contract deleted in `6680eac`)
+- **What changed:**
+  - New `src/models/VehicleLiveLocation.js` — one document per vehicle, overwritten on every fix.
+    Deliberately not a trail: no history, no TTL to manage, at the cost of no breadcrumb/playback.
+  - New `src/socket/liveTracking.js`, registered from `socketHandler.js`: `driver:start-tracking`,
+    `driver:location`, `driver:stop-tracking` (driver → server); `vehicle:subscribe`,
+    `vehicle:unsubscribe` (rider/manager → server, one handler branching on role); `vehicle:update`,
+    `vehicle:status`, `vehicle:access-revoked` (server → client). Rooms are `vehicle:<vehicleId>`,
+    keyed on the business id.
+  - A rider watches the specific vehicle they are enrolled to (via the driver, not the vehicle
+    directly) — not everything on a route. Authorization: rider via
+    `RiderProfile` ownership + `DriverEnrollment.status === 'ACTIVE'`; manager via
+    `Vehicle.managerId` (the denormalised copy on `DriverEnrollment.managerId` is never trusted for
+    authorization, matching the existing `findOwnedEnrollment` pattern); driver via
+    `Vehicle.driverId`.
+  - A replayed offline-buffer fix older than the stored one ACKs `success:true, stale:true` and is
+    neither stored nor broadcast — it must not NACK, or the driver app's `isNackResponse` path
+    re-buffers it forever. A session with no cached state (a redeploy, a reconnect) is re-adopted,
+    not refused.
+  - Disconnect starts a 30s grace period rather than ending the shift immediately (background
+    tracking means frequent socket churn); a 60s sweeper independently recovers vehicles left live
+    by a process that died holding sessions.
+  - Hardened socket handshake auth in the same file: rejects `tokenType: 'refresh'` (previously a
+    refresh token authenticated a socket for its full life) and loads the account to reject
+    `isActive === false` (previously a deactivated account kept a working socket indefinitely).
+  - New REST: `GET /api/vehicle/:vehicleId/live`, `GET /api/manager/vehicles/live` — for a late
+    joiner or a caller not holding a socket.
+  - `docs/CHANGES.md` bug found and fixed en route: `POST /api/enrollments/riders/:riderId`
+    (`createEnrollment`) wrote `{ userId: null, studentId }`, but `loadEnrollmentsByProfile` (backing
+    `GET /api/enrollments/mine`) and `leaveEnrollment` both read/matched on `userId` — every
+    enrolment made through the current app was invisible in "my shuttle". Also: `redeemEnrollmentKey`
+    (the legacy `/redeem` path) upserted without `studentId`, which is `required` — a manager
+    approving that request called `enrollment.save()`, which validates the full document and 400s.
+    Both fixed; live location depends on `/mine` returning the right vehicle, so this had to go first.
+  - `scripts/seed-sandbox.js`: seeds a `RiderProfile`, an ACTIVE `DriverEnrollment`, and two
+    `VehicleLiveLocation` fixtures (one live, one recently-stopped) so Developer Mode has something
+    real to show.
+  - `scripts/start-two-vehicles-per-route.js` rewritten from scratch. It previously wrote straight
+    into the deleted `LiveLocation` collection and flipped `Vehicle.isActive` to mean "currently
+    driving" — that field is manager-edited fleet status, unrelated to duty state, and is counted on
+    the manager dashboard. It is now a real socket client: logs in as seeded drivers over HTTP,
+    connects a socket per vehicle, and emits `driver:location` along each route's stop geometry —
+    exercising the same fan-out a real driver's phone does.
+- **Why:** the feature request — manager assigns vehicle → driver gets an enrollment key → rider
+  redeems it and can see the vehicle/driver → driver presses GO → every enrolled rider and the
+  owning manager see it move live.
+- **Contract impact:** additive. New socket events and REST endpoints; nothing existing changed
+  shape. `driver:location`'s payload gained optional `timestamp`/`accuracy`/`speed`/`heading` fields.
+  Consumers: `driver-app` (broadcasts — not yet updated to use the ack-timeout fix or background
+  mode, tracked separately), `user-app` (needs to re-scope `useRouteTracking` from route rooms to
+  vehicle rooms — not yet done), `web-admin` (tracking page was deleted in `fee5555` and needs
+  rebuilding — not yet done).
+- **Tests:** `tests/unit/socket-rate-limit.test.js`, `tests/unit/live-tracking-helpers.test.js`,
+  `tests/integration/vehicle-live-endpoint.test.js`, `tests/integration/ws/live-tracking.test.js`,
+  `tests/integration/enrollment-rider-path.test.js` (the enrolment-read-bug regression). All new
+  suites pass; verified end-to-end with the rewritten simulator script and a real socket client
+  acting as an enrolled rider — subscribe → `vehicle:status live:true` on GO →
+  `vehicle:update` streaming a real position.
+- **Docs updated:** `docs/modules/REALTIME.md` (full rewrite), `docs/TESTING_GUIDE.md` (Websocket
+  section rewritten — it documented four WS test files that no longer exist — plus new Live
+  Location and enrollment-rider-path rows), `scripts/check-docs.mjs` (REALTIME.md file matcher
+  updated for the new model/util names).
+- **Migration:** none required to deploy this change — `VehicleLiveLocation` is created on first
+  write. `scripts/seed-sandbox.js` must be re-run to get the new fixtures in an existing sandbox DB.
+- **Follow-ups / known issues:**
+  - Driver/user/web-admin app changes not yet done (see Contract impact).
+  - **Found, not fixed — pre-existing, unrelated to this change:** ~17 integration suites fail
+    independently of this work (verified by running them against a tree with none of these changes
+    applied). Root causes span at least two things: (a) several tests mint accounts via
+    `User.create`/`Driver.create` with a raw password, bypassing the `Identity` model current login
+    now requires, so `POST /api/auth/login` 401s and everything downstream fails; (b) other suites
+    look like leftover damage from an earlier theirs-wins merge resolution. Out of scope here; needs
+    its own pass.
+  - `Vehicle.driverId` has no unique index, so `Vehicle.findOne({ driverId })` can silently pick one
+    of several vehicles for a driver assigned to more than one — observed live during sandbox
+    verification. The rider-watch authorization tolerates this (it checks the enrollment's driver
+    against whichever vehicle was subscribed to, not the reverse), but nothing resolves "the"
+    vehicle for a driver by that query alone. A partial unique index would close this; not added
+    here to keep this change scoped to the new feature.
+  - Single server instance only (`render.yaml` has no scaling config, verified) — `live` on the
+    document is cross-process correct, but socket.io room fan-out is not. Scaling to 2+ instances
+    needs `@socket.io/redis-adapter` first.
+
+---
+
 ## 2026-08-13 — Vehicle creation past the first requires super-admin approval
 - **Branch:** main
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, not updated)

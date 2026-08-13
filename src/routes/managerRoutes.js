@@ -25,6 +25,7 @@ const {
   deleteManagerDriver
 } = require('../controllers/managerDriversController');
 const { getManagerAttendance } = require('../controllers/managerAttendanceController');
+const { getManagerFleetLive } = require('../controllers/liveLocationController');
 const {
   getManagerEnrollmentRequests,
   getManagerEnrollmentRequestCount,
@@ -41,6 +42,7 @@ router.use(protect, requireManager);
 
 router.get('/dashboard', getManagerDashboard);
 router.get('/vehicles', getManagerVehicles);
+router.get('/vehicles/live', getManagerFleetLive);
 router.get('/routes', getManagerAssignableRoutes);
 router.get('/requests', getMyRequests);
 router.post('/vehicle-accounts', createManagerVehicle);

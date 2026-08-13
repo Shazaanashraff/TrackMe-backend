@@ -5,15 +5,19 @@ const Vehicle = require('../models/Vehicle');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const RiderProfile = require('../models/RiderProfile');
 const { findHouseholdProfiles } = require('../utils/identityRegistry');
+const { findAccountById } = require('../utils/accountRegistry');
+const { registerLiveTracking } = require('./liveTracking');
+const liveVehicles = require('../utils/liveVehicles');
 
-// Socket layer, reduced to what QR attendance needs.
+// The socket layer carries two features.
 //
-// Live tracking used to live here (driver:start-tracking / driver:location /
-// driver:stop-tracking, manager:join-vehicle, route:get-recent-locations) and was
-// removed with the rest of that feature — it is being reimplemented differently.
-// What remains is the transport QR attendance depends on: an authenticated
-// connection, a per-rider `student:<userId>` room, and `route:<routeId>` rooms,
-// which boardingController emits `attendance:event` into.
+// QR attendance: an authenticated connection, a per-rider `student:<id>` room and
+// `route:<routeId>` rooms, which boardingController emits `attendance:event` into.
+//
+// Live vehicle location: `vehicle:<vehicleId>` rooms, implemented in
+// ./liveTracking.js and registered per connection below. It is kept in its own
+// module because it owns session state and a rate limiter, and mixing that in
+// here is what made the previous version 595 lines.
 
 const SOCKET_DEBUG = process.env.SOCKET_DEBUG === '1';
 const debugLog = (...args) => {
@@ -21,7 +25,7 @@ const debugLog = (...args) => {
 };
 
 const setupSocket = (io) => {
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth.token;
 
     if (!token) {
@@ -32,6 +36,27 @@ const setupSocket = (io) => {
     try {
       debugLog('🔐 Verifying token with JWT_SECRET length:', process.env.JWT_SECRET?.length || 0);
       const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+
+      // A refresh token verifies exactly like an access token, so without this
+      // check it authenticates a socket for its full 7-day life. Only an
+      // explicit 'refresh' is rejected: tokens minted before tokenType existed
+      // carry no claim and must keep working.
+      if (decoded.tokenType === 'refresh') {
+        return next(new Error('Invalid token: refresh tokens cannot open a socket'));
+      }
+
+      // REST's `protect` loads the account and honours isActive; the socket
+      // layer used to trust the claims alone, so a deactivated or deleted
+      // account kept a working connection until its token expired. One lookup
+      // per connection, not per message.
+      const account = await findAccountById(decoded.id, decoded.role, { select: 'isActive' });
+      if (!account?.doc) {
+        return next(new Error('Invalid token: account not found'));
+      }
+      if (account.doc.isActive === false) {
+        return next(new Error('Invalid token: account is deactivated'));
+      }
+
       debugLog('✅ Token verified. User ID:', decoded.id);
       socket.userId = decoded.id;
       socket.userRole = decoded.role;
@@ -40,6 +65,17 @@ const setupSocket = (io) => {
       console.error('❌ Token verification failed:', error.message);
       next(new Error(`Invalid token: ${error.message}`));
     }
+  });
+
+  // One sweeper per server, not per connection: recovers vehicles left live by a
+  // process that died without running its disconnect handlers.
+  liveVehicles.startSweeper(async (vehicleId) => {
+    io.to(`vehicle:${vehicleId}`).emit('vehicle:status', {
+      vehicleId,
+      live: false,
+      reason: 'STALE_TIMEOUT',
+      at: new Date().toISOString()
+    });
   });
 
   io.on('connection', async (socket) => {
@@ -81,6 +117,10 @@ const setupSocket = (io) => {
     } catch (error) {
       console.error('Error on connection:', error);
     }
+
+    // Registered after socket.data exists — the live handlers cache their
+    // session state on it.
+    registerLiveTracking(io, socket);
 
     // Join a route room to receive that route's attendance events.
     socket.on('join-route', async (data, callback) => {
