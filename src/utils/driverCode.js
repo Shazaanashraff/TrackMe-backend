@@ -1,4 +1,10 @@
-// A driver's permanent, human-readable sign-in ID (e.g. TMD-4K7P-9XQ2).
+// A driver's permanent, human-readable sign-in ID (e.g. DRV-4K7P-9XQ2).
+//
+// NOTE: DRV, not TMD. `TMD-` is the prefix of the driver's *enrollment key*
+// (utils/enrollmentKey.js) — the code a passenger types to enrol with this
+// driver, which is a secret and is four blocks, not three. Confusing the two
+// means typing an enrollment key into the driver sign-in field, where it can
+// only ever fail.
 //
 // Unlike the enrollment key this is not a secret. It is printed on a slip and
 // read aloud, so it is stored in plaintext on the driver and only needs to be
