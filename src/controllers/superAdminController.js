@@ -19,6 +19,11 @@ const {
 const { adminSetOrMailReset } = require('../utils/passwordReset');
 const { allRequestedIdsFound } = require('../utils/idValidation');
 const {
+  buildVehicleManagerMap,
+  rollUpBookingStatsByManager,
+  rollUpReviewStatsByManager
+} = require('../utils/vehicleManagerRollup');
+const {
   listOrganizations,
   createOrganization: createOrganizationRecord,
   publicOrganization
@@ -219,6 +224,15 @@ exports.getManagerById = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Manager not found' });
     }
 
+    // Fetch this manager's vehicle ids first (managerId is indexed on
+    // Vehicle) so the Booking/VehicleReview aggregations below can $match
+    // directly on `vehicleId` — an index seek on the compound
+    // { vehicleId, journeyDate, status } / { vehicleId, createdAt } indexes
+    // — instead of $lookup-ing every Booking/VehicleReview document against
+    // `vehicles` and filtering after the join (issue #83).
+    const managerVehicleIds = await Vehicle.find({ managerId: manager._id, isDeleted: false })
+      .distinct('_id');
+
     const [fleetCounts, bookingKpis, reviewKpis] = await Promise.all([
       Vehicle.aggregate([
         { $match: { managerId: manager._id, isDeleted: false } },
@@ -232,21 +246,7 @@ exports.getManagerById = async (req, res, next) => {
         }
       ]),
       Booking.aggregate([
-        {
-          $lookup: {
-            from: 'vehicles',
-            localField: 'vehicleId',
-            foreignField: '_id',
-            as: 'vehicleInfo'
-          }
-        },
-        { $unwind: '$vehicleInfo' },
-        {
-          $match: {
-            isDeleted: false,
-            'vehicleInfo.managerId': manager._id
-          }
-        },
+        { $match: { isDeleted: false, vehicleId: { $in: managerVehicleIds } } },
         {
           $group: {
             _id: null,
@@ -262,21 +262,7 @@ exports.getManagerById = async (req, res, next) => {
         }
       ]),
       VehicleReview.aggregate([
-        {
-          $lookup: {
-            from: 'vehicles',
-            localField: 'vehicleId',
-            foreignField: '_id',
-            as: 'vehicleInfo'
-          }
-        },
-        { $unwind: '$vehicleInfo' },
-        {
-          $match: {
-            isDeleted: false,
-            'vehicleInfo.managerId': manager._id
-          }
-        },
+        { $match: { isDeleted: false, vehicleId: { $in: managerVehicleIds } } },
         {
           $group: {
             _id: null,
@@ -595,7 +581,21 @@ exports.getOperationsOverview = async (req, res, next) => {
 
     const managerIds = managers.map((manager) => manager._id);
 
-    const [fleetByManager, bookingsByManager, reviewsByManager] = await Promise.all([
+    // Fetch the (small, managerId-indexed) list of vehicles belonging to
+    // this page of managers first, so the Booking/VehicleReview
+    // aggregations below can $match directly on `vehicleId` — an index
+    // seek — instead of $lookup-ing every Booking/VehicleReview document
+    // against `vehicles` and filtering after the join (issue #83). Booking
+    // and VehicleReview have no `managerId` field of their own, so the
+    // per-vehicle results are rolled up to per-manager totals in
+    // application code via `vehicleManagerRollup`.
+    const pageVehicles = await Vehicle.find({ isDeleted: false, managerId: { $in: managerIds } })
+      .select('_id managerId')
+      .lean();
+    const vehicleManagerMap = buildVehicleManagerMap(pageVehicles);
+    const pageVehicleIds = pageVehicles.map((vehicle) => vehicle._id);
+
+    const [fleetByManager, bookingsByVehicle, reviewsByVehicle] = await Promise.all([
       Vehicle.aggregate([
         { $match: { isDeleted: false, managerId: { $in: managerIds } } },
         {
@@ -608,24 +608,10 @@ exports.getOperationsOverview = async (req, res, next) => {
         }
       ]),
       Booking.aggregate([
-        {
-          $lookup: {
-            from: 'vehicles',
-            localField: 'vehicleId',
-            foreignField: '_id',
-            as: 'vehicleInfo'
-          }
-        },
-        { $unwind: '$vehicleInfo' },
-        {
-          $match: {
-            isDeleted: false,
-            'vehicleInfo.managerId': { $in: managerIds }
-          }
-        },
+        { $match: { isDeleted: false, vehicleId: { $in: pageVehicleIds } } },
         {
           $group: {
-            _id: '$vehicleInfo.managerId',
+            _id: '$vehicleId',
             totalBookings: { $sum: 1 },
             confirmedBookings: { $sum: { $cond: [{ $eq: ['$status', 'CONFIRMED'] }, 1, 0] } },
             cancelledBookings: { $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] } },
@@ -638,24 +624,10 @@ exports.getOperationsOverview = async (req, res, next) => {
         }
       ]),
       VehicleReview.aggregate([
-        {
-          $lookup: {
-            from: 'vehicles',
-            localField: 'vehicleId',
-            foreignField: '_id',
-            as: 'vehicleInfo'
-          }
-        },
-        { $unwind: '$vehicleInfo' },
-        {
-          $match: {
-            isDeleted: false,
-            'vehicleInfo.managerId': { $in: managerIds }
-          }
-        },
+        { $match: { isDeleted: false, vehicleId: { $in: pageVehicleIds } } },
         {
           $group: {
-            _id: '$vehicleInfo.managerId',
+            _id: '$vehicleId',
             averageRating: { $avg: '$rating' },
             reviewCount: { $sum: 1 }
           }
@@ -664,8 +636,8 @@ exports.getOperationsOverview = async (req, res, next) => {
     ]);
 
     const fleetMap = new Map(fleetByManager.map((item) => [String(item._id), item]));
-    const bookingMap = new Map(bookingsByManager.map((item) => [String(item._id), item]));
-    const reviewMap = new Map(reviewsByManager.map((item) => [String(item._id), item]));
+    const bookingMap = rollUpBookingStatsByManager(bookingsByVehicle, vehicleManagerMap);
+    const reviewMap = rollUpReviewStatsByManager(reviewsByVehicle, vehicleManagerMap);
 
     const data = managers.map((manager) => {
       const fleet = fleetMap.get(String(manager._id)) || {
