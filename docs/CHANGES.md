@@ -23,6 +23,25 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-14 — Active enrolments expose driver and vehicle details
+
+- **Branch:** main
+- **Modules touched:** driver enrolment (cross-client contract)
+- **What changed:** The enrollment driver summary now includes an optional email and expands its
+  vehicle object with vehicle name, type, and service type alongside the existing ID, plate, and
+  route. Driver phone and email are both released only for ACTIVE enrolments; PENDING/key-resolution
+  summaries keep them null.
+- **Why:** The passenger live map needs one useful driver/vehicle identity panel without repeating
+  the driver's name or inventing missing contact data.
+- **Contract impact:** `POST /api/enrollments/redeem` and `GET /api/enrollments/mine` add
+  `driver.email`, `driver.vehicle.vehicleName`, `vehicleType`, and `serviceType`. Additive only.
+  Updated `TrackMe-UserApp/docs/modules/DRIVER_ENROLLMENT.md` and `LIVE_MAP.md`.
+- **Tests:** `tests/integration/driver-enrollment.test.js` covers ACTIVE email/vehicle disclosure and
+  PENDING email withholding.
+- **Docs updated:** this log and the consuming passenger-app module docs.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
 ## 2026-08-14 — Live vehicle location: driver GO → enrolled riders + manager
 
 - **Branch:** main

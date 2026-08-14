@@ -278,6 +278,27 @@ describe('the driver summary a passenger receives', () => {
     expect(mine.body.data[0].driver.vehicle).toMatchObject({ routeId: 'SCH-ROUTED' });
   });
 
+  test('includes vehicle details and an available driver email for an active enrolment', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: false, name: 'Contact Driver' });
+    const email = `contact-driver-${stamp}@test.com`;
+    await Driver.findByIdAndUpdate(driver._id, { $set: { email } });
+    const vehicle = await makeVehicleFor(driver);
+
+    const redeemed = await redeem(key);
+    expect(redeemed.body.data.driver.email).toBe(email);
+    expect(redeemed.body.data.driver.vehicle).toMatchObject({
+      vehicleName: vehicle.vehicleName,
+      numberPlate: vehicle.numberPlate,
+      vehicleId: vehicle.vehicleId,
+      vehicleType: vehicle.vehicleType,
+      serviceType: vehicle.serviceType
+    });
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].driver.email).toBe(email);
+    expect(mine.body.data[0].driver.vehicle.vehicleName).toBe(vehicle.vehicleName);
+  });
+
   test('reports a null routeId when the driver has a vehicle but no route assigned', async () => {
     const { driver, key } = await makeDriver({ isPrivate: false, name: 'Routeless Driver' });
     await makeVehicleFor(driver, { routeId: '' });
@@ -302,15 +323,19 @@ describe('the driver summary a passenger receives', () => {
   // it, submitting the key must not by itself hand out the driver's personal number.
   test('withholds the phone number while the request is still pending', async () => {
     const { driver, key } = await makeDriver({ isPrivate: true, name: 'Private Driver' });
-    await Driver.findByIdAndUpdate(driver._id, { $set: { phoneNumber: '0777654321' } });
+    await Driver.findByIdAndUpdate(driver._id, {
+      $set: { phoneNumber: '0777654321', email: `private-driver-${stamp}@test.com` }
+    });
 
     const redeemed = await redeem(key);
     expect(redeemed.body.data.status).toBe('PENDING');
     expect(redeemed.body.data.driver.phoneNumber).toBeNull();
+    expect(redeemed.body.data.driver.email).toBeNull();
 
     const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
     expect(mine.body.data[0].status).toBe('PENDING');
     expect(mine.body.data[0].driver.phoneNumber).toBeNull();
+    expect(mine.body.data[0].driver.email).toBeNull();
   });
 
   test('releases the phone number once the manager approves', async () => {

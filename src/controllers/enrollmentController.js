@@ -61,19 +61,23 @@ const isThrottled = (userId) => (attemptState(userId)?.count || 0) >= MAX_FAILED
 const resetAttempts = () => failedAttempts.clear();
 
 // includeContact / vehicle.routeId back the "which route does this cover, and who
-// do I call" view. Both stay opt-in: the phone is only released once an enrollment
-// is ACTIVE, so a bare key lookup never leaks a driver's number.
+// do I contact" view. Contact stays opt-in: phone/email are only released once an
+// enrollment is ACTIVE, so a bare key lookup never leaks driver contact details.
 const driverSummary = (driver, organization, vehicle, includeContact = false) => ({
   _id: driver._id,
   name: driver.name,
   driverCode: driver.driverCode || null,
   phoneNumber: includeContact ? driver.phoneNumber || null : null,
+  email: includeContact ? driver.email || null : null,
   organization: publicOrganization(organization),
   vehicle: vehicle
     ? {
         _id: vehicle._id,
         vehicleId: vehicle.vehicleId,
+        vehicleName: vehicle.vehicleName,
         numberPlate: vehicle.numberPlate,
+        vehicleType: vehicle.vehicleType,
+        serviceType: vehicle.serviceType || null,
         routeId: vehicle.routeId || null
       }
     : null
@@ -127,7 +131,7 @@ const loadEnrollmentsByProfile = async (profileIds) => {
 
   const driverIds = enrollments.map((item) => item.driverId);
   const drivers = await Driver.find({ _id: { $in: driverIds } })
-    .select('name driverCode organization isActive phoneNumber')
+    .select('name driverCode organization isActive phoneNumber email')
     .lean();
 
   const orgIds = drivers.map((d) => d.organization).filter(Boolean);
@@ -135,7 +139,7 @@ const loadEnrollmentsByProfile = async (profileIds) => {
     orgIds.length
       ? Organization.find({ _id: { $in: orgIds } }).select('name serviceType').lean()
       : [],
-    Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId numberPlate driverId routeId').lean()
+    Vehicle.find({ driverId: { $in: driverIds } }).select('vehicleId vehicleName numberPlate vehicleType serviceType driverId routeId').lean()
   ]);
 
   const driverById = new Map(drivers.map((d) => [String(d._id), d]));
@@ -196,7 +200,7 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
       driver.organization
         ? Organization.findById(driver.organization).select('name serviceType').lean()
         : null,
-      Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
+      Vehicle.findOne({ driverId: driver._id }).select('vehicleId vehicleName numberPlate vehicleType serviceType routeId').lean(),
       DriverEnrollment.findOne({ studentId: rider._id, driverId: driver._id })
     ]);
 
@@ -366,7 +370,7 @@ async function resolveKeyContext(account, key, riderId) {
 
   const [organization, vehicle, existingEnrollment] = await Promise.all([
     driver.organization ? Organization.findById(driver.organization) : null,
-    Vehicle.findOne({ driverId: driver._id }).select('vehicleId numberPlate routeId').lean(),
+    Vehicle.findOne({ driverId: driver._id }).select('vehicleId vehicleName numberPlate vehicleType serviceType routeId').lean(),
     DriverEnrollment.findOne({ studentId: rider._id, driverId: driver._id })
   ]);
   const organizationProfile = organization
