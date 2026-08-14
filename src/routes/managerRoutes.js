@@ -19,6 +19,7 @@ const {
   createManagerDriver,
   updateManagerDriver,
   resetManagerDriverPassword,
+  getManagerDriverPassword,
   getDriverEnrollmentKey,
   rotateDriverEnrollmentKey,
   revertDriverEnrollmentKey,
@@ -62,6 +63,9 @@ router.post('/drivers', createManagerDriver);
 router.put('/drivers/:driverId', updateManagerDriver);
 router.delete('/drivers/:driverId', deleteManagerDriver);
 router.put('/drivers/:driverId/password', resetManagerDriverPassword);
+// Returns the password in the clear to the owning manager, and audit-logs the
+// read. Off unless DRIVER_PASSWORD_KEY is set — see utils/recoverablePassword.js.
+router.get('/drivers/:driverId/password', getManagerDriverPassword);
 router.get('/drivers/:driverId/enrollment-key', getDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/rotate', rotateDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/revert', revertDriverEnrollmentKey);

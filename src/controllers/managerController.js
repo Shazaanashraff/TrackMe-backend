@@ -28,17 +28,7 @@ const MANAGER_EDITABLE_FIELDS = [
   'maintenanceStatus'
 ];
 
-const writeAuditLog = async ({ managerId, actorId, actorRole, action, entityType, entityId, metadata }) => {
-  await ManagerAuditLog.create({
-    managerId,
-    actorId,
-    actorRole,
-    action,
-    entityType,
-    entityId,
-    metadata
-  });
-};
+const { writeAuditLog } = require('../utils/managerAudit');
 
 const getManagedVehicleByVehicleId = async (managerId, vehicleId) => {
   return Vehicle.findOne({

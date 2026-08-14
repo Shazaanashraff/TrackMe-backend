@@ -121,6 +121,22 @@ flowchart TD
   `driverCode` + password live directly on the `Driver` document. `accountRegistry.isEmailRegistered`
   (a cross-collection scan) exists specifically because a driver-code driver has no `Identity` for
   the identity-scoped `isEmailRegistered` to find.
+- **A driver's password is stored twice, on purpose, and one copy is reversible.** Alongside the
+  bcrypt hash, `Driver.passwordRecoverable` holds an AES-256-GCM ciphertext so the owning manager
+  can read the password back (`GET /api/manager/drivers/:driverId/password`) and relay it to a
+  driver who has no email. **This is the only recoverable credential in the system** and it is a
+  deliberate exception, not a pattern to copy — it is the opposite of the 2026-07-08 decision that
+  stopped super-admins seeing manager passwords. Limits that keep it contained:
+  - **Authentication never reads it.** `comparePassword` still uses the bcrypt hash, so a corrupt,
+    absent, or tampered ciphertext can never let anyone in.
+  - **Off unless `DRIVER_PASSWORD_KEY` is set.** No key ⇒ nothing is written and the endpoint
+    returns `503 PASSWORD_RECOVERY_DISABLED`. Leave it unset in production to disable entirely.
+  - The key lives only in the environment, so a database leak alone does not decrypt it. A leak of
+    **both** is a plaintext credential dump.
+  - `select: false` on the field, so it cannot ride along on an ordinary driver query; the one
+    endpoint allowed to read it opts in explicitly.
+  - Every successful read writes a `DRIVER_PASSWORD_VIEWED` `ManagerAuditLog` entry (which never
+    contains the password itself). See `utils/recoverablePassword.js`.
 - **Avatars are base64 in Mongo, not object storage** — a deliberate, documented trade-off; the
   3 MB body limit is the practical ceiling. See the user-app `AUTH.md`.
 - **Password policy** (8–64, upper/lower/digit/special) lives in `validators.js`, so a client can
@@ -152,6 +168,8 @@ flowchart TD
 | Layer | File | What it locks |
 |---|---|---|
 | Unit | `tests/unit/account-login-filter.test.js` | `loginFilterForRole` — the account/profile precedence multiple rider profiles depend on. |
+| Unit | `tests/unit/recoverable-password.test.js` | AES-GCM round trip, the feature gate, a fresh IV per record, and refusal (not garbage, not a throw) on a wrong key, a tampered tag, an unknown version, or malformed input. |
+| Integration | `tests/integration/manager-driver-password.test.js` | Viewing a driver password: the cross-manager refusal, unauthenticated refusal, the audit entry (and that it never contains the password), 404 for a pre-feature driver, 503 with the feature off, ciphertext absent from ordinary reads, and that storage is encrypted while `password` stays bcrypt. |
 | Integration | `tests/integration/auth.test.js`, `identity-registry.test.js`, `account-registry.test.js` | register→verify→login, unverified 403 `requiresVerification`, refresh rotation, forgot/reset chain, profile + avatar (incl. oversize rejection), role-guard 401/403 matrix, duplicate-email register (`canSignIn`). |
 
 Canonical matrix: [`../TEST_PLAN_INTEGRATION.md`](../TEST_PLAN_INTEGRATION.md) and

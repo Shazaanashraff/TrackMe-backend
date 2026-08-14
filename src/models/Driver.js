@@ -54,6 +54,19 @@ const driverSchema = applyAccountFields(new mongoose.Schema({
     type: Boolean,
     default: false,
     index: true
+  },
+  // AES-GCM ciphertext of the driver's password, so the owning manager can read
+  // it back and relay it to a driver who has no email. See
+  // utils/recoverablePassword.js for why this exists and what it costs.
+  //
+  // `select: false` so it can never ride along on an ordinary driver query —
+  // reading it must be a deliberate `.select('+passwordRecoverable')` on the one
+  // endpoint that is allowed to. Authentication never touches it; the bcrypt
+  // hash in `password` remains the only thing comparePassword checks.
+  passwordRecoverable: {
+    type: String,
+    default: null,
+    select: false
   }
 }, { timestamps: true }), { emailOptional: true });
 

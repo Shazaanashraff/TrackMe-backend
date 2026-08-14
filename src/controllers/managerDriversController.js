@@ -14,6 +14,12 @@ const {
   revertDriverEnrollmentKey
 } = require('../utils/enrollmentKey');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
+const {
+  encryptPassword,
+  decryptPassword,
+  isRecoveryEnabled
+} = require('../utils/recoverablePassword');
+const { writeAuditLog } = require('../utils/managerAudit');
 const { formatPlate, plateMatches } = require('../utils/numberPlate');
 const { plateConflict } = require('../utils/vehiclePlateGuard');
 const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
@@ -326,6 +332,9 @@ exports.createManagerDriver = async (req, res, next) => {
       ...(normalizedEmail ? { email: normalizedEmail } : {}),
       driverCode: await generateUniqueDriverCode(Driver),
       password,
+      // Readable copy for the manager's "view password" action. Null when the
+      // feature is off — see utils/recoverablePassword.js.
+      passwordRecoverable: encryptPassword(password),
       organization: org.organizationId,
       phoneNumber: normalizedPhone,
       nicNumber: String(nicNumber || '').trim(),
@@ -481,9 +490,68 @@ exports.resetManagerDriverPassword = async (req, res, next) => {
     }
 
     driver.password = password;
+    // Keep the readable copy in step with the hash. Without this a reset would
+    // leave the manager viewing a password that no longer signs anyone in.
+    driver.passwordRecoverable = encryptPassword(password);
     await driver.save();
 
     return res.status(200).json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @route GET /api/manager/drivers/:driverId/password
+//
+// Returns a driver's password in the clear to the manager who owns them. This
+// is the deliberate exception to "credentials are unrecoverable" — see
+// utils/recoverablePassword.js for the reasoning and the limits.
+//
+// Every read is audit-logged. That is the point: the trail is what makes an
+// otherwise invisible capability reviewable after the fact.
+exports.getManagerDriverPassword = async (req, res, next) => {
+  try {
+    if (!isRecoveryEnabled()) {
+      return res.status(503).json({
+        success: false,
+        code: 'PASSWORD_RECOVERY_DISABLED',
+        message: 'Viewing driver passwords is not enabled on this server.'
+      });
+    }
+
+    // findOwnedDriver is the authorization boundary — a manager can only ever
+    // reach their own drivers, exactly as with every other handler here.
+    const driver = await findOwnedDriver(req.user._id, req.params.driverId);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found for this manager' });
+    }
+
+    // Deliberate second query: passwordRecoverable is select:false so it cannot
+    // ride along on an ordinary read.
+    const withSecret = await Driver.findById(driver._id).select('+passwordRecoverable').lean();
+    const password = decryptPassword(withSecret?.passwordRecoverable);
+
+    if (!password) {
+      // A driver created before this feature, or whose row was written under a
+      // different key. Nothing is recoverable; a reset is the way forward.
+      return res.status(404).json({
+        success: false,
+        code: 'PASSWORD_NOT_RECOVERABLE',
+        message: 'No stored password for this driver. Reset it to set a new one.'
+      });
+    }
+
+    await writeAuditLog({
+      managerId: req.user._id,
+      actorId: req.user._id,
+      actorRole: 'admin',
+      action: 'DRIVER_PASSWORD_VIEWED',
+      entityType: 'DRIVER',
+      entityId: String(driver._id),
+      metadata: { driverCode: driver.driverCode || null }
+    });
+
+    return res.status(200).json({ success: true, data: { password } });
   } catch (error) {
     next(error);
   }
