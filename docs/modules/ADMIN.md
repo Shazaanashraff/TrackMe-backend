@@ -11,6 +11,12 @@ of your next change here — that is the change protocol, not optional extra wor
 
 `src/routes/managerRoutes.js`, `src/routes/superAdminRoutes.js`, `src/controllers/managerController.js`, `src/controllers/superAdminController.js`, `src/models/ManagerAuditLog.js`, `src/models/ManagerBusRequest.js`
 
+> `getOperationsOverview`/`getManagerById`'s Booking/VehicleReview KPI aggregations no longer
+> `$lookup` against `vehicles` — they `$match` directly on the already-indexed `vehicleId`
+> (fetched via a fast, `managerId`-indexed `Vehicle` query first) and roll the per-vehicle numbers
+> up to per-manager totals with `src/utils/vehicleManagerRollup.js` (issue #83). Response shape is
+> unchanged; this is an internal query-strategy fix only.
+
 > `src/controllers/managerEnrollmentsController.js`'s passenger payload (`requestSummary`) also
 > belongs in this doc once written — it now surfaces `passenger.account` (the owning identity's
 > email/phone) for a managed rider profile, since that profile has no email of its own. See
