@@ -81,13 +81,18 @@ const setupSocket = (io) => {
   io.on('connection', async (socket) => {
     debugLog(`✅ Client connected: ${socket.id} (User: ${socket.userId})`);
 
+    // Register message handlers synchronously. A client can emit as soon as
+    // its transport reports `connect`; waiting for the household lookups below
+    // silently drops an immediate vehicle:subscribe before its listener exists.
+    socket.data = {
+      userId: socket.userId,
+      userRole: socket.userRole,
+      connectedAt: new Date(),
+      activeRoute: null
+    };
+    registerLiveTracking(io, socket);
+
     try {
-      socket.data = {
-        userId: socket.userId,
-        userRole: socket.userRole,
-        connectedAt: new Date(),
-        activeRoute: null
-      };
 
       // Every authenticated rider auto-joins a notification room per profile in
       // their household, not just their own connected one — an attendance event
@@ -117,10 +122,6 @@ const setupSocket = (io) => {
     } catch (error) {
       console.error('Error on connection:', error);
     }
-
-    // Registered after socket.data exists — the live handlers cache their
-    // session state on it.
-    registerLiveTracking(io, socket);
 
     // Join a route room to receive that route's attendance events.
     socket.on('join-route', async (data, callback) => {

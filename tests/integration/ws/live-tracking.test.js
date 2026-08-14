@@ -49,6 +49,27 @@ function connect(token) {
 const emit = (client, event, payload) =>
   new Promise((resolve) => client.emit(event, payload, resolve));
 
+const connectAndEmitImmediately = (token, event, payload) =>
+  new Promise((resolve, reject) => {
+    const c = ioClient(`http://localhost:${port}`, {
+      auth: { token },
+      transports: ['websocket'],
+      forceNew: true
+    });
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for ${event} acknowledgement`)), 5000);
+    c.on('connect', () => {
+      c.emit(event, payload, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+    c.on('connect_error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    clients.push(c);
+  });
+
 const nextEvent = (client, event, timeoutMs = 5000) =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out waiting for ${event}`)), timeoutMs);
@@ -255,6 +276,16 @@ describe('driver broadcasting', () => {
 });
 
 describe('who may watch', () => {
+  it('handles a rider subscription emitted immediately on transport connect', async () => {
+    const res = await connectAndEmitImmediately(rider.token, 'vehicle:subscribe', {
+      vehicleId: vehicle.vehicleId,
+      riderId: String(riderProfile._id)
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.data.vehicleId).toBe(vehicle.vehicleId);
+  });
+
   it('refuses a rider who is not enrolled with that vehicle', async () => {
     const strangerClient = await connect(strangerRider.token);
     const res = await emit(strangerClient, 'vehicle:subscribe', {
