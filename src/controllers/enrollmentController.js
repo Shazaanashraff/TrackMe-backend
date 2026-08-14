@@ -395,6 +395,12 @@ exports.resolveEnrollmentKey = async (req, res, next) => {
         driver: driverSummary(context.driver, context.organization, context.vehicle, false),
         schemaVersion: config.schemaVersion,
         fields: config.fields.filter((field) => field.enabled),
+        // createEnrollment refuses without a valid contact phone, but the phone
+        // is not one of the organization's `fields` — so a client rendering
+        // only `fields` had no way to collect it and no way to know it was
+        // missing. It hit a 400 it could not act on.
+        contactPhone: effectiveContactPhone(context.rider, req.user),
+        contactPhoneRequired: !validContactPhone(effectiveContactPhone(context.rider, req.user)),
         existingValues: mapValuesToObject(context.organizationProfile?.values),
         needsUpdate: Boolean(context.organizationProfile?.needsUpdate),
         existingEnrollment: context.existingEnrollment
@@ -410,9 +416,28 @@ async function createEnrollment(req, { legacy = false } = {}) {
   const context = await resolveKeyContext(req.user, req.body?.key, riderId);
   if (context.error) return context;
 
+  // A caller may supply the contact phone with the enrolment itself, which is
+  // the only way an account that has never set one can get past this check
+  // without a separate profile-edit round trip.
+  const submittedPhone = String(req.body?.contactPhone ?? req.body?.guardianPhone ?? '').trim();
+  if (submittedPhone) {
+    if (!validContactPhone(submittedPhone)) {
+      return { error: { status: 400, message: 'Enter a valid contact phone number', errors: { contactPhone: 'Invalid' } } };
+    }
+    context.rider.guardianPhoneOverride = submittedPhone;
+    await context.rider.save();
+  }
+
   if (!validContactPhone(effectiveContactPhone(context.rider, req.user))) {
     const role = riderRoleForResolvedService(context.organization?.serviceType);
-    return { error: { status: 400, message: `Add a valid contact phone number before enrolling this ${role}`, errors: { guardianPhone: 'Required' } } };
+    return {
+      error: {
+        status: 400,
+        message: `Add a valid contact phone number before enrolling this ${role}`,
+        code: 'CONTACT_PHONE_REQUIRED',
+        errors: { contactPhone: 'Required', guardianPhone: 'Required' }
+      }
+    };
   }
 
   const pickupPlaceId = req.body?.pickupPlaceId ?? context.rider.defaultPickupPlaceId ?? null;
