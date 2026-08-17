@@ -91,14 +91,29 @@ exports.scanBoarding = async (req, res, next) => {
     if (type && !BoardingEvent.TYPES.includes(type)) {
       return res.status(400).json({ success: false, message: 'type must be BOARD or ALIGHT' });
     }
+
+    const lastForTrip = await BoardingEvent.findOne({ studentId: student._id, tripId })
+      .sort({ timestamp: -1 });
     if (!type) {
-      const lastForTrip = await BoardingEvent.findOne({ studentId: student._id, tripId })
-        .sort({ timestamp: -1 });
       type = lastForTrip?.type === 'BOARD' ? 'ALIGHT' : 'BOARD';
     }
 
+    // A real state transition always alternates BOARD/ALIGHT within an open trip —
+    // two of the same type in a row can only be a duplicate scan (a flaky reader, a
+    // re-tap, an offline-queue resend arriving late), however far apart in time, so
+    // this is checked independently of the short debounce window below (issue #59).
+    if (lastForTrip && lastForTrip.type === type) {
+      return res.status(200).json({
+        success: true,
+        debounced: true,
+        data: { ...eventPayload(lastForTrip), studentName: student.fullName, riderCode: student.riderCode }
+      });
+    }
+
     // Debounce: a duplicate same-type scan for this rider+vehicle within the window
-    // is an idempotent replay, not a new attendance record.
+    // is an idempotent replay, not a new attendance record. Kept as a second,
+    // vehicle-scoped check independent of tripId (e.g. a caller-supplied tripId that
+    // differs between the two scans).
     const debounceSince = new Date(Date.now() - DEBOUNCE_SECONDS * 1000);
     const recentDuplicate = await BoardingEvent.findOne({
       studentId: student._id,

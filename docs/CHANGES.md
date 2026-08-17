@@ -23,6 +23,41 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-17 — Boarding scan dedups a same-type repeat for the whole open trip
+
+- **Branch:** issue/59-boarding-event-dedup
+- **Modules touched:** QR attendance (docs/modules/QR_ATTENDANCE.md)
+- **What changed:** `POST /api/driver/boarding/scan` now treats a second same-type scan (BOARD
+  after BOARD, or ALIGHT after ALIGHT) for the same open trip as a duplicate regardless of how
+  much time has passed, not just within the existing short debounce window. A real re-boarding —
+  BOARD, then a genuine ALIGHT, then BOARD again — is unaffected; only two of the same type in a
+  row for one trip (which can never be legitimate, since a real state transition always
+  alternates) is caught.
+- **Why:** issue #59 — a flaky/duplicate QR scan outside the debounce window (default 30s) was
+  previously recorded as a brand-new BoardingEvent, double-counting into
+  `managerAttendanceController.getManagerAttendance`'s per-student `boardCount`/`alightCount`
+  rollup with no unique index or dedup guarding it.
+- **Contract impact:** none — `debounced: true` on the scan response already existed for the
+  time-window case; this just widens when it fires. No new field, status code, or shape.
+- **Tests:** new `tests/integration/boarding-scan-trip-dedup.test.js` (see its header comment —
+  it builds its own RiderProfile/DriverEnrollment fixture rather than reusing
+  `qr-attendance.test.js`'s `createRider`/`freshTokenForRider`, which only provision a `User`
+  account and don't work against the current `signQr`/`verifyQr`, which expect a `RiderProfile`).
+  Updated one boundary case in `qr-attendance.test.js` to match the corrected behavior; that
+  whole file's QR-scan-related tests are pre-existing broken/unrunnable in this environment for
+  an unrelated reason — see the follow-up note below and the comment on issue #59.
+- **Docs updated:** docs/TESTING_GUIDE.md rows added/updated.
+- **Migration:** none.
+- **Follow-ups / known issues:** discovered that `tests/integration/qr-attendance.test.js`'s
+  `createRider`/`freshTokenForRider` fixture signs QR tokens for a `User` document, but
+  `signQr`/`verifyQr` (and every real caller) operate on `RiderProfile` — a separate collection
+  since the rider-profile split. Every scan-related test in that file fails identically on
+  unmodified `main` with no changes at all (confirmed before starting this fix), independent of
+  this change. Likely undetected until now because `.github/workflows/ci.yml` only runs `npm
+  test` (the smoke suite) — `npm run test:integration` has apparently never run in CI. Flagged as
+  a separate concern on issue #59 rather than fixed here (out of this issue's scope); worth its
+  own issue given the whole integration suite may carry more of this kind of undetected drift.
+
 ## 2026-08-17 — assignVehiclesToManager enforces manager scope
 
 - **Branch:** issue/80-assign-vehicles-scope-check
