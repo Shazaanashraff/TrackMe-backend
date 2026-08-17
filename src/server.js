@@ -7,6 +7,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const setupSocket = require('./socket/socketHandler');
 const { errorHandler } = require('./middleware/errorHandler');
+const { authLimiter, apiLimiter } = require('./middleware/rateLimiters');
 const ensureSuperAdminAccount = require('./utils/ensureSuperAdminAccount');
 
 // Route imports
@@ -35,10 +36,42 @@ const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 const app = express();
 const server = http.createServer(app);
 
+// '*' (dev default) allows every origin; a comma-separated list is parsed into
+// an allowlist checked against the request's actual Origin header. Both checks
+// below share this parsed list so the two layers can't drift.
+const rawClientOrigins = process.env.CLIENT_ORIGINS || '*';
+const allowAllOrigins = rawClientOrigins.trim() === '*';
+const allowedOrigins = allowAllOrigins
+  ? null
+  : rawClientOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+const isOriginAllowed = (origin) =>
+  allowAllOrigins || !origin || allowedOrigins.includes(origin);
+
+// No Origin header (server-to-server, curl, native apps) is let through either
+// way — only browser-sent cross-origin requests carry Origin, and this
+// allowlist exists to constrain those.
+
+// Express: reject by omitting the CORS header (callback(null, false)) rather
+// than erroring — the request still completes normally for non-browser
+// callers (health checks, curl, native apps); a browser just can't read the
+// response cross-origin, which is the actual enforcement point (SOP).
+const expressCorsOriginCheck = (origin, callback) => callback(null, isOriginAllowed(origin));
+
+// Socket.IO: reject by erroring the handshake outright — there's no
+// "let it through without headers" equivalent for a persistent connection.
+const socketCorsOriginCheck = (origin, callback) => {
+  if (isOriginAllowed(origin)) return callback(null, true);
+  return callback(new Error(`Origin not allowed: ${origin}`));
+};
+
+// Render sits behind a reverse proxy — without this every request appears to
+// come from the same IP, which breaks IP-based rate limiting below.
+app.set('trust proxy', 1);
+
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGINS || '*',
+    origin: socketCorsOriginCheck,
     methods: ['GET', 'POST']
   }
 });
@@ -74,11 +107,17 @@ const bootstrap = async () => {
 app.set('io', io);
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: expressCorsOriginCheck }));
 // 3 MB accommodates base64 profile-picture data URLs (capped to ~2 MB decoded in
 // authController.updateAvatar); every other endpoint sends small JSON well under this.
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// IP-based rate limiting (complements the per-identity limiters already inside
+// authRoutes). apiLimiter covers everything; authLimiter adds a tighter ceiling
+// specifically on the auth surface.
+app.use('/api/', apiLimiter);
+app.use('/api/auth', authLimiter);
 
 // API Routes
 app.use('/api/auth', authRoutes);

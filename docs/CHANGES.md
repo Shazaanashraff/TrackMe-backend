@@ -23,6 +23,47 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-17 — Render deploy hardening: IP rate limiting, CORS allowlist, crash-loop fix
+- **Branch:** main
+- **Modules touched:** none of `docs/modules/` — this is deploy/infra hardening, not a feature
+- **What changed:**
+  - New `src/middleware/rateLimiters.js` (`express-rate-limit`): IP-keyed `authLimiter` on
+    `/api/auth/*` and a looser `apiLimiter` on `/api/*`, complementing the existing per-identity
+    limiters in `emailRateLimiter.js` (which don't stop one client hammering many different
+    accounts). Requires `app.set('trust proxy', 1)` (added in `server.js`) — Render sits behind a
+    proxy, so without it every request looks like the same IP.
+  - `CLIENT_ORIGINS` is now parsed into an actual allowlist instead of used as a raw string.
+    Express CORS rejects a disallowed origin by omitting the header (`callback(null, false)`) so
+    non-browser callers (health checks, curl, native apps) aren't blocked server-side; Socket.IO
+    CORS rejects by erroring the handshake outright (no "no headers" equivalent for a persistent
+    connection).
+  - `src/config/db.js` no longer `process.exit(1)`s on a connection error — it now propagates to
+    `server.js`'s `bootstrap()`, which already logs and continues. A transient Atlas blip
+    shouldn't crash-loop the container.
+  - `render.yaml`: fixed the `healthCheck` block (Render's real key is `healthCheckPath`, a flat
+    string — the old nested `{path, interval, timeout}` wasn't valid schema), corrected a
+    misleading comment claiming health checks prevent idle spin-down (they only run during
+    deploys), added `region: singapore`, changed `buildCommand` to `npm ci`.
+  - Added `"engines": {"node": "20.x"}` to `package.json`.
+- **Why:** pre-deploy audit before putting the backend on Render — none of this was in place, all
+  of it was live before any traffic existed.
+- **Contract impact:** none — no endpoint/socket payload shape changed. A disallowed origin now
+  gets a response with no CORS header instead of one with a wildcard header; a client past the
+  rate-limit ceiling gets `429 { success: false, message }` instead of no limit at all.
+- **Tests:** new `tests/integration/auth-ip-rate-limit.test.js` (429 past the IP ceiling, resets
+  after the window) and `tests/integration/cors-allowlist.test.js` (allowed origin gets the
+  header, disallowed origin doesn't but the request still completes, no-Origin requests pass
+  through). Verified locally against an ephemeral `mongodb-memory-server` instance — this sandbox
+  has no local MongoDB and hit the same connection-pool teardown flakiness the pre-existing
+  `auth-rate-limit.test.js` also hits on this Windows environment; the actual assertions passed.
+- **Docs updated:** this entry only.
+- **Migration:** none.
+- **Follow-ups / known issues:** the free Render tier still sleeps after ~15 min idle (50s+ cold
+  start), noted in `render.yaml`'s comments — not addressed here, it's a plan-tier tradeoff, not
+  a code fix.
+
+---
+
 ## 2026-08-17 — Boarding scan dedups a same-type repeat for the whole open trip
 
 - **Branch:** issue/59-boarding-event-dedup
