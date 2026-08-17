@@ -467,6 +467,33 @@ exports.resetManagerPassword = async (req, res, next) => {
   }
 };
 
+// A vehicle assigned outside the manager's own scope (province for a PUBLIC
+// manager, organization for a SCHOOL/UNIVERSITY/OFFICE manager) would slip out
+// from under the manager who actually operates that area. A vehicle with no
+// scope signal yet — no route assigned, or no organization — has nothing to
+// conflict with, so it passes through; the mismatch only exists once there's
+// an actual value on each side to compare.
+const findScopeMismatchedVehicles = async (manager, vehicles) => {
+  if (manager.serviceType === 'PUBLIC') {
+    if (!manager.province) return [];
+    const routeIds = [...new Set(vehicles.map((v) => v.routeId).filter(Boolean))];
+    if (routeIds.length === 0) return [];
+
+    const routes = await Route.find({ routeId: { $in: routeIds } }).select('routeId province');
+    const provinceByRouteId = new Map(routes.map((r) => [r.routeId, r.province]));
+
+    return vehicles.filter((v) => {
+      const routeProvince = provinceByRouteId.get(v.routeId);
+      return !!routeProvince && routeProvince !== manager.province;
+    });
+  }
+
+  if (!manager.organization) return [];
+  return vehicles.filter(
+    (v) => v.organization && v.organization.toString() !== manager.organization.toString()
+  );
+};
+
 exports.assignVehiclesToManager = async (req, res, next) => {
   try {
     const { vehicleIds } = req.body;
@@ -481,6 +508,17 @@ exports.assignVehiclesToManager = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'One or more vehicle IDs are invalid'
+      });
+    }
+
+    const mismatched = await findScopeMismatchedVehicles(manager, vehicles);
+    if (mismatched.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: manager.serviceType === 'PUBLIC'
+          ? "One or more vehicles run a route outside this manager's province"
+          : 'One or more vehicles belong to a different organization than this manager',
+        data: { vehicleIds: mismatched.map((v) => v._id) }
       });
     }
 
