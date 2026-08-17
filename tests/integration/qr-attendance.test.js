@@ -377,7 +377,12 @@ describe('POST /api/driver/boarding/scan', () => {
       expect(second.body.data.eventId).toBe(first.body.data.eventId);
     });
 
-    it('does not debounce a prior same-type event timestamped just outside the window', async () => {
+    // A same-type repeat outside the debounce window used to slip through as a
+    // brand-new event (double-counting a flaky/duplicate scan into
+    // getManagerAttendance's boardCount/alightCount rollup, issue #59). A real
+    // state transition always alternates BOARD/ALIGHT within an open trip, so this
+    // is now caught by the trip-scoped same-type check regardless of elapsed time.
+    it('still catches a same-type repeat for the same open trip, even well outside the debounce window', async () => {
       await clearDebounceWindow();
       const token1 = await freshTokenForRider();
       const first = await request(app)
@@ -386,7 +391,7 @@ describe('POST /api/driver/boarding/scan', () => {
         .send({ token: token1, vehicleId: vehicle.vehicleId, type: 'BOARD' });
       expect(first.status).toBe(201);
 
-      // Just outside the window: 1s older than the debounce cutoff.
+      // Well outside the window: 1s older than the debounce cutoff.
       const justOutside = new Date(Date.now() - DEBOUNCE_SECONDS * 1000 - 1000);
       await BoardingEvent.updateOne(
         { _id: first.body.data.eventId },
@@ -399,14 +404,51 @@ describe('POST /api/driver/boarding/scan', () => {
         .set('Authorization', `Bearer ${driverToken}`)
         .send({ token: token2, vehicleId: vehicle.vehicleId, type: 'BOARD' });
 
-      expect(second.status).toBe(201);
-      expect(second.body.debounced).toBe(false);
-      expect(second.body.data.eventId).not.toBe(first.body.data.eventId);
+      expect(second.status).toBe(200);
+      expect(second.body.debounced).toBe(true);
+      expect(second.body.data.eventId).toBe(first.body.data.eventId);
 
       const count = await BoardingEvent.countDocuments({
         studentId: riderId, vehicleId: vehicle.vehicleId, type: 'BOARD'
       });
-      expect(count).toBe(2);
+      expect(count).toBe(1);
+    });
+
+    it('allows a genuine re-boarding once an ALIGHT closes the previous one, however long after', async () => {
+      await clearDebounceWindow();
+
+      const tokenBoard1 = await freshTokenForRider();
+      const board1 = await request(app)
+        .post('/api/driver/boarding/scan')
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ token: tokenBoard1, vehicleId: vehicle.vehicleId, type: 'BOARD' });
+      expect(board1.status).toBe(201);
+
+      // Backdate both the BOARD and the upcoming ALIGHT well past the debounce
+      // window so only the trip-scoped alternation check is exercised.
+      const longAgo = new Date(Date.now() - DEBOUNCE_SECONDS * 1000 - 5000);
+      await BoardingEvent.updateOne({ _id: board1.body.data.eventId }, { $set: { timestamp: longAgo } });
+
+      const tokenAlight = await freshTokenForRider();
+      const alight = await request(app)
+        .post('/api/driver/boarding/scan')
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ token: tokenAlight, vehicleId: vehicle.vehicleId, type: 'ALIGHT' });
+      expect(alight.status).toBe(201);
+      await BoardingEvent.updateOne({ _id: alight.body.data.eventId }, { $set: { timestamp: longAgo } });
+
+      const tokenBoard2 = await freshTokenForRider();
+      const board2 = await request(app)
+        .post('/api/driver/boarding/scan')
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ token: tokenBoard2, vehicleId: vehicle.vehicleId, type: 'BOARD' });
+
+      expect(board2.status).toBe(201);
+      expect(board2.body.debounced).toBe(false);
+      expect(board2.body.data.eventId).not.toBe(board1.body.data.eventId);
+
+      const count = await BoardingEvent.countDocuments({ studentId: riderId, vehicleId: vehicle.vehicleId });
+      expect(count).toBe(3);
     });
   });
 

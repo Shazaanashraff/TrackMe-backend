@@ -76,11 +76,17 @@ Returns the driver's currently-assigned bus's roster for the trip:
 
 ## Data model (BoardingEvent)
 
-One row per scan: `{ studentId(ref User), busId, routeId, driverId(ref Driver), type: BOARD|ALIGHT,
-timestamp, lat?, lng?, tripId, source:'QR' }`. No formal "trip" entity yet — `tripId` defaults to
-`${busId}#YYYY-MM-DD` so BOARD/ALIGHT toggling has a stable per-bus-per-day scope. Indexes support
-latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the roster aggregation
-(match `tripId`, sort `timestamp desc`, group by `studentId` → latest type).
+One row per scan: `{ studentId(ref RiderProfile), vehicleId, routeId, driverId(ref Driver), type:
+BOARD|ALIGHT, timestamp, lat?, lng?, tripId, source:'QR' }`. No formal "trip" entity yet — `tripId`
+defaults to `${vehicleId}#YYYY-MM-DD` so BOARD/ALIGHT toggling has a stable per-vehicle-per-day
+scope. Indexes support latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the
+roster aggregation (match `tripId`, sort `timestamp desc`, group by `studentId` → latest type).
+
+**Duplicate-scan dedup** (issue #59): two same-type events in a row for the same student+trip is
+never legitimate — a real re-boarding is always preceded by an ALIGHT — so `scanBoarding` treats a
+same-type repeat as a duplicate (`debounced: true`, no new row) regardless of elapsed time, on top
+of the separate short (`QR_SCAN_DEBOUNCE_SECONDS`, default 30s) vehicle-scoped debounce for a
+same-type resend within that window.
 
 ## Authorization & security rules
 
