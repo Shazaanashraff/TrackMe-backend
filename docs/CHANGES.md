@@ -23,6 +23,29 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-17 — assignVehiclesToManager enforces manager scope
+
+- **Branch:** issue/80-assign-vehicles-scope-check
+- **Modules touched:** admin (docs/modules/ADMIN.md — still unwritten placeholder, no update needed)
+- **What changed:** `PATCH /api/super-admin/managers/:managerId/assign-vehicles` now rejects (409)
+  reassigning a vehicle outside the target manager's scope: for a PUBLIC manager, a vehicle whose
+  current route sits in a different province; for a SCHOOL/UNIVERSITY/OFFICE manager, a vehicle
+  belonging to a different organization. A vehicle with nothing to compare (no route yet, or either
+  side missing province/organization) still passes through.
+- **Why:** issue #80 — this endpoint previously mass-reassigned vehicles with `Vehicle.updateMany`
+  and no scope check at all, so a vehicle could silently land under a manager who doesn't actually
+  operate its area.
+- **Contract impact:** new 409 response on this endpoint. Checked TrackMe-WebAdmin — the hook
+  (`useAssignVehiclesToManager`) exists but has no UI caller yet, so nothing there needed updating.
+- **Tests:** `tests/integration/assign-vehicles-scope.test.js` (new) — province mismatch/match,
+  no-route-yet passthrough, organization mismatch/match.
+- **Docs updated:** docs/TESTING_GUIDE.md row added.
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #49 (manager PUBLIC route creation) needs a product decision
+  before it can be fixed — commented on the issue rather than guessing; its premise (a "scoped
+  private/custom-route workflow" to route manager creation through) was removed from the codebase
+  in `6680eac`/`f4bfff0` after the issue was filed.
+
 ## 2026-08-14 — Active enrolments expose driver and vehicle details
 
 - **Branch:** main
