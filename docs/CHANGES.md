@@ -23,6 +23,35 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-17 — Clear all dependency vulnerabilities (0 remaining)
+- **Branch:** main
+- **Modules touched:** none — dependency maintenance, not a feature
+- **What changed:**
+  - `npm audit fix` (no `--force`) closed the mongoose, lodash, qs, and ws-family advisories via
+    same-major-version patch bumps (mongoose 8.21.0 → 8.24.3).
+  - Removed `nodemailer` entirely — grepped the whole repo and confirmed it has zero remaining
+    call sites; email sending (verification, password reset, manager invites) fully migrated to
+    `resend` already. Carrying a vulnerable, unused dependency (8 CVEs, including SMTP command
+    injection) forward made no sense; removing it beats upgrading across a 6→9 major it isn't
+    even using.
+  - Added an `overrides.uuid: ^11.1.1` in `package.json` to force the transitive `uuid@9.0.1`
+    pulled in by `google-auth-library` → `gaxios` past a moderate buffer-bounds advisory that
+    `npm audit fix` couldn't reach on its own (nested transitive dep).
+- **Why:** pre-launch security audit.
+- **Contract impact:** none.
+- **Tests:** none new — re-ran the full auth/email/rate-limit/CORS suite plus all unit tests
+  against the upgraded mongoose (via an ephemeral `mongodb-memory-server`, same caveat as the
+  2026-08-17 hardening entry re: this sandbox's Windows connection-pool flakiness on DB-touching
+  suites — no non-timeout assertion failures, i.e. no regression).
+- **Docs updated:** this entry only.
+- **Follow-ups / known issues:** `npm audit` (dev dependencies included) still flags vite/esbuild/
+  vitest — dev-tooling only (the esbuild dev-server-accepts-any-origin issue never ships in the
+  built app), and the available fix is a major Vite version bump. Deliberately not forced here to
+  avoid risking the already-verified Vercel production build; revisit separately if desired.
+  `npm audit --production` is clean (0 vulnerabilities).
+
+---
+
 ## 2026-08-17 — Render deploy hardening: IP rate limiting, CORS allowlist, crash-loop fix
 - **Branch:** main
 - **Modules touched:** none of `docs/modules/` — this is deploy/infra hardening, not a feature
