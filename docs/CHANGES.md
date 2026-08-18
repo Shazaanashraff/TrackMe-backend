@@ -23,6 +23,34 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-18 — Super-admin read-endpoint coverage (issue #70)
+- **Branch:** issue/70-superadmin-reads-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/superadmin-reads.test.js`, covering the five super-admin
+    read endpoints that had zero content-correctness coverage: `getSuperAdminDashboard`,
+    `getManagerById`, `getManagerVehicleDetails` (GET /operations/:managerId),
+    `getOperationsOverview` (GET /operations, per-manager content — pagination was
+    already covered separately), and `getPendingVehicleRequests` (GET
+    /vehicle-requests — status/type/managerId filtering).
+  - Seeds a known dataset (2 managers, 3 vehicles, 2 bookings, 1 review, 3 vehicle
+    requests) and asserts the KPI aggregation math against it, plus the 404 branches on
+    the two `:managerId` endpoints and the default-PENDING / ALL / type / managerId
+    filter behavior on the vehicle-requests list.
+- **Why:** `getSuperAdminDashboard` and the two `:managerId` endpoints had no test at
+  all; `getOperationsOverview` and `getPendingVehicleRequests` only had pagination
+  coverage, not proof the aggregated numbers or filters are actually correct.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/superadmin-reads.test.js` (10 new cases, all
+  passing standalone and alongside the other `superadmin-*.test.js` files).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row for the five endpoints.
+- **Migration:** none.
+- **Follow-ups / known issues:** `tests/integration/superadmin-operations-pagination.test.js`
+  fails in this sandbox when run in the same process as other suites (pre-existing on
+  `main`, unrelated to this change — see PR description).
+
+---
+
 ## 2026-08-17 — Clear all dependency vulnerabilities (0 remaining)
 - **Branch:** main
 - **Modules touched:** none — dependency maintenance, not a feature
