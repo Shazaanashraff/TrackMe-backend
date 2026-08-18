@@ -54,11 +54,32 @@ exports.getManagerAttendance = async (req, res, next) => {
       .map((entry) => ({ ...entry, studentName: nameById.get(entry.studentId) || 'Unknown' }))
       .sort((a, b) => (b.boardCount + b.alightCount) - (a.boardCount + a.alightCount));
 
-    return res.status(200).json({
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full rollup, same as before (same convention as superAdminController's
+    // getOperationsOverview / getPendingVehicleRequests). The rollup is built
+    // in-memory (one entry per student, not a Mongo cursor), so pagination slices
+    // the already-sorted array rather than adding skip/limit to a query.
+    const MAX_LIMIT = 100;
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const pageNumber = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNumber = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
+
+    const response = {
       success: true,
-      data: rollup,
+      data: paginated
+        ? rollup.slice((pageNumber - 1) * limitNumber, (pageNumber - 1) * limitNumber + limitNumber)
+        : rollup,
       range: { from: from.toISOString(), to: to.toISOString() }
-    });
+    };
+    if (paginated) {
+      response.pagination = {
+        page: pageNumber,
+        limit: limitNumber,
+        total: rollup.length,
+        pages: Math.ceil(rollup.length / limitNumber)
+      };
+    }
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }

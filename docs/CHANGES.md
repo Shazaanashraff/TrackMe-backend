@@ -23,6 +23,44 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-18 — Opt-in pagination on getMyRequests / getManagerAttendance (issue #64)
+- **Branch:** issue/64-manager-list-pagination
+- **Modules touched:** buses (docs/modules/BUSES.md), QR attendance (docs/modules/QR_ATTENDANCE.md)
+- **What changed:**
+  - `managerController.getMyRequests` (`GET /api/manager/requests`) and
+    `managerAttendanceController.getManagerAttendance` (`GET /api/manager/attendance`)
+    now support opt-in `page`/`limit` query params, reusing the exact convention
+    already established by `superAdminController.getOperationsOverview` /
+    `getPendingVehicleRequests`: no `page`/`limit` param keeps returning the full,
+    unbounded result with no `pagination` key, byte-for-byte unchanged from before.
+    Passing either paginates and adds a `pagination: {page, limit, total, pages}` key;
+    an oversized `limit` is clamped to 100.
+  - `getManagerAttendance`'s rollup is built in-memory (one entry per student across
+    all matched `BoardingEvent`s, not a Mongo cursor), so its pagination slices the
+    already-sorted `rollup` array rather than adding `skip`/`limit` to a query.
+  - Issue #64 also named `getManagerCustomRoutes`, `getManagerRouteChangeRequests`, and
+    the private-route join-requests/members endpoints — none of those exist any more
+    (custom routes and private routes were both removed from the backend after this
+    issue was filed; see #49/#74/#19's investigation notes). `getManagerVehicles`
+    (`getManagerBuses` pre-rename) was left unpaginated: a manager's own fleet size is
+    bounded by how many vehicles they were assigned, nowhere near the volume of a
+    request/attendance history, so it wasn't the "highest-volume" case the issue's
+    acceptance criteria asks to prioritize.
+- **Why:** a manager with a long request or attendance history got the entire result
+  set in one response every time, with no way to page through it.
+- **Contract impact:** none for existing callers — the default (no page/limit) response
+  shape is byte-for-byte unchanged. A caller that opts in by passing page/limit gets a
+  new `pagination` key, same shape as the existing super-admin pagination.
+- **Tests:** added `tests/integration/manager-list-pagination.test.js` (6 new cases:
+  unchanged default, paginated response + metadata, oversized-limit clamp — for both
+  endpoints), all passing standalone and alongside `authz-ownership.test.js` (which
+  covers these endpoints' manager-scoping) and `manager-status-audit-assign.test.js`.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-18 — Manager status/audit-log/assign-vehicles coverage (issue #69)
 - **Branch:** issue/69-manager-status-audit-assign-coverage
 - **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
