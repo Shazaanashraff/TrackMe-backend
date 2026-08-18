@@ -673,15 +673,39 @@ exports.requestVehicleDelete = async (req, res, next) => {
 
 exports.getMyRequests = async (req, res, next) => {
   try {
-    const requests = await ManagerVehicleRequest.find({ managerId: req.user._id })
-      .sort({ createdAt: -1 })
-      .lean();
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full list, same as before (same convention as superAdminController's
+    // getOperationsOverview / getPendingVehicleRequests).
+    const MAX_LIMIT = 100;
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const pageNumber = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNumber = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
 
-    return res.status(200).json({
+    let requestsQuery = ManagerVehicleRequest.find({ managerId: req.user._id })
+      .sort({ createdAt: -1 });
+    if (paginated) {
+      requestsQuery = requestsQuery.skip((pageNumber - 1) * limitNumber).limit(limitNumber);
+    }
+
+    const [requests, total] = await Promise.all([
+      requestsQuery.lean(),
+      ManagerVehicleRequest.countDocuments({ managerId: req.user._id })
+    ]);
+
+    const response = {
       success: true,
       count: requests.length,
       data: requests
-    });
+    };
+    if (paginated) {
+      response.pagination = {
+        page: pageNumber,
+        limit: limitNumber,
+        total,
+        pages: Math.ceil(total / limitNumber)
+      };
+    }
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }
