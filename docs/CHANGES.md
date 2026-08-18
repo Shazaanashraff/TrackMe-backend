@@ -23,6 +23,34 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-18 — Manager status/audit-log/assign-vehicles coverage (issue #69)
+- **Branch:** issue/69-manager-status-audit-assign-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/manager-status-audit-assign.test.js`. Issue #69 asked for
+    coverage of six superAdminController functions; three of them
+    (`createManager`, `updateManager`, `resetManagerPassword`) turned out to already have
+    solid behavioral coverage in `manager-organizations.test.js`,
+    `manager-provisioning.test.js`, and `manager-shared-identity-email.test.js`. The
+    actual remaining gap was `updateManagerStatus` (zero coverage), `getAuditLogs`
+    (only its malformed-id 400 was tested, never a real filtered read), and
+    `assignVehiclesToManager`'s 400/404 branches (`assign-vehicles-scope.test.js` only
+    covers the scope-mismatch 409 and the plain-success 200).
+  - New tests: `updateManagerStatus` deactivate→reactivate + 404; `getAuditLogs`
+    managerId/action/entityType filters + unfiltered read; `assignVehiclesToManager`
+    plain success, 400 on an invalid vehicle id, 404 on an unknown manager.
+- **Why:** these were the genuinely untested branches on the manager-account admin
+  surface; duplicating the already-covered createManager/updateManager/
+  resetManagerPassword branches would have added no value.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/manager-status-audit-assign.test.js` (9 new
+  cases), all passing standalone and alongside the other manager/superadmin suites.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-18 — Super-admin read-endpoint coverage (issue #70)
 - **Branch:** issue/70-superadmin-reads-coverage
 - **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
