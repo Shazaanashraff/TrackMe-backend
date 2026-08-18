@@ -381,11 +381,26 @@ async function resolveKeyContext(account, key, riderId) {
 }
 
 
+// The rider's own signup answers, narrowed to the keys this organization actually
+// asks for. A school grade given at signup fills the school's `grade` field; the
+// same rider's answers are simply ignored by an organization that asks for
+// something else.
+function signupPrefill(rider, enabledFields) {
+  const details = mapValuesToObject(rider?.details);
+  const prefill = {};
+  for (const field of enabledFields) {
+    const value = String(details[field.key] ?? '').trim();
+    if (value) prefill[field.key] = value;
+  }
+  return prefill;
+}
+
 exports.resolveEnrollmentKey = async (req, res, next) => {
   try {
     const context = await resolveKeyContext(req.user, req.body?.key, req.body?.riderId || req.body?.studentId);
     if (context.error) return res.status(context.error.status).json({ success: false, message: context.error.message });
     const config = context.organization ? normalizedEnrollmentConfig(context.organization) : { schemaVersion: 1, fields: [] };
+    const enabledFields = config.fields.filter((field) => field.enabled);
     return res.status(200).json({
       success: true,
       data: {
@@ -394,14 +409,20 @@ exports.resolveEnrollmentKey = async (req, res, next) => {
         student: publicRider(context.rider, req.user),
         driver: driverSummary(context.driver, context.organization, context.vehicle, false),
         schemaVersion: config.schemaVersion,
-        fields: config.fields.filter((field) => field.enabled),
+        fields: enabledFields,
         // createEnrollment refuses without a valid contact phone, but the phone
         // is not one of the organization's `fields` — so a client rendering
         // only `fields` had no way to collect it and no way to know it was
         // missing. It hit a 400 it could not act on.
         contactPhone: effectiveContactPhone(context.rider, req.user),
         contactPhoneRequired: !validContactPhone(effectiveContactPhone(context.rider, req.user)),
-        existingValues: mapValuesToObject(context.organizationProfile?.values),
+        // What the rider answered at signup prefills the fields this organization
+        // asks for, under the same keys. Anything they have already told *this*
+        // organization wins: it was given with the organization in view.
+        existingValues: {
+          ...signupPrefill(context.rider, enabledFields),
+          ...mapValuesToObject(context.organizationProfile?.values)
+        },
         needsUpdate: Boolean(context.organizationProfile?.needsUpdate),
         existingEnrollment: context.existingEnrollment
           ? enrollmentSummary(context.existingEnrollment, context.driver, context.organization, context.vehicle)

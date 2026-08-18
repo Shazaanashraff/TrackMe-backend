@@ -1,13 +1,23 @@
 const DriverEnrollment = require('../models/DriverEnrollment');
 const RiderProfile = require('../models/RiderProfile');
+const User = require('../models/User');
 const { generateUniqueRiderCode } = require('../utils/riderCode');
+const { validateSignupDetails } = require('../utils/enrollmentSchema');
 const {
   ensureLegacyRider,
   findOwnedRider,
   assertOwnedPlaces,
   validContactPhone,
+  isSelfRider,
   publicRider
 } = require('../utils/riders');
+
+// A category always arrives with the details it requires, so the pair is read and
+// checked together. Returns null when the request said nothing about either.
+const readCategory = (body) => {
+  if (body?.category === undefined && body?.details === undefined) return null;
+  return validateSignupDetails(body?.category, body?.details);
+};
 
 const listRiders = async (req, res, next) => {
   try {
@@ -43,6 +53,11 @@ const createRider = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'A valid contact phone number is required', errors: { guardianPhone: 'Enter a valid phone number' } });
     }
 
+    const category = readCategory(req.body);
+    if (category && !category.valid) {
+      return res.status(400).json({ success: false, message: 'Complete the details for the category you picked', errors: category.errors });
+    }
+
     const pickupId = req.body?.defaultPickupPlaceId || null;
     const dropoffId = req.body?.defaultDropoffPlaceId || null;
     const ownedPlaces = await assertOwnedPlaces(req.user._id, [pickupId, dropoffId]);
@@ -56,6 +71,8 @@ const createRider = async (req, res, next) => {
       fullName,
       guardianPhoneOverride: contactPhone === String(req.user.phoneNumber || '').trim() ? '' : contactPhone,
       avatarUrl: String(req.body?.avatarUrl || ''),
+      category: category?.category || null,
+      details: category && Object.keys(category.values).length ? category.values : undefined,
       defaultPickupPlaceId: pickupId,
       defaultDropoffPlaceId: dropoffId
     });
@@ -77,14 +94,32 @@ const updateRider = async (req, res, next) => {
       if (!fullName) return res.status(400).json({ success: false, message: 'Rider full name is required' });
       rider.fullName = fullName;
     }
+    const isSelf = isSelfRider(rider, req.user);
+    let newAccountPhone = null;
     if (req.body?.contactPhone !== undefined || req.body?.guardianPhone !== undefined) {
       const phone = String(req.body.contactPhone ?? req.body.guardianPhone).trim();
       if (!validContactPhone(phone)) {
         return res.status(400).json({ success: false, message: 'Enter a valid contact phone number' });
       }
-      rider.guardianPhoneOverride = phone === String(req.user.phoneNumber || '').trim() ? '' : phone;
+      // The account holder's own record has no separate phone to hold: their number
+      // is the account's. Anyone else they added keeps it as an override.
+      if (isSelf) {
+        newAccountPhone = phone;
+        rider.guardianPhoneOverride = '';
+      } else {
+        rider.guardianPhoneOverride = phone === String(req.user.phoneNumber || '').trim() ? '' : phone;
+      }
     }
     if (req.body?.avatarUrl !== undefined) rider.avatarUrl = String(req.body.avatarUrl || '');
+
+    const category = readCategory(req.body);
+    if (category && !category.valid) {
+      return res.status(400).json({ success: false, message: 'Complete the details for the category you picked', errors: category.errors });
+    }
+    if (category) {
+      rider.category = category.category;
+      rider.details = Object.keys(category.values).length ? category.values : undefined;
+    }
 
     const pickupId = req.body?.defaultPickupPlaceId;
     const dropoffId = req.body?.defaultDropoffPlaceId;
@@ -98,6 +133,20 @@ const updateRider = async (req, res, next) => {
     }
 
     await rider.save();
+
+    // One editor in the app means one write path here: editing yourself updates the
+    // account too, so the account and the rider row cannot drift apart the way they
+    // did when the profile screen offered two forms for the same person.
+    if (isSelf) {
+      const accountUpdates = {};
+      if (req.body?.fullName !== undefined) accountUpdates.name = rider.fullName;
+      if (newAccountPhone !== null) accountUpdates.phoneNumber = newAccountPhone;
+      if (Object.keys(accountUpdates).length) {
+        await User.updateOne({ _id: req.user._id }, { $set: accountUpdates });
+        Object.assign(req.user, accountUpdates);
+      }
+    }
+
     return res.status(200).json({ success: true, data: publicRider(rider, req.user) });
   } catch (error) {
     next(error);

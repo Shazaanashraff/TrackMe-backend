@@ -23,6 +23,8 @@ const {
 } = require('../utils/identityRegistry');
 const { sendPasswordResetOtpEmail } = require('../utils/passwordReset');
 const { looksLikeDriverCode, normalizeDriverCode } = require('../utils/driverCode');
+const { validateSignupDetails } = require('../utils/enrollmentSchema');
+const { ensureLegacyRider } = require('../utils/riders');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -158,6 +160,19 @@ exports.register = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
+    // The category the rider picked while creating the account, plus whatever that
+    // category asks for (a school's grade). Optional, so a client released before
+    // this shipped still registers; the app collects it on first launch instead.
+    const signup = validateSignupDetails(req.body?.category, req.body?.details);
+    if (!signup.valid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete the details for the category you picked',
+        errors: signup.errors
+      });
+    }
+    const riderSeed = { category: signup.category, details: signup.values };
+
     const derivedName = (name && name.trim()) || normalizedEmail.split('@')[0];
     const existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
 
@@ -198,6 +213,7 @@ exports.register = async (req, res, next) => {
           role: 'user',
           fields: { name: derivedName }
         });
+        await ensureLegacyRider(newRider, riderSeed);
 
         const tokens = await issueTokensForUser(newRider, 'user');
         return res.status(200).json({
@@ -227,6 +243,9 @@ exports.register = async (req, res, next) => {
       role: 'user',
       fields: { name: derivedName }
     });
+    // Seeded here rather than lazily on the first GET /api/riders, so the category
+    // answered at signup is on the rider before anything can read it.
+    await ensureLegacyRider(user, riderSeed);
 
     identity.emailVerification = {
       otpHash,

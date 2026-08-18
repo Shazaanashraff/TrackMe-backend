@@ -10,7 +10,7 @@ The mobile app stores one `activeRiderId`. Changing it is a local selection, not
 
 ## Data model
 
-- `RiderProfile`: independent rider code, name, optional contact override, default household places, QR version, and active state. It uses the existing `studentprofiles` collection for compatibility.
+- `RiderProfile`: independent rider code, name, optional contact override, default household places, QR version, active state, and the `category` (`SCHOOL`, `UNIVERSITY`, `OFFICE`) with its `details` map answered at account creation. It uses the existing `studentprofiles` collection for compatibility.
 - `StudentOrganizationProfile`: organization-specific field values and schema version for one student.
 - `HouseholdPlace`: reusable pickup/drop-off place owned by the parent account.
 - `DriverEnrollment`: points to `studentId`, with independent shuttle status, organization details, and locations.
@@ -18,10 +18,11 @@ The mobile app stores one `activeRiderId`. Changing it is a local selection, not
 
 ## Enrollment flow
 
+0. At registration the rider picks a category and answers what it asks for (a school's grade). It seeds their own rider row and is stored under the enrollment catalog's own field keys, which is what lets it prefill step 4. It is a claim, not an authority: `riderTag` stays derived from the enrolled driver's organization, and the two may disagree.
 1. The account holder selects or creates a rider.
 2. The app resolves the driver key with that `riderId`.
 3. The backend returns the driver's organization and its configured standard fields.
-4. The app renders only enabled fields, prefills saved organization values, and validates required fields.
+4. The app renders only enabled fields and prefills them from the rider's signup answers overlaid by any values already saved for that organization, which win. Every enabled field is still shown and editable.
 5. The backend derives Student, Employee, or Passenger from the resolved service type and validates before creating that rider's enrollment.
 
 Managers configure their own organization's form. Superadmins can override any organization. Schema changes mark incomplete existing organization profiles as `needsUpdate`; existing shuttle access remains active.

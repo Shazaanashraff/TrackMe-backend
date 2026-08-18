@@ -42,6 +42,17 @@ All under `/api/profiles` (`src/routes/profileRoutes.js`), `protect, requireUser
 | `POST` | `/:id/switch` | `requireOwnProfile` | `switchProfile` | Issues a fresh token pair for the target profile. 403 if it's deactivated. |
 | `GET` | `/household/enrollments` | `requireUser` | `enrollmentController.getHouseholdEnrollments` | Every profile's own `DriverEnrollment` rows, each carrying a derived `riderTag`. |
 
+The rider records the passenger app actually edits are a different collection, under
+`/api/riders` (`src/routes/riderRoutes.js`, `controllers/studentController.js`, `protect,
+requireUser`), with `/api/students` kept as a byte-identical legacy alias.
+
+| Method | Path | Controller fn | Notes |
+|---|---|---|---|
+| `GET` | `/api/riders` | `listRiders` | Creates the account holder's own rider row on first call (`utils/riders.js` `ensureLegacyRider`) if registration did not. Each row carries `category`, `details`, and `isSelf`. |
+| `POST` | `/api/riders` | `createRider` | `fullName`, `contactPhone`, optional `category` + `details`, default places. |
+| `PATCH` | `/api/riders/:riderId` | `updateRider` | Same fields. **On the `isSelf` row it also writes `name` / `phoneNumber` to the `User` account** — see §8. |
+| `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete; 409 while an ACTIVE or PENDING enrolment exists. |
+
 ## 3. Key files (one job each)
 
 | File | Responsibility |
@@ -133,6 +144,14 @@ flowchart TD
   `GET /api/profiles` returns `hasAvatar: boolean` only — a household of six profiles inlining
   full 2 MB avatars would be a double-digit-MB response on mobile. The avatar itself is a
   separate `GET /:id/avatar` call.
+- **Editing your own rider row edits the account.** The account holder's rider is created with
+  `_id: account._id`, so `isSelfRider` (`utils/riders.js`) answers "is this me?" without a field
+  to keep in step. `updateRider` uses it to mirror `fullName` and the contact phone onto the
+  `User`, and to store that phone on the account rather than as a `guardianPhoneOverride`. This
+  exists because the passenger app used to offer two forms for the same person, one writing
+  `PUT /api/auth/profile` and one writing `PATCH /api/riders/:id`, which drifted apart the
+  moment either was used. The app now has one editor; this keeps the two documents honest for
+  any caller that still uses the other route.
 - **A household is capped at 20 profiles** (`HOUSEHOLD_LIMIT` in `profileController.js`) — a
   sanity ceiling against a scripted caller, comfortably above any real family or small office.
 - **`scripts/migrate-rider-profiles.js`** is a real migration, not just a schema change: every
@@ -144,6 +163,14 @@ flowchart TD
   *enrolled driver's* `Organization.serviceType` at read time — storing it on the profile would
   duplicate a fact that already lives on the `Organization` and go stale the moment a rider moves
   from a school shuttle to an office one.
+- **The signup `category` is not that tag.** `RiderProfile.category` (`SCHOOL` / `UNIVERSITY` /
+  `OFFICE`) is what the rider said about themselves while creating the account, with
+  `RiderProfile.details` holding whatever that category asks for — today a school's `grade`.
+  It shapes the app's copy and prefills the organization's enrolment form; it never overrides
+  `riderTag`, and the two legitimately disagree for a university student who rides an office
+  shuttle. Both are validated by `validateSignupDetails` (`utils/enrollmentSchema.js`), which
+  keys `details` to the same field catalog the enrolment form uses — that shared vocabulary is
+  the whole reason a grade given at signup can prefill a school's `grade` field.
 
 ## 9. Known gotchas / regressions
 

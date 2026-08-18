@@ -35,6 +35,24 @@ const riderProfileSchema = new mongoose.Schema({
     ref: 'HouseholdPlace',
     default: null
   },
+  // What this rider says they are, answered when the account is created. It seeds
+  // the enrolment form and the profile copy; it is never the authority on what a
+  // rider *is* to an organization — that stays derived from the enrolled driver's
+  // Organization.serviceType (utils/riderTag.js), and the two may legitimately
+  // disagree when someone rides an office shuttle to their university.
+  category: {
+    type: String,
+    enum: ['SCHOOL', 'UNIVERSITY', 'OFFICE', null],
+    default: null
+  },
+  // Keyed by the enrolment field catalog (utils/enrollmentSchema.js), so a grade
+  // given at signup is the same `grade` the school's enrolment form asks for and
+  // can prefill it.
+  details: {
+    type: Map,
+    of: String,
+    default: undefined
+  },
   qrTokenVersion: { type: Number, default: 1 },
   qrIssuedAt: { type: Date, default: null },
   isActive: { type: Boolean, default: true, index: true },

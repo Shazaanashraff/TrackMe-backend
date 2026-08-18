@@ -21,6 +21,53 @@ const DEFAULT_REQUIRED = Object.freeze({
   OFFICE: 'employeeNumber'
 });
 
+// What account creation asks once the rider picks a category. Deliberately a
+// subset of the catalog above rather than a list of its own: whatever is asked
+// here prefills the organization's enrolment form later, and a key that isn't in
+// the catalog could never do that.
+const SIGNUP_FIELDS = Object.freeze({
+  SCHOOL: Object.freeze(['grade']),
+  UNIVERSITY: Object.freeze([]),
+  OFFICE: Object.freeze([])
+});
+
+const SIGNUP_CATEGORIES = Object.freeze(Object.keys(SIGNUP_FIELDS));
+
+function signupFieldsFor(category) {
+  const key = String(category || '').toUpperCase();
+  const keys = SIGNUP_FIELDS[key] || [];
+  const catalog = new Map(catalogFor(key).map((field) => [field.key, field]));
+  return keys.map((fieldKey) => catalog.get(fieldKey)).filter(Boolean);
+}
+
+// Validates the `{ category, details }` pair a client sends at registration or on
+// a rider edit. Mirrors validateEnrollmentResponses: unknown keys are refused
+// rather than silently dropped, so a typo surfaces instead of vanishing.
+function validateSignupDetails(category, details) {
+  const key = String(category || '').toUpperCase();
+  if (!key) return { valid: true, errors: {}, category: null, values: {} };
+  if (!SIGNUP_CATEGORIES.includes(key)) {
+    return { valid: false, errors: { category: 'Choose school, university or office' }, category: null, values: {} };
+  }
+
+  const supplied = details && typeof details === 'object' && !Array.isArray(details) ? details : {};
+  const fields = signupFieldsFor(key);
+  const allowed = new Set(fields.map((field) => field.key));
+  const errors = {};
+  const values = {};
+
+  for (const suppliedKey of Object.keys(supplied)) {
+    if (!allowed.has(suppliedKey)) errors[suppliedKey] = 'This field is not asked for this category';
+  }
+  for (const field of fields) {
+    const value = String(supplied[field.key] ?? '').trim();
+    if (!value) errors[field.key] = `${field.label} is required`;
+    else values[field.key] = value;
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors, category: key, values };
+}
+
 function catalogFor(serviceType) {
   return FIELD_CATALOG[String(serviceType || '').toUpperCase()] || [];
 }
@@ -112,6 +159,10 @@ function validateEnrollmentResponses(config, responses) {
 
 module.exports = {
   FIELD_CATALOG,
+  SIGNUP_FIELDS,
+  SIGNUP_CATEGORIES,
+  signupFieldsFor,
+  validateSignupDetails,
   catalogFor,
   defaultEnrollmentConfig,
   normalizedEnrollmentConfig,

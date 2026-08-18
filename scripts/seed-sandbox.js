@@ -242,6 +242,10 @@ async function seedLiveTracking(rider, drivers, vehicles) {
     accountId: rider._id,
     riderCode: await generateUniqueRiderCode(RiderProfile),
     fullName: rider.name,
+    // What the rider would have answered while creating the account, so the
+    // profile screen and the enrolment form's prefill have something to show.
+    category: 'SCHOOL',
+    details: { grade: '7' },
   });
 
   const enrolledDriver = drivers[0];

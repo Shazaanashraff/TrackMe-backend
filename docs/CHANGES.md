@@ -23,6 +23,41 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — A rider picks their category when the account is created
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [auth](modules/AUTH.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:**
+  - `RiderProfile` gains `category` (`SCHOOL` / `UNIVERSITY` / `OFFICE`) and a `details` map, keyed
+    by the enrolment field catalog so a school's `grade` given at signup is the same `grade` the
+    school's enrolment form asks for.
+  - `POST /api/auth/register` optionally takes `category` + `details` and seeds them onto the
+    account holder's own rider row, which registration now creates rather than leaving to the
+    first `GET /api/riders`.
+  - `POST/PATCH /api/riders` accept the same pair, and every rider now returns `category`,
+    `details` and `isSelf`.
+  - Editing the `isSelf` rider mirrors `fullName` / contact phone onto the `User` account, so the
+    passenger app's two competing profile editors can collapse into one without the two documents
+    drifting apart.
+  - `POST /api/enrollments/resolve-key` prefills `existingValues` from the rider's signup answers,
+    overlaid by anything already saved for that organization. Every enabled field is still listed.
+- **Why:** Signup asked nothing, so nothing was known about a rider until they redeemed a key, and
+  the profile screen edited the same person through two unsynchronised documents.
+- **Contract impact:** Additive on `/api/auth/register`, `/api/riders` (and the `/api/students`
+  alias) and `resolve-key`. `PATCH /api/riders/:id` on the self record now also writes the account's
+  name and phone. `TrackMe-UserApp` docs updated alongside its own change.
+- **Tests:** `tests/integration/signup-category.test.js` (new), `tests/unit/enrollment-schema.test.js`
+  (signup details cases).
+- **Docs updated:** `docs/modules/AUTH.md`, `docs/modules/PROFILES.md` (§2 rider endpoints, §8),
+  `docs/architecture/parent-student-profiles.md`, `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `category` is null on existing riders and the app collects it on first launch.
+- **Follow-ups / known issues:** `createEnrollment` still writes `userId: null` while
+  `managerEnrollmentsController` looks passengers up by `userId`, so the manager's approval queue
+  shows `passenger: null` for enrolments made through the rider path, and never shows the values a
+  rider entered. Untouched here.
+
+---
+
 ## 2026-08-14 — Active enrolments expose driver and vehicle details
 
 - **Branch:** main
