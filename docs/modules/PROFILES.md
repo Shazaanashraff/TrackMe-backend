@@ -200,7 +200,7 @@ flowchart TD
 | Integration | `tests/integration/push-helper-household.test.js` | `resolvePushTokensForRider` reaching the account holder for a MANAGED scan. |
 | Integration | `tests/integration/notifications-household.test.js` | Household-scoped reads, `?profileId=`, device-token landing on PRIMARY. |
 | Integration | `tests/integration/attendance-household.test.js` | Cross-profile attendance access + its own null-equality regression case. |
-| Integration | `tests/integration/manager-enrollments-managed-profile.test.js` | The manager queue's `passenger.account` block for a MANAGED passenger. |
+| Integration | `tests/integration/manager-enrollments-managed-profile.test.js` | The manager queue resolves the passenger from `studentId`, names the rider (never `null`), marks an added rider as managed while the account holder's own row is not, carries the owning account's email/phone and the rider's own contact number, and surfaces that organization's answers. |
 | Integration | `tests/integration/manager-shared-identity-email.test.js` | Confirms MANAGED profiles never inflate `superAdminController`'s shared-email guard. |
 | WS | `tests/integration/ws/household-socket.test.js` | A PRIMARY connection auto-joins every household profile's `student:<id>` room. |
 

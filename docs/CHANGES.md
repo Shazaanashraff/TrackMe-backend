@@ -23,6 +23,31 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — The manager's approval queue knows who the request is for
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [admin](modules/ADMIN.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:** `managerEnrollmentsController` resolves the passenger from the enrolment's
+  `studentId` (a `RiderProfile`) instead of the deprecated `userId`, which `createEnrollment`
+  writes as null — so every request made through the rider path reached the manager as
+  `passenger: null`. Rows from the legacy `/redeem` path still resolve by `userId` as a fallback.
+  The payload now also carries `riderCode`, `contactPhone` and `organizationValues` (the answers
+  that organization's enrolment form collected), and `isManagedProfile` means "not the account
+  holder's own rider row".
+- **Why:** The queue showed an unnamed request with no account and none of the details the rider
+  had just entered, so a manager had nothing to decide on.
+- **Contract impact:** Same response shape, correctly populated, plus three additive
+  `passenger` fields. `passenger._id` is a rider profile id (it was an account id for legacy rows).
+  `web-admin`'s page already read `riderCode` and `organizationValues`, so it needed no change;
+  its `docs/modules/ENROLLMENT_REQUESTS.md` contract table is updated.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` rewritten around the
+  rider path (it previously built rows with a `userId` and no `studentId`, which the model has
+  required for some time, so the suite could not run at all).
+- **Docs updated:** `docs/modules/ADMIN.md`, `docs/modules/PROFILES.md`, `docs/TESTING_GUIDE.md`,
+  and `TrackMe-WebAdmin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** none for this queue.
+
 ## 2026-08-19 — A rider picks their category when the account is created
 
 - **Branch:** feature/signup-category

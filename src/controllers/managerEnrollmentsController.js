@@ -4,6 +4,8 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Identity = require('../models/Identity');
 const RiderProfile = require('../models/RiderProfile');
+const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
+const { mapValuesToObject } = require('../utils/riders');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 
@@ -53,26 +55,109 @@ async function resolveAccountsForPassengers(passengers) {
   return accountByPassengerId;
 }
 
+// Who a queued request is actually for.
+//
+// The enrolment's owner is `studentId` (a RiderProfile) — `userId` is the
+// deprecated account-level owner, and `createEnrollment` writes it as null, so
+// resolving by it alone showed the manager `passenger: null` for every request
+// the current app makes. Rows written by the legacy `/redeem` path still carry a
+// `userId`, so that lookup stays as the fallback rather than being dropped.
+async function resolvePassengers(enrollments) {
+  const riderIds = [...new Set(enrollments.map((e) => e.studentId).filter(Boolean).map(String))];
+  const legacyUserIds = [...new Set(
+    enrollments.filter((e) => !e.studentId).map((e) => e.userId).filter(Boolean).map(String)
+  )];
+  const organizationProfileIds = [...new Set(
+    enrollments.map((e) => e.organizationProfileId).filter(Boolean).map(String)
+  )];
+
+  const [riders, legacyPassengers, organizationProfiles] = await Promise.all([
+    riderIds.length
+      ? RiderProfile.find({ _id: { $in: riderIds } })
+        .select('fullName riderCode avatarUrl accountId guardianPhoneOverride category details')
+        .lean()
+      : [],
+    legacyUserIds.length
+      ? User.find({ _id: { $in: legacyUserIds } })
+        .select('name email avatarUrl relation profileKind identityId phoneNumber')
+        .lean()
+      : [],
+    organizationProfileIds.length
+      ? RiderOrganizationProfile.find({ _id: { $in: organizationProfileIds } })
+        .select('values')
+        .lean()
+      : []
+  ]);
+
+  const accountIds = [...new Set(riders.map((r) => r.accountId).filter(Boolean).map(String))];
+  const accounts = accountIds.length
+    ? await User.find({ _id: { $in: accountIds } }).select('name email phoneNumber').lean()
+    : [];
+
+  const riderById = new Map(riders.map((r) => [String(r._id), r]));
+  const accountById = new Map(accounts.map((a) => [String(a._id), a]));
+  const valuesByProfileId = new Map(
+    organizationProfiles.map((p) => [String(p._id), mapValuesToObject(p.values)])
+  );
+  const legacyById = new Map(legacyPassengers.map((p) => [String(p._id), p]));
+  const legacyAccounts = await resolveAccountsForPassengers(legacyPassengers);
+
+  return (enrollment) => {
+    const rider = riderById.get(String(enrollment.studentId));
+    if (rider) {
+      const account = accountById.get(String(rider.accountId)) || null;
+      return {
+        passenger: {
+          _id: rider._id,
+          name: rider.fullName,
+          riderCode: rider.riderCode || '',
+          avatarUrl: rider.avatarUrl || '',
+          relation: '',
+          // The account holder's own rider row is created with the account's id
+          // (utils/riders.js), so anyone else is someone they added.
+          isManagedProfile: String(rider._id) !== String(rider.accountId),
+          email: account?.email || '',
+          contactPhone: rider.guardianPhoneOverride || account?.phoneNumber || '',
+          // What the rider answered on this organization's enrolment form — the
+          // grade or employee ID the manager is being asked to approve.
+          organizationValues: valuesByProfileId.get(String(enrollment.organizationProfileId)) || {}
+        },
+        account: account
+          ? { name: account.name || '', email: account.email || '', phoneNumber: account.phoneNumber || '' }
+          : null
+      };
+    }
+
+    const legacy = legacyById.get(String(enrollment.userId));
+    if (!legacy) return { passenger: null, account: null };
+    const account = legacyAccounts.get(String(legacy._id)) || null;
+    return {
+      passenger: {
+        _id: legacy._id,
+        name: legacy.name,
+        riderCode: '',
+        avatarUrl: legacy.avatarUrl || '',
+        relation: legacy.relation || '',
+        isManagedProfile: legacy.profileKind === 'MANAGED',
+        email: legacy.email || account?.email || '',
+        contactPhone: legacy.phoneNumber || account?.phoneNumber || '',
+        organizationValues: valuesByProfileId.get(String(enrollment.organizationProfileId)) || {}
+      },
+      account
+    };
+  };
+}
+
 const requestSummary = (enrollment, driver, passenger, account) => ({
   _id: enrollment._id,
   status: enrollment.status,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
   driver: driver ? { _id: driver._id, name: driver.name, driverCode: driver.driverCode || null } : null,
-  passenger: passenger
-    ? {
-      _id: passenger._id,
-      name: passenger.name,
-      avatarUrl: passenger.avatarUrl || '',
-      relation: passenger.relation || '',
-      isManagedProfile: passenger.profileKind === 'MANAGED',
-      // Kept populated from the owning account so the existing web-admin
-      // column (which reads passenger.email) does not break for a managed
-      // profile, which has no email of its own.
-      email: passenger.email || account?.email || '',
-      account: account || null
-    }
-    : null
+  // `passenger` is already normalized by resolvePassengers, whichever owner
+  // field the row carries. `email` there is the owning account's, so the
+  // web-admin column keeps working for a rider that has no email of its own.
+  passenger: passenger ? { ...passenger, account: account || null } : null
 });
 
 // The enrollment must belong to a driver this manager owns. Checked against the
@@ -132,22 +217,11 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const passengers = enrollments.length
-      ? await User.find({ _id: { $in: enrollments.map((e) => e.userId) } })
-        .select('name email avatarUrl relation profileKind identityId phoneNumber')
-        .lean()
-      : [];
-    const passengerById = new Map(passengers.map((p) => [String(p._id), p]));
-    const accountByPassengerId = await resolveAccountsForPassengers(passengers);
+    const resolve = await resolvePassengers(enrollments);
 
     const data = enrollments.map((enrollment) => {
-      const passenger = passengerById.get(String(enrollment.userId));
-      return requestSummary(
-        enrollment,
-        driverById.get(String(enrollment.driverId)),
-        passenger,
-        passenger ? accountByPassengerId.get(String(passenger._id)) : null
-      );
+      const { passenger, account } = resolve(enrollment);
+      return requestSummary(enrollment, driverById.get(String(enrollment.driverId)), passenger, account);
     });
 
     return res.status(200).json({ success: true, data });
@@ -198,12 +272,8 @@ const decide = (approved) => async (req, res, next) => {
     const student = await RiderProfile.findById(enrollment.studentId);
     if (student) await notifyPassenger(enrollment, driver, approved, student);
 
-    const passenger = await User.findById(enrollment.userId)
-      .select('name email avatarUrl relation profileKind identityId phoneNumber')
-      .lean();
-    const account = passenger
-      ? (await resolveAccountsForPassengers([passenger])).get(String(passenger._id))
-      : null;
+    const resolve = await resolvePassengers([enrollment]);
+    const { passenger, account } = resolve(enrollment);
 
     return res.status(200).json({
       success: true,
