@@ -51,6 +51,35 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-18 — reviewVehicleRequest branch coverage (issue #68)
+- **Branch:** issue/68-review-vehicle-request-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/review-vehicle-request-branches.test.js`, covering the
+    branches of `superAdminController.reviewVehicleRequest` that had no test: successful
+    CREATE_VEHICLE_ACCOUNT approve, successful REJECT, the already-reviewed 400 guard, the
+    unknown-request 404, the duplicate-vehicle 409 (and that it releases the PENDING claim),
+    and the DELETE_VEHICLE approval path (soft-delete + driver deactivation, plus its own
+    404 when the vehicle no longer exists).
+  - Issue #68 was filed against an older "Bus"-named approval flow with separate
+    custom-route/existing-route sub-branches; both the Bus→Vehicle rename and the removal
+    of custom routes mean that split no longer exists in `reviewVehicleRequest` today (one
+    route lookup, not two) — tests were written against the current branches instead.
+- **Why:** `reviewVehicleRequest` is the highest-privilege super-admin endpoint (creates
+  Vehicle/Driver documents, deletes vehicles, mints identities); only the concurrency guard
+  and the field whitelist had coverage before this.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/review-vehicle-request-branches.test.js` (7 new
+  cases, all passing standalone and alongside the other `review-vehicle-request-*` files).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row for the branches file.
+- **Migration:** none.
+- **Follow-ups / known issues:** local `npm run test:integration` has 18 pre-existing
+  failing suites in this environment unrelated to this change (missing external API keys
+  for places/transit, and `review-vehicle-request-concurrency.test.js` timing out under
+  this sandbox's Mongo latency) — see PR description for the full list; CI is the real gate.
+
+---
+
 ## 2026-08-17 — Clear all dependency vulnerabilities (0 remaining)
 - **Branch:** main
 - **Modules touched:** none — dependency maintenance, not a feature
