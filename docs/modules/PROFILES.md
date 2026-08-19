@@ -48,9 +48,10 @@ requireUser`), with `/api/students` kept as a byte-identical legacy alias.
 
 | Method | Path | Controller fn | Notes |
 |---|---|---|---|
-| `GET` | `/api/riders` | `listRiders` | Creates the account holder's own rider row on first call (`utils/riders.js` `ensureLegacyRider`) if registration did not. Each row carries `category`, `details`, and `isSelf`. |
+| `GET` | `/api/riders` | `listRiders` | Creates the account holder's own rider row on first call (`utils/riders.js` `ensureLegacyRider`) if registration did not. Each row carries `category`, `details`, `isSelf`, and `hasAvatar` + `avatarVersion` — **never the picture itself**. |
+| `GET` | `/api/riders/:riderId/avatar` | `getRiderAvatar` | One rider's picture as a data URL, plus its version. Its own request on purpose — see §8. |
 | `POST` | `/api/riders` | `createRider` | `fullName`, `contactPhone`, optional `category` + `details`, default places. |
-| `PATCH` | `/api/riders/:riderId` | `updateRider` | Same fields. **On the `isSelf` row it also writes `name` / `phoneNumber` to the `User` account** — see §8. |
+| `PATCH` | `/api/riders/:riderId` | `updateRider` | Same fields, plus `avatarUrl` (a data URL, or `''` to clear). **On the `isSelf` row it also writes `name` / `phoneNumber` to the `User` account** — see §8. |
 | `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete; 409 while an ACTIVE or PENDING enrolment exists. |
 
 ## 3. Key files (one job each)
@@ -152,6 +153,13 @@ flowchart TD
   `PUT /api/auth/profile` and one writing `PATCH /api/riders/:id`, which drifted apart the
   moment either was used. The app now has one editor; this keeps the two documents honest for
   any caller that still uses the other route.
+- **A rider's picture is not in the rider list.** `publicRider` returns `hasAvatar` and
+  `avatarVersion`; the image comes from `GET /api/riders/:riderId/avatar`, once, and the apps cache
+  it against that version. Twenty riders with a 512 KB picture each would otherwise put ten
+  megabytes into every list load, which is the same reasoning that keeps a MANAGED profile's avatar
+  off `/api/profiles`. Writes go through `validateAvatarDataUrl` (`utils/avatar.js`) at the same
+  512 KB ceiling managed profiles use, and every write bumps `avatarVersion`, including a clear —
+  that bump is what invalidates a client's cached copy.
 - **A household is capped at 20 profiles** (`HOUSEHOLD_LIMIT` in `profileController.js`) — a
   sanity ceiling against a scripted caller, comfortably above any real family or small office.
 - **`scripts/migrate-rider-profiles.js`** is a real migration, not just a schema change: every

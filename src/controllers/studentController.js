@@ -3,6 +3,7 @@ const RiderProfile = require('../models/RiderProfile');
 const User = require('../models/User');
 const { generateUniqueRiderCode } = require('../utils/riderCode');
 const { validateSignupDetails } = require('../utils/enrollmentSchema');
+const { validateAvatarDataUrl } = require('../utils/avatar');
 const {
   ensureLegacyRider,
   findOwnedRider,
@@ -11,6 +12,24 @@ const {
   isSelfRider,
   publicRider
 } = require('../utils/riders');
+
+// A rider's picture is capped where a managed profile's is: it is the same kind of
+// thing, a small square shown in a list, and it lives in the document rather than in
+// object storage. Anything larger is refused rather than quietly stored.
+const RIDER_AVATAR_MAX_BYTES = 512 * 1024;
+
+// Reads `avatarUrl` off a request. Returns `{ error }` for a bad one, `{ value }`
+// for a good one (an empty string clears the picture), or null when the request
+// said nothing about it.
+const readAvatar = (body) => {
+  if (body?.avatarUrl === undefined) return null;
+  const avatar = String(body.avatarUrl || '');
+  if (!avatar) return { value: '' };
+
+  const check = validateAvatarDataUrl(avatar, RIDER_AVATAR_MAX_BYTES);
+  if (!check.ok) return { error: check };
+  return { value: avatar };
+};
 
 // A category always arrives with the details it requires, so the pair is read and
 // checked together. Returns null when the request said nothing about either.
@@ -58,6 +77,11 @@ const createRider = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Complete the details for the category you picked', errors: category.errors });
     }
 
+    const avatar = readAvatar(req.body);
+    if (avatar?.error) {
+      return res.status(avatar.error.status).json({ success: false, message: avatar.error.message });
+    }
+
     const pickupId = req.body?.defaultPickupPlaceId || null;
     const dropoffId = req.body?.defaultDropoffPlaceId || null;
     const ownedPlaces = await assertOwnedPlaces(req.user._id, [pickupId, dropoffId]);
@@ -70,7 +94,8 @@ const createRider = async (req, res, next) => {
       riderCode: await generateUniqueRiderCode(RiderProfile),
       fullName,
       guardianPhoneOverride: contactPhone === String(req.user.phoneNumber || '').trim() ? '' : contactPhone,
-      avatarUrl: String(req.body?.avatarUrl || ''),
+      avatarUrl: avatar?.value || '',
+      avatarVersion: avatar?.value ? 1 : 0,
       category: category?.category || null,
       details: category && Object.keys(category.values).length ? category.values : undefined,
       defaultPickupPlaceId: pickupId,
@@ -110,7 +135,16 @@ const updateRider = async (req, res, next) => {
         rider.guardianPhoneOverride = phone === String(req.user.phoneNumber || '').trim() ? '' : phone;
       }
     }
-    if (req.body?.avatarUrl !== undefined) rider.avatarUrl = String(req.body.avatarUrl || '');
+    const avatar = readAvatar(req.body);
+    if (avatar?.error) {
+      return res.status(avatar.error.status).json({ success: false, message: avatar.error.message });
+    }
+    if (avatar) {
+      rider.avatarUrl = avatar.value;
+      // Clients cache the picture against this number, so it moves on a change and
+      // on a clear alike.
+      rider.avatarVersion = (rider.avatarVersion || 0) + 1;
+    }
 
     const category = readCategory(req.body);
     if (category && !category.valid) {
@@ -175,7 +209,26 @@ const archiveRider = async (req, res, next) => {
   }
 };
 
+// @route GET /api/riders/:riderId/avatar
+// Deliberately its own request: see publicRider in utils/riders.js for why the
+// picture is not part of the list.
+const getRiderAvatar = async (req, res, next) => {
+  try {
+    const riderId = req.params.riderId || req.params.studentId;
+    const rider = await findOwnedRider(req.user, riderId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
+
+    return res.status(200).json({
+      success: true,
+      data: { avatarUrl: rider.avatarUrl || '', avatarVersion: rider.avatarVersion || 0 }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.listRiders = listRiders;
+exports.getRiderAvatar = getRiderAvatar;
 exports.createRider = createRider;
 exports.updateRider = updateRider;
 exports.archiveRider = archiveRider;

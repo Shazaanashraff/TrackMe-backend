@@ -25,6 +25,9 @@ const riderProfileSchema = new mongoose.Schema({
     default: ''
   },
   avatarUrl: { type: String, default: '' },
+  // Bumped on every write to `avatarUrl`. The apps cache the picture by this
+  // number, so a changed photo invalidates their copy without them asking.
+  avatarVersion: { type: Number, default: 0 },
   defaultPickupPlaceId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'HouseholdPlace',

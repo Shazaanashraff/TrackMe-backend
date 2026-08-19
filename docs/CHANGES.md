@@ -23,6 +23,32 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — A picture per rider, fetched on its own and versioned for caching
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md)
+- **What changed:**
+  - `RiderProfile` gains `avatarVersion`, bumped on every write to `avatarUrl`, including a clear.
+  - `publicRider` no longer returns `avatarUrl`. It returns `hasAvatar` and `avatarVersion`, and
+    the picture comes from the new `GET /api/riders/:riderId/avatar` (mirrored on the
+    `/api/students` alias). Twenty riders at the 512 KB ceiling would otherwise have put ten
+    megabytes into every list load, the same reason a MANAGED profile's avatar is off
+    `/api/profiles`.
+  - `createRider` / `updateRider` now validate `avatarUrl` through `utils/avatar.js`
+    (`validateAvatarDataUrl`, 512 KB). The field was previously stored as
+    `String(req.body.avatarUrl || '')` with no format or size check at all.
+- **Why:** The passenger app is adding rider photos; the field existed but was unguarded, and
+  inline delivery would have made every rider-list load carry every image.
+- **Contract impact:** `GET /api/riders` **drops `avatarUrl`** and adds `hasAvatar` +
+  `avatarVersion`; new `GET /api/riders/:riderId/avatar`. No client read the rider's `avatarUrl`
+  (the only avatar in the UI is the account's), so nothing breaks today. `TrackMe-UserApp` picks
+  this up in the same feature.
+- **Tests:** `tests/integration/rider-avatar.test.js` (new).
+- **Docs updated:** `docs/modules/PROFILES.md` (§2 rider table, §8), `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `avatarVersion` defaults to 0 and existing pictures keep working; their
+  first edit moves the version to 1.
+- **Follow-ups / known issues:** none.
+
 ## 2026-08-19 — The manager's approval queue knows who the request is for
 
 - **Branch:** feature/signup-category

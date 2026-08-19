@@ -78,7 +78,12 @@ function publicRider(rider, account) {
     guardianPhone: effectiveContactPhone(rider, account),
     contactPhone: effectiveContactPhone(rider, account),
     hasGuardianPhoneOverride: Boolean(rider.guardianPhoneOverride),
-    avatarUrl: rider.avatarUrl || '',
+    // The picture itself is fetched one rider at a time (GET /api/riders/:id/avatar)
+    // and cached by the client against `avatarVersion`. Inlining it here would put
+    // every rider's image into every list response — the same reason managed
+    // profiles keep theirs off their list (docs/modules/PROFILES.md).
+    hasAvatar: Boolean(rider.avatarUrl),
+    avatarVersion: rider.avatarVersion || 0,
     defaultPickupPlaceId: rider.defaultPickupPlaceId || null,
     defaultDropoffPlaceId: rider.defaultDropoffPlaceId || null,
     isActive: rider.isActive !== false,
