@@ -12,7 +12,10 @@ const bcrypt = require('bcryptjs');
 // would double-hash and lock every user out.
 const applyPasswordAuth = (schema) => {
   schema.pre('save', async function hashPassword(next) {
-    if (!this.isModified('password')) return next();
+    // A Google-only account has no password — `isModified('password')` is true
+    // on a brand-new document even when `password` was passed as `undefined`,
+    // so this must also guard against a falsy value or bcrypt throws.
+    if (!this.isModified('password') || !this.password) return next();
     this.password = await bcrypt.hash(this.password, 12);
     next();
   });
