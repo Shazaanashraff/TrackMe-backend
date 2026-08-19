@@ -49,6 +49,33 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — Fix first-time Google sign-in 500 (issue #111)
+- **Branch:** issue/111-google-signin-new-user-bcrypt-crash
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** `models/shared/passwordAuth.js`'s `pre('save')` hashing hook now
+  also skips hashing when `password` is falsy, not just when the path is unmodified —
+  `bcrypt.hash(undefined, 12)` was throwing "Illegal arguments: undefined, number"
+  because `isModified('password')` is `true` on a brand-new document even when
+  `password` was explicitly passed as `undefined` (as `googleSignIn` does for a
+  first-time Google account, which has no password).
+- **Why:** found while writing the regression test for #71 — a first-time Google
+  sign-in (no existing `Identity` for that email) crashed with a 500 instead of
+  creating the account, entirely blocking new-user Google sign-up. Filed as #111,
+  fixed here.
+- **Contract impact:** none — `POST /api/auth/google` now succeeds (200) for a
+  first-time email instead of 500; no existing successful-path behavior changed.
+- **Tests:** added `tests/integration/google-signin-new-user.test.js` (2 new cases:
+  first-time sign-in succeeds and issues tokens, repeat sign-in reuses the account).
+  Ran the full `npm run test:integration` suite locally (in-memory MongoDB via
+  `mongodb-memory-server`): 745/803 passed, same 58 pre-existing failures (17 suites,
+  unrelated) as the baseline — 0 new failures.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none — this only changes behavior for a `password` value that
+  previously crashed; no stored data needs backfilling.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-19 — Scope manager route-assignment to owned/public routes (issue #49)
 - **Branch:** issue/49-restrict-route-creation-to-super-admin
 - **Modules touched:** routes (docs/modules/ROUTES.md — still a stub, unchanged), admin (docs/modules/ADMIN.md — still a stub, unchanged)
