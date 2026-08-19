@@ -444,3 +444,95 @@ describe('Cross-manager attendance access', () => {
     expect(ids).toContain(String(riderOnBRouteId));
   });
 });
+
+// A manager-created route (POST /api/routes) was assignable by every other
+// manager — the assignable-routes list and both vehicle-route assignment paths
+// had no managerId scoping at all (issue #49). Fresh, vehicle-less managers
+// throughout so vehicle creation stays on the immediate-creation (bootstrap)
+// path rather than the request/approval one.
+describe('Route assignment ownership (issue #49)', () => {
+  let routeOwnerToken, otherManagerToken, ownedRouteId;
+
+  beforeAll(async () => {
+    const routeOwner = await createManager({ name: 'Route Owner' });
+    routeOwnerToken = routeOwner.token;
+
+    const other = await createManager({ name: 'Other Assigner' });
+    otherManagerToken = other.token;
+
+    const res = await request(app).post('/api/routes')
+      .set('Authorization', `Bearer ${routeOwnerToken}`)
+      .send({
+        routeId: `AUTHZ-ASSIGN-${Date.now()}`, routeName: 'Owner-Only Route',
+        source: 'Colombo', destination: 'Kurunegala', distance: 100, fare: 200, estimatedTime: 120
+      });
+    ownedRouteId = res.body.data.routeId;
+  });
+
+  it('writes an audit log entry for the owning manager on create', async () => {
+    const log = await ManagerAuditLog.findOne({ entityType: 'ROUTE', entityId: ownedRouteId, action: 'ROUTE_CREATED' });
+    expect(log).not.toBeNull();
+  });
+
+  it('does not list another manager\'s route as assignable', async () => {
+    const res = await request(app).get('/api/manager/routes')
+      .set('Authorization', `Bearer ${otherManagerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((route) => route.routeId)).not.toContain(ownedRouteId);
+  });
+
+  it('lists the route for its owning manager', async () => {
+    const res = await request(app).get('/api/manager/routes')
+      .set('Authorization', `Bearer ${routeOwnerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((route) => route.routeId)).toContain(ownedRouteId);
+  });
+
+  it('refuses a different manager assigning it to a new vehicle', async () => {
+    const res = await request(app).post('/api/manager/vehicle-accounts')
+      .set('Authorization', `Bearer ${otherManagerToken}`)
+      .send({
+        vehicleId: `AUTHZ-ASSIGN-VEH-${Date.now()}`,
+        numberPlate: `CAB-${5000 + Math.floor(Math.random() * 999)}`,
+        routeId: ownedRouteId
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/invalid route/i);
+
+    const created = await Vehicle.findOne({ routeId: ownedRouteId });
+    expect(created).toBeNull();
+  });
+
+  it('refuses a different manager reassigning their existing vehicle to it', async () => {
+    const create = await request(app).post('/api/manager/vehicle-accounts')
+      .set('Authorization', `Bearer ${otherManagerToken}`)
+      .send({
+        vehicleId: `AUTHZ-REASSIGN-VEH-${Date.now()}`,
+        numberPlate: `CAB-${6000 + Math.floor(Math.random() * 999)}`
+      });
+    expect(create.status).toBe(201);
+
+    const res = await request(app).put(`/api/manager/vehicles/${create.body.data.vehicle.vehicleId}`)
+      .set('Authorization', `Bearer ${otherManagerToken}`)
+      .send({ routeId: ownedRouteId });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/invalid route/i);
+  });
+
+  it('lets the owning manager assign their own route to a new vehicle', async () => {
+    const res = await request(app).post('/api/manager/vehicle-accounts')
+      .set('Authorization', `Bearer ${routeOwnerToken}`)
+      .send({
+        vehicleId: `AUTHZ-ASSIGN-OK-${Date.now()}`,
+        numberPlate: `CAB-${7000 + Math.floor(Math.random() * 999)}`,
+        routeId: ownedRouteId
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.vehicle.routeId).toBe(ownedRouteId);
+  });
+});
