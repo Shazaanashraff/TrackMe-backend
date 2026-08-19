@@ -23,6 +23,32 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — googleSignIn super-admin isolation regression test (issue #71)
+- **Branch:** issue/71-google-signin-super-admin-isolation-test
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** added `tests/integration/google-signin-super-admin-isolation.test.js`,
+  covering `authController.googleSignIn`'s `hasSuperAdminProfile` → `403
+  SUPER_ADMIN_ISOLATED` guard (previously untested), which exists specifically to
+  stop a super-admin account from ever being reached via Google sign-in.
+  `OAuth2Client.prototype.verifyIdToken` is mocked with `jest.spyOn` so the test
+  never calls out to Google.
+- **Why:** issue #71 — a security-relevant guard with zero regression coverage.
+- **Contract impact:** none — test-only, no production code changed.
+- **Tests:** `tests/integration/google-signin-super-admin-isolation.test.js` (2 new
+  cases: rejects with the code, issues no tokens). Ran locally against an in-memory
+  MongoDB (`mongodb-memory-server`) plus the `.env.example` JWT/room-key/QR env vars.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none.
+- **Follow-ups / known issues:** while writing this test, found that a **brand-new**
+  Google sign-in (no existing `Identity` for that email) crashes with a 500 —
+  `bcrypt.hash(undefined, 12)` in `src/models/shared/passwordAuth.js`'s `pre('save')`
+  hook, because `isModified('password')` is `true` on a new document even when
+  `password` was explicitly passed as `undefined`. Out of scope for this issue (which
+  only asks for the isolation-guard test) and left as a dropped third test case here —
+  filed separately as issue #111 with repro details.
+
+---
+
 ## 2026-08-19 — Fix first-time Google sign-in 500 (issue #111)
 - **Branch:** issue/111-google-signin-new-user-bcrypt-crash
 - **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
@@ -103,6 +129,8 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
     worth its own issue.
   - docs/modules/ROUTES.md is still the `PLANNED (doc)` stub; not written as part of
     this fix to keep the change scoped to the issue's acceptance criteria.
+
+---
 
 ## 2026-08-18 — Opt-in pagination on getMyRequests / getManagerAttendance (issue #64)
 - **Branch:** issue/64-manager-list-pagination
