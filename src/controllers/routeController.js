@@ -65,6 +65,13 @@ exports.createRoute = async (req, res, next) => {
       managerId: req.user.role === 'admin' ? req.user._id : null
     });
 
+    await writeRouteAuditLog({
+      user: req.user,
+      route,
+      action: 'ROUTE_CREATED',
+      metadata: { serviceType: route.serviceType }
+    });
+
     res.status(201).json({
       success: true,
       message: 'Route created successfully',

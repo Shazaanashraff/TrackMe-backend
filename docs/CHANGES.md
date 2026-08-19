@@ -49,6 +49,62 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-19 — Scope manager route-assignment to owned/public routes (issue #49)
+- **Branch:** issue/49-restrict-route-creation-to-super-admin
+- **Modules touched:** routes (docs/modules/ROUTES.md — still a stub, unchanged), admin (docs/modules/ADMIN.md — still a stub, unchanged)
+- **What changed:**
+  - `managerController.getManagerAssignableRoutes` (`GET /api/manager/routes`) now only
+    returns routes with no owning manager (super-admin/public) or owned by the calling
+    manager, instead of every active route regardless of owner.
+  - `managerController.createManagerVehicle` (`POST /api/manager/vehicle-accounts`) and
+    `updateManagerVehicle` (`PUT /api/manager/vehicles/:vehicleId`) now scope their route
+    lookup the same way, so a manager can no longer assign or reassign a vehicle to a
+    route owned by a different manager by sending its `routeId` directly (the picker was
+    already the only path in the web-admin UI, but the backend never enforced it — a
+    manager-created route was assignable by every other manager, entirely bypassing the
+    scoped private/custom-route workflow that exists for this purpose).
+  - `routeController.createRoute` (`POST /api/routes`) now writes a `ManagerAuditLog`
+    (`ROUTE_CREATED`) entry when the creator is a manager, matching every other
+    manager-scoped mutation in this controller (update/delete/toggle already did).
+- **Why:** issue #49 — `POST /api/routes` already scoped a manager-created route via
+  `managerId` (added in an earlier session) and update/delete/toggle already enforced
+  ownership, but nothing scoped route *assignment*: the manager-facing route picker and
+  both vehicle-create/update paths did an unscoped `Route.findOne`, so the actual
+  bypass described in the issue (a manager's route "assignable by every manager") was
+  still live in these three call sites.
+- **Contract impact:** `GET /api/manager/routes` now excludes another manager's owned
+  routes from the list; `POST /api/manager/vehicle-accounts` / `PUT
+  /api/manager/vehicles/:vehicleId` now return `400 Invalid route ID` for a `routeId`
+  the caller doesn't own (previously succeeded). web-admin never lets a manager reach
+  another manager's route through its own UI, so no web-admin change needed — noting
+  here per the cross-repo contract rule since the response *can* differ for a direct
+  API caller.
+- **Tests:** tests/integration/authz-ownership.test.js — new `Route assignment
+  ownership (issue #49)` describe block (6 cases: assignable-list excludes/includes,
+  create/update refuse a non-owned route, owner can assign, create writes the audit
+  log entry). Ran the full `npm run test:integration` suite locally against an
+  in-memory MongoDB (`mongodb-memory-server`, already a devDependency — see
+  Follow-ups) with the env vars from `.env.example` stubbed in: 743/801 passed, same
+  58 pre-existing failures (17 suites, all unrelated to routes/vehicles/managers — env
+  gaps like missing Google Places/Roads keys and push credentials, not caused by this
+  change) as an unmodified baseline run of the same suite.
+- **Docs updated:** docs/TESTING_GUIDE.md (new row under Routes and Buses).
+- **Migration:** none.
+- **Follow-ups / known issues:**
+  - CI (`.github/workflows/ci.yml`) only runs `npm test` (the smoke suite) —
+    `npm run test:integration` never runs in CI today. Locally it also silently no-ops
+    without a reachable Mongo (`tests/integration/db.js` defaults to
+    `mongodb://localhost:27017/trackme_test`), which this session initially hit before
+    finding `mongodb-memory-server` already installed as a devDependency. Wiring CI (or
+    at least a documented local script) to boot `mongodb-memory-server` + the JWT/room-key/QR
+    env vars from `.env.example` would let every future issue actually verify its
+    integration tests instead of relying on manual local setup like this session did —
+    worth its own issue.
+  - docs/modules/ROUTES.md is still the `PLANNED (doc)` stub; not written as part of
+    this fix to keep the change scoped to the issue's acceptance criteria.
+
+---
+
 ## 2026-08-18 — Opt-in pagination on getMyRequests / getManagerAttendance (issue #64)
 - **Branch:** issue/64-manager-list-pagination
 - **Modules touched:** buses (docs/modules/BUSES.md), QR attendance (docs/modules/QR_ATTENDANCE.md)
