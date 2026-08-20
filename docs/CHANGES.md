@@ -23,6 +23,37 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-20 — password-reset OTP flow + revokeAllSessions coverage for Manager/SuperAdmin (issue #72)
+- **Branch:** issue/72-password-reset-otp-manager-superadmin-coverage
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** added 4 tests to `tests/integration/password-reset.test.js` — the
+  existing suite only exercised the OTP reset flow (`request-otp` → `verify-otp` →
+  `reset`) for a rider. New coverage proves the same end-to-end flow works for a
+  Manager and a SuperAdmin identity (new password logs in, old password no longer
+  does), and that `revokeAllSessions` actually invalidates a pre-reset refresh
+  token for both roles — a refresh token issued before the reset is rejected
+  (401) by `POST /api/auth/refresh-token` once the reset completes.
+- **Why:** issue #72 — `requestPasswordResetOtp`/`verifyPasswordResetOtp`/
+  `resetPasswordWithToken` and `revokeAllSessions` had no test proving they work
+  for anything but a rider, despite the reset being identity-wide across all four
+  account collections.
+- **Contract impact:** none — test-only, no production code changed (the reset
+  flow and `revokeAllSessions` already worked correctly; this closes the coverage
+  gap).
+- **Tests:** `tests/integration/password-reset.test.js` — 4 new cases (Manager
+  end-to-end reset, SuperAdmin end-to-end reset, Manager refresh-token revocation,
+  SuperAdmin refresh-token revocation). `npm test` and `npm run test:integration`
+  both run clean against an in-memory MongoDB (`mongodb-memory-server`) plus the
+  `.env.example` JWT/room-key/QR env vars — 751/809 passing, the same 58
+  pre-existing failures as before this change (all external-API-dependent:
+  Google Places/Roads proxy tests and push-notification SDK mock tests, unrelated
+  to this change).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-19 — googleSignIn super-admin isolation regression test (issue #71)
 - **Branch:** issue/71-google-signin-super-admin-isolation-test
 - **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
