@@ -23,6 +23,45 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-20 — manager per-vehicle endpoint cross-manager scoping tests (issue #73)
+- **Branch:** issue/73-manager-vehicle-scoping-tests
+- **Modules touched:** buses (docs/modules/BUSES.md — unchanged, no behavior change)
+- **What changed:** added `tests/integration/manager-vehicle-scoping.test.js`,
+  proving manager B gets 404 (not the vehicle/driver data, and no side effect)
+  on `GET`/`PUT /api/manager/vehicles/:vehicleId`, `POST
+  /api/manager/vehicles/:vehicleId/delete-request`, and `PATCH
+  /api/manager/vehicle-accounts/:vehicleId/reset-password` when targeting a
+  vehicle owned by manager A — plus a happy-path check per endpoint for the
+  owning manager. All four handlers already scope through the same
+  `getManagedVehicleByVehicleId(managerId, vehicleId)` helper (which returns
+  404 for a vehicle outside the caller's fleet); this was previously
+  unverified by any test — `tests/manager-workflow.smoke.test.js` only
+  asserted `typeof managerController[key] === 'function'`.
+- **Why:** issue #73 — the largest coverage gap on the manager vehicle
+  surface, and exactly the class of authz-scoping bug this codebase's own
+  CLAUDE.md flags as mandatory to test. Scoped to the four mutating/reading
+  per-vehicle endpoints the issue names; `createManagerVehicle` (creation-only,
+  no existing-resource ownership branch) and the full smoke-test replacement
+  are out of scope for this change — the smoke test still has value as an
+  export/load sanity check and is left in place alongside this file.
+- **Contract impact:** none — test-only, no production code changed (the
+  scoping already worked correctly; this closes the coverage gap).
+- **Tests:** `tests/integration/manager-vehicle-scoping.test.js` (7 new
+  cases). `npm test` and `npm run test:integration` both run clean against an
+  in-memory MongoDB (`mongodb-memory-server`) plus the `.env.example`
+  JWT/room-key/QR env vars — 758/816 passing, the same 58 pre-existing
+  failures as before this change (all external-API-dependent: Google
+  Places/Roads proxy tests and push-notification SDK mock tests, unrelated to
+  this change).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Buses.
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #73's acceptance criteria also asked
+  to "replace/augment" the smoke test more broadly and cover
+  `createManagerVehicle` — left open as a smaller follow-up if wanted, since
+  the security-relevant scoping gap (the issue's main concern) is now closed.
+
+---
+
 ## 2026-08-20 — password-reset OTP flow + revokeAllSessions coverage for Manager/SuperAdmin (issue #72)
 - **Branch:** issue/72-password-reset-otp-manager-superadmin-coverage
 - **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
