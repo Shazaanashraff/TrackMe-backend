@@ -23,6 +23,42 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-20 — Manager/Super-Admin role-boundary regression test (cross-repo: TrackMe-WebAdmin#25)
+- **Branch:** cross-repo/webadmin-25-role-boundary-test
+- **Modules touched:** docs/modules/AUTH.md, docs/modules/ADMIN.md (both stubs, unchanged)
+- **What changed:** added a `Manager / Super-Admin role boundary` describe block to
+  `tests/integration/authz-ownership.test.js` (5 cases): a Manager token gets
+  403 on `/api/super-admin/managers`, `/api/super-admin/dashboard`, and
+  `POST /api/super-admin/managers` (no document created); a Driver and a
+  Rider token get the same 403; a Super-Admin token succeeds on the same
+  route; a Super-Admin token gets 403 on `/api/manager/dashboard` (the
+  reverse direction).
+- **Why:** `TrackMe-WebAdmin#25` asked whether the Manager/Super-Admin role
+  boundary — described as "not cosmetic" and backend-enforced in that repo's
+  own CLAUDE.md — actually holds, since nothing had ever tested it and
+  web-admin's own e2e suite mocks the backend via `page.route()` for every
+  spec, so it can only assert the UI's reaction to a given response, never
+  prove real server-side enforcement. That proof has to live here. Verified
+  empirically (not just by reading the middleware) before writing the test:
+  both `superAdminRoutes.js` and `managerRoutes.js` gate with `requireRoles`
+  applied once via `router.use()`, an exact role-string match — no
+  route-by-route gap for a regression to reintroduce quietly, but this went
+  untested until now. **Result: the boundary holds in both directions** — no
+  fix needed, this closes a coverage gap only.
+- **Contract impact:** none — test-only, no production code changed.
+- **Tests:** `tests/integration/authz-ownership.test.js` (+5 cases, 32/32
+  passing in the file). `npm test` and `npm run test:integration` both run
+  clean — 763/821 passing, the same 58 pre-existing failures as before this
+  change (all external-API-dependent, unrelated).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** commenting on `TrackMe-WebAdmin#25` with
+  this finding and this PR link — the verification the issue asked for now
+  exists, just in this repo rather than web-admin (the only repo that can
+  actually prove it).
+
+---
+
 ## 2026-08-20 — manager per-vehicle endpoint cross-manager scoping tests (issue #73)
 - **Branch:** issue/73-manager-vehicle-scoping-tests
 - **Modules touched:** buses (docs/modules/BUSES.md — unchanged, no behavior change)
