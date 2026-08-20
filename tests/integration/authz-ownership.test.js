@@ -3,6 +3,7 @@ const app = require('../../src/server');
 
 const Driver = require('../../src/models/Driver');
 const User = require('../../src/models/User');
+const Manager = require('../../src/models/Manager');
 
 const Route = require('../../src/models/Route');
 const Vehicle = require('../../src/models/Vehicle');
@@ -534,5 +535,62 @@ describe('Route assignment ownership (issue #49)', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.data.vehicle.routeId).toBe(ownedRouteId);
+  });
+});
+
+// Cross-repo: TrackMe-WebAdmin#25 asked whether the Manager/Super-Admin role
+// boundary actually holds server-side (web-admin's own e2e suite only mocks
+// the backend via page.route(), so it can assert the UI's behavior given a
+// response but can never prove real enforcement — that proof has to live
+// here). Both routers gate on an EXACT role match via requireRoles, applied
+// once via router.use() rather than per-route, so there's no route-by-route
+// gap to find — but that was untested until now.
+describe('Manager / Super-Admin role boundary (cross-repo: TrackMe-WebAdmin#25)', () => {
+  it('refuses a Manager token on every /api/super-admin/* route tried (403, not silently allowed)', async () => {
+    const list = await request(app).get('/api/super-admin/managers')
+      .set('Authorization', `Bearer ${managerAToken}`);
+    expect(list.status).toBe(403);
+
+    const dashboard = await request(app).get('/api/super-admin/dashboard')
+      .set('Authorization', `Bearer ${managerAToken}`);
+    expect(dashboard.status).toBe(403);
+  });
+
+  it('a Manager cannot create a new manager account via the Super-Admin-only endpoint', async () => {
+    const before = await Manager.countDocuments({});
+
+    const res = await request(app).post('/api/super-admin/managers')
+      .set('Authorization', `Bearer ${managerAToken}`)
+      .send({
+        name: 'Forged Manager', email: `forged-${Date.now()}@test.com`, password: 'P@ssw0rd!'
+      });
+
+    expect(res.status).toBe(403);
+    expect(await Manager.countDocuments({})).toBe(before);
+  });
+
+  it('lets the Super-Admin token through on the same route a Manager was refused', async () => {
+    const res = await request(app).get('/api/super-admin/managers')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('refuses a Super-Admin token on /api/manager/* — the reverse direction (issue #25)', async () => {
+    const res = await request(app).get('/api/manager/dashboard')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a Driver or a Rider token on /api/super-admin/* the same way', async () => {
+    const asDriver = await request(app).get('/api/super-admin/managers')
+      .set('Authorization', `Bearer ${driverAToken}`);
+    expect(asDriver.status).toBe(403);
+
+    const asRider = await request(app).get('/api/super-admin/managers')
+      .set('Authorization', `Bearer ${riderAToken}`);
+    expect(asRider.status).toBe(403);
   });
 });
