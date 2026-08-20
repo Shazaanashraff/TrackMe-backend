@@ -19,8 +19,13 @@ of your next change here — that is the change protocol, not optional extra wor
 > payload carries the rider's `name`, `riderCode`, `contactPhone`, `isManagedProfile` (true when
 > the rider is not the account holder's own row), `account` (the owning account's name/email/phone)
 > and `organizationValues` — the answers the rider gave that organization's enrolment form, which
-> is what the manager is being asked to approve. See [`PROFILES.md`](PROFILES.md) §6 and
-> `tests/integration/manager-enrollments-managed-profile.test.js`.
+> is what the manager is being asked to approve. Each row also carries `organization`
+> (`{_id, name, serviceType}`, from the rider's organization profile, falling back to the driver's
+> own organization for a legacy row) and `passenger.organizationDetails` — the same answers as an
+> ordered `{key, label, value}` list, labelled through `normalizedEnrollmentConfig()` so an
+> organization that never opened the form builder still gets the catalog's "Grade" rather than the
+> storage key "grade". `organizationValues` stays as the raw map for anything reading by key. See
+> [`PROFILES.md`](PROFILES.md) §6 and `tests/integration/manager-enrollments-managed-profile.test.js`.
 
 ## What this doc must cover
 

@@ -5,7 +5,9 @@ const User = require('../models/User');
 const Identity = require('../models/Identity');
 const RiderProfile = require('../models/RiderProfile');
 const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
+const Organization = require('../models/Organization');
 const { mapValuesToObject } = require('../utils/riders');
+const { normalizedEnrollmentConfig } = require('../utils/enrollmentSchema');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 
@@ -84,7 +86,7 @@ async function resolvePassengers(enrollments) {
       : [],
     organizationProfileIds.length
       ? RiderOrganizationProfile.find({ _id: { $in: organizationProfileIds } })
-        .select('values')
+        .select('values organizationId')
         .lean()
       : []
   ]);
@@ -94,15 +96,59 @@ async function resolvePassengers(enrollments) {
     ? await User.find({ _id: { $in: accountIds } }).select('name email phoneNumber').lean()
     : [];
 
+  // The form answers are stored keyed by field key ("grade"), so the manager
+  // deciding a request would otherwise see the bare key and no sign of which
+  // organization asked for it. The organization carries both: its name, and the
+  // label and order it configured for each field.
+  const organizationIds = [...new Set(
+    organizationProfiles.map((p) => p.organizationId).filter(Boolean).map(String)
+  )];
+  const organizations = organizationIds.length
+    ? await Organization.find({ _id: { $in: organizationIds } })
+      .select('name serviceType enrollmentConfig')
+      .lean()
+    : [];
+
   const riderById = new Map(riders.map((r) => [String(r._id), r]));
   const accountById = new Map(accounts.map((a) => [String(a._id), a]));
+  const organizationById = new Map(organizations.map((o) => [String(o._id), o]));
+  const organizationByProfileId = new Map(
+    organizationProfiles.map((p) => [String(p._id), organizationById.get(String(p.organizationId)) || null])
+  );
   const valuesByProfileId = new Map(
     organizationProfiles.map((p) => [String(p._id), mapValuesToObject(p.values)])
   );
   const legacyById = new Map(legacyPassengers.map((p) => [String(p._id), p]));
   const legacyAccounts = await resolveAccountsForPassengers(legacyPassengers);
 
+  // Labelled and ordered the way the organization's own enrolment form is, with
+  // an answer to a field it has since removed kept at the end rather than
+  // dropped: it is still what this request was raised with.
+  const detailsFor = (organization, values) => {
+    // Normalized rather than read straight off the document: an organization
+    // that has never opened the form builder stores no config at all, and the
+    // catalog default is where "grade" gets to be labelled "Grade" — the same
+    // label the passenger answered it under.
+    const fields = organization ? normalizedEnrollmentConfig(organization).fields : [];
+    const labelled = fields
+      .filter((field) => Object.prototype.hasOwnProperty.call(values, field.key))
+      .map((field) => ({ key: field.key, label: field.label || field.key, value: values[field.key] }));
+    const known = new Set(labelled.map((entry) => entry.key));
+    const rest = Object.entries(values)
+      .filter(([key]) => !known.has(key))
+      .map(([key, value]) => ({ key, label: key, value }));
+    return [...labelled, ...rest].filter((entry) => String(entry.value == null ? '' : entry.value).trim() !== '');
+  };
+
   return (enrollment) => {
+    const profileId = String(enrollment.organizationProfileId);
+    const organization = organizationByProfileId.get(profileId) || null;
+    const organizationValues = valuesByProfileId.get(profileId) || {};
+    const organizationSummary = organization
+      ? { _id: organization._id, name: organization.name, serviceType: organization.serviceType || '' }
+      : null;
+    const organizationDetails = detailsFor(organization, organizationValues);
+
     const rider = riderById.get(String(enrollment.studentId));
     if (rider) {
       const account = accountById.get(String(rider.accountId)) || null;
@@ -118,18 +164,22 @@ async function resolvePassengers(enrollments) {
           isManagedProfile: String(rider._id) !== String(rider.accountId),
           email: account?.email || '',
           contactPhone: rider.guardianPhoneOverride || account?.phoneNumber || '',
-          // What the rider answered on this organization's enrolment form — the
+          // What the rider answered on this organization's enrolment form: the
           // grade or employee ID the manager is being asked to approve.
-          organizationValues: valuesByProfileId.get(String(enrollment.organizationProfileId)) || {}
+          // `organizationDetails` is the labelled, ordered form of the same
+          // answers; the raw map stays for anything reading them by field key.
+          organizationValues,
+          organizationDetails
         },
         account: account
           ? { name: account.name || '', email: account.email || '', phoneNumber: account.phoneNumber || '' }
-          : null
+          : null,
+        organization: organizationSummary
       };
     }
 
     const legacy = legacyById.get(String(enrollment.userId));
-    if (!legacy) return { passenger: null, account: null };
+    if (!legacy) return { passenger: null, account: null, organization: organizationSummary };
     const account = legacyAccounts.get(String(legacy._id)) || null;
     return {
       passenger: {
@@ -141,19 +191,24 @@ async function resolvePassengers(enrollments) {
         isManagedProfile: legacy.profileKind === 'MANAGED',
         email: legacy.email || account?.email || '',
         contactPhone: legacy.phoneNumber || account?.phoneNumber || '',
-        organizationValues: valuesByProfileId.get(String(enrollment.organizationProfileId)) || {}
+        organizationValues,
+        organizationDetails
       },
-      account
+      account,
+      organization: organizationSummary
     };
   };
 }
 
-const requestSummary = (enrollment, driver, passenger, account) => ({
+const requestSummary = (enrollment, driver, passenger, account, organization = null) => ({
   _id: enrollment._id,
   status: enrollment.status,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
   driver: driver ? { _id: driver._id, name: driver.name, driverCode: driver.driverCode || null } : null,
+  // Which organization's form the answers below belong to. A manager can run
+  // more than one, so the queue names it per request instead of assuming.
+  organization,
   // `passenger` is already normalized by resolvePassengers, whichever owner
   // field the row carries. `email` there is the owning account's, so the
   // web-admin column keeps working for a rider that has no email of its own.
@@ -202,7 +257,8 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
     // Scoped by the drivers this manager owns rather than the denormalised
     // managerId, so drivers moved between managers still list correctly.
     const drivers = await Driver.find({ managerId: req.user._id })
-      .select('name driverCode')
+      .select('name driverCode organization')
+      .populate('organization', 'name serviceType')
       .lean();
 
     if (!drivers.length) {
@@ -220,8 +276,18 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
     const resolve = await resolvePassengers(enrollments);
 
     const data = enrollments.map((enrollment) => {
-      const { passenger, account } = resolve(enrollment);
-      return requestSummary(enrollment, driverById.get(String(enrollment.driverId)), passenger, account);
+      const { passenger, account, organization } = resolve(enrollment);
+      const driver = driverById.get(String(enrollment.driverId));
+      // A legacy row carries no organization profile to read the name from; the
+      // driver it was raised against belongs to one either way.
+      const driverOrganization = driver?.organization
+        ? {
+          _id: driver.organization._id,
+          name: driver.organization.name,
+          serviceType: driver.organization.serviceType || ''
+        }
+        : null;
+      return requestSummary(enrollment, driver, passenger, account, organization || driverOrganization);
     });
 
     return res.status(200).json({ success: true, data });
@@ -273,12 +339,12 @@ const decide = (approved) => async (req, res, next) => {
     if (student) await notifyPassenger(enrollment, driver, approved, student);
 
     const resolve = await resolvePassengers([enrollment]);
-    const { passenger, account } = resolve(enrollment);
+    const { passenger, account, organization } = resolve(enrollment);
 
     return res.status(200).json({
       success: true,
       message: approved ? 'Enrollment approved' : 'Enrollment declined',
-      data: requestSummary(enrollment, driver, passenger, account)
+      data: requestSummary(enrollment, driver, passenger, account, organization)
     });
   } catch (error) {
     next(error);

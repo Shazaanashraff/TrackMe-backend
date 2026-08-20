@@ -23,6 +23,28 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-20 — The approval queue names the organization and labels its answers
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` (and the approve/reject response) now carry
+    `organization: {_id, name, serviceType}` per row, resolved from the rider's organization
+    profile and falling back to the driver's own organization for a legacy row.
+  - `passenger.organizationDetails` repeats the form answers as an ordered
+    `{key, label, value}` list, labelled through `normalizedEnrollmentConfig()`.
+    `passenger.organizationValues` is unchanged.
+- **Why:** the web-admin queue could only render `grade: 4` with no sign of which organization
+  asked, because the answers are stored keyed by field key and the payload named no organization.
+- **Contract impact:** additive only. Consumer doc updated:
+  `web-admin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` (two new cases plus
+  approve-response assertions), run against an isolated `trackme_test` database.
+- **Docs updated:** [`docs/modules/ADMIN.md`](modules/ADMIN.md), TESTING_GUIDE row.
+- **Migration:** none. Nothing is stored differently; the extra fields are derived per request.
+- **Follow-ups / known issues:** sandbox seeds no PENDING enrollment, so this queue stays empty
+  in Developer Mode.
+
 ## 2026-08-20 — Enrollments are read back per rider profile, not per account
 
 - **Branch:** feature/rider-photos
@@ -137,7 +159,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ## 2026-08-14 — Active enrolments expose driver and vehicle details
 
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** driver enrolment (cross-client contract)
 - **What changed:** The enrollment driver summary now includes an optional email and expands its
   vehicle object with vehicle name, type, and service type alongside the existing ID, plate, and
@@ -156,7 +178,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ## 2026-08-14 — Live vehicle location: driver GO → enrolled riders + manager
 
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** realtime — [`docs/modules/REALTIME.md`](modules/REALTIME.md) (rewritten;
   the previous version documented a `bus:update`/`manager:join-bus` contract deleted in `6680eac`)
 - **What changed:**
@@ -244,7 +266,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 ---
 
 ## 2026-08-13 — Vehicle creation past the first requires super-admin approval
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, not updated)
 - **What changed:**
   - `POST /api/manager/vehicle-accounts` now creates a manager's *first* vehicle
@@ -435,7 +457,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   environment (no local Mongo) — run them before deploy.
 
 ## 2026-07-22 — Driver on-board roster endpoint
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** qr-attendance — [docs/modules/QR_ATTENDANCE.md](modules/QR_ATTENDANCE.md)
 - **What changed:** Added `GET /api/driver/boarding/roster?busId=&tripId=` returning the enrolled
   roster (ACTIVE `RouteMembership` on the bus's route) joined with each rider's current on-board
@@ -454,7 +476,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   the computed `guests`/boarded-this-trip count can become a fallback denominator later.
 
 ## 2026-07-22 — Documentation system (backend variant)
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** docs only (no `src/` change)
 - **What changed:**
   - `CLAUDE.md` rewritten as a **router** (architecture overview, mounted API surface, the

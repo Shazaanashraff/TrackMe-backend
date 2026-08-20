@@ -24,6 +24,7 @@ let parent;
 let parentAuth;
 let selfRiderId;
 let addedRiderId;
+let organizationName;
 
 beforeAll(async () => {
   await connectTestDb();
@@ -33,8 +34,9 @@ beforeAll(async () => {
   manager = await createManager({ name: 'Fleet Manager' });
   managerAuth = authHeader(manager.token);
 
+  organizationName = `Ananda College ${Date.now()}`;
   const organization = await Organization.create({
-    name: `Ananda College ${Date.now()}`,
+    name: organizationName,
     serviceType: 'SCHOOL',
     managerId: manager.id
   });
@@ -123,6 +125,25 @@ describe('GET /api/manager/enrollment-requests — who the request is for', () =
     expect(added.passenger.organizationValues).toEqual({ grade: '6' });
     expect(self.passenger.organizationValues).toEqual({ grade: '11' });
   });
+
+  // The answers alone read as "grade: 6" with no sign of whose form asked, and
+  // a manager can run more than one organization.
+  test('each row names the organization whose form was answered', async () => {
+    const res = await queue();
+    const row = res.body.data.find((r) => String(r.passenger._id) === String(addedRiderId));
+
+    expect(row.organization).toMatchObject({ name: organizationName, serviceType: 'SCHOOL' });
+  });
+
+  test('the answers arrive labelled the way the organization asked for them', async () => {
+    const res = await queue();
+    const row = res.body.data.find((r) => String(r.passenger._id) === String(addedRiderId));
+
+    // "Grade", not the storage key "grade": the label comes from the
+    // organization's enrolment schema, which falls back to the service-type
+    // catalog when it has never been configured.
+    expect(row.passenger.organizationDetails).toEqual([{ key: 'grade', label: 'Grade', value: '6' }]);
+  });
 });
 
 describe('POST /api/manager/enrollment-requests/:id/approve — the decision response', () => {
@@ -138,5 +159,7 @@ describe('POST /api/manager/enrollment-requests/:id/approve — the decision res
     expect(res.body.data.passenger.isManagedProfile).toBe(true);
     expect(res.body.data.passenger.account.email).toBe(parent.email);
     expect(res.body.data.passenger.organizationValues).toEqual({ grade: '6' });
+    expect(res.body.data.passenger.organizationDetails).toEqual([{ key: 'grade', label: 'Grade', value: '6' }]);
+    expect(res.body.data.organization).toMatchObject({ name: organizationName });
   });
 });
