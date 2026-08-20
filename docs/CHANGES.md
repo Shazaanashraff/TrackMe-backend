@@ -23,6 +23,32 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-20 — Enrollments are read back per rider profile, not per account
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md) (enrollment read path)
+- **What changed:**
+  - `GET /api/enrollments/mine` now honours the `riderId` query parameter the passenger app
+    has always sent, returning only that rider profile's enrollments.
+  - Omitting `riderId` keeps the previous full-merge behaviour, so older clients are unaffected.
+- **Why:** on an account with two rider profiles, `getMyEnrollments` merged every profile's
+  enrollments into one list, so both riders showed the same cards. Enrolling one rider looked
+  like it enrolled the other, and a Leave tap could delete the sibling rider's enrollment
+  because the wrong record was on screen.
+- **Contract impact:** `GET /api/enrollments/mine` gains an optional `riderId` filter; response
+  shape unchanged. Documented on the client side in the user-app's
+  `docs/modules/DRIVER_ENROLLMENT.md`. `getHouseholdEnrollments` and the shared
+  `loadEnrollmentsByProfile` loader are untouched.
+- **Tests:** `tests/integration/enrollment-rider-path.test.js` — new "multiple rider profiles on
+  one account" case covering per-rider reads, the no-`riderId` back-compat path, and that leaving
+  one rider's enrollment leaves the sibling's intact.
+- **Docs updated:** user-app `docs/modules/DRIVER_ENROLLMENT.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** an enrollment already destroyed by this bug before the fix
+  cannot be recovered in code — the affected rider has to redeem the enrollment key again.
+
+---
+
 ## 2026-08-19 — A picture per rider, fetched on its own and versioned for caching
 
 - **Branch:** feature/rider-photos

@@ -262,7 +262,10 @@ exports.redeemEnrollmentKey = async (req, res, next) => {
 exports.getMyEnrollments = async (req, res, next) => {
   try {
     const byProfile = await loadEnrollmentsByProfile([req.user._id]);
-    return res.status(200).json({ success: true, data: byProfile.get(String(req.user._id)) || [] });
+    const all = byProfile.get(String(req.user._id)) || [];
+    const riderId = req.query.riderId ? String(req.query.riderId) : null;
+    const data = riderId ? all.filter((item) => String(item.riderId) === riderId) : all;
+    return res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }
