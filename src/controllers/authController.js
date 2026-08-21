@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const { OAuth2Client } = require('google-auth-library');
 const Manager = require('../models/Manager');
+const Identity = require('../models/Identity');
 const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
 const {
   accessTokenExpiresIn,
@@ -1104,6 +1105,42 @@ exports.updateAvatar = async (req, res, next) => {
       message: 'Profile picture updated',
       user: userPayload(user, req.user.role, await hydrateIdentity(user))
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Change the caller's own password (requires the current one)
+// @route   PUT /api/auth/change-password
+// @access  Private
+exports.changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!req.user.identityId) {
+      // Driver-code-only accounts have no Identity login to change — see
+      // docs/modules/AUTH.md §1. Not reachable from web-admin (manager/super-admin
+      // always have an Identity), but guarded here since `protect` covers every role.
+      return res.status(400).json({
+        success: false,
+        message: 'This account has no password-based login to change.'
+      });
+    }
+
+    const identity = await Identity.findById(req.user.identityId).select('+password');
+    if (!identity) {
+      return res.status(404).json({ success: false, message: 'Account not found' });
+    }
+
+    const isMatch = await identity.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect' });
+    }
+
+    identity.password = newPassword;
+    await identity.save();
+
+    return res.status(200).json({ success: true, message: 'Password updated successfully' });
   } catch (error) {
     next(error);
   }

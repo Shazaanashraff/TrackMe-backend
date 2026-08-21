@@ -15,7 +15,8 @@ const {
 	completeAccountSetup,
 	getMe,
 	updateProfile,
-	updateAvatar
+	updateAvatar,
+	changePassword
 } = require('../controllers/authController');
 const {
 	validateRegister,
@@ -27,7 +28,8 @@ const {
 	validateForgotPasswordVerifyOtp,
 	validateForgotPasswordReset,
 	validateAccountSetupValidate,
-	validateAccountSetupComplete
+	validateAccountSetupComplete,
+	validateChangePassword
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
 const { protect } = require('../middleware/auth');
@@ -107,5 +109,8 @@ router.put('/profile', protect, updateProfile);
 // PUT /api/auth/avatar — body carries a base64 image data URL; the app-wide JSON
 // limit (3 MB, set in server.js) covers it. Size is re-checked in the controller.
 router.put('/avatar', protect, updateAvatar);
+
+// PUT /api/auth/change-password — self-service, requires the current password.
+router.put('/change-password', protect, validateChangePassword, handleValidationErrors, changePassword);
 
 module.exports = router;

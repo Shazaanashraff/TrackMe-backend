@@ -14,7 +14,7 @@ jest.mock('resend', () => ({
 const app = require('../../src/server');
 const User = require('../../src/models/User');
 const { connectTestDb, closeTestDb } = require('./db');
-const { createRider, createManager } = require('./factories');
+const { createRider, createManager, createSuperAdmin, DEFAULT_PASSWORD } = require('./factories');
 
 // Matches the real API: POST /api/auth/login returns
 // { success, message, accessToken, refreshToken, user } on success.
@@ -335,6 +335,92 @@ describe('Auth Integration - PUT /api/auth/avatar (profile picture)', () => {
     const res = await request(app)
       .put('/api/auth/avatar')
       .send({ avatar: VALID_AVATAR })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('Auth Integration - PUT /api/auth/change-password', () => {
+  const NEW_PASSWORD = 'NewP@ss1!';
+
+  test('manager: correct current password updates the login for both apps', async () => {
+    const { token, doc } = await createManager();
+
+    const res = await request(app)
+      .put('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: DEFAULT_PASSWORD, newPassword: NEW_PASSWORD })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    // Old password no longer works, new one does — proves the write landed on
+    // the shared Identity, not a dormant field on the Manager profile itself.
+    const oldLogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: doc.email, password: DEFAULT_PASSWORD, audience: 'manager' });
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: doc.email, password: NEW_PASSWORD, audience: 'manager' });
+    expect(newLogin.status).toBe(200);
+  });
+
+  test('super-admin: correct current password updates the login', async () => {
+    const { token, doc } = await createSuperAdmin();
+
+    const res = await request(app)
+      .put('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: DEFAULT_PASSWORD, newPassword: NEW_PASSWORD })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(200);
+
+    const newLogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: doc.email, password: NEW_PASSWORD, audience: 'super-admin' });
+    expect(newLogin.status).toBe(200);
+  });
+
+  test('rejects an incorrect current password with 401 and leaves the password unchanged', async () => {
+    const { token, doc } = await createManager();
+
+    const res = await request(app)
+      .put('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'TotallyWrong1!', newPassword: NEW_PASSWORD })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+
+    const stillWorks = await request(app)
+      .post('/api/auth/login')
+      .send({ email: doc.email, password: DEFAULT_PASSWORD, audience: 'manager' });
+    expect(stillWorks.status).toBe(200);
+  });
+
+  test('rejects a new password that fails complexity rules', async () => {
+    const { token } = await createManager();
+
+    const res = await request(app)
+      .put('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: DEFAULT_PASSWORD, newPassword: 'weak' })
+      .set('Accept', 'application/json');
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('rejects when unauthenticated', async () => {
+    const res = await request(app)
+      .put('/api/auth/change-password')
+      .send({ currentPassword: DEFAULT_PASSWORD, newPassword: NEW_PASSWORD })
       .set('Accept', 'application/json');
 
     expect(res.status).toBe(401);

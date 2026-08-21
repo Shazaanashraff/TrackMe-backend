@@ -381,6 +381,18 @@ exports.validateAccountSetupComplete = [
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
 ];
 
+exports.validateChangePassword = [
+  body('currentPassword')
+    .notEmpty().withMessage('Current password is required'),
+  body('newPassword')
+    .notEmpty().withMessage('New password is required')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
+];
+
 exports.validateAssignVehicles = [
   body('vehicleIds')
     .isArray({ min: 1 }).withMessage('vehicleIds must be a non-empty array'),

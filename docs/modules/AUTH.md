@@ -42,6 +42,7 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 | `GET` | `/me` | `protect` | `getMe` | Re-reads the caller's own profile — see `user-app`'s `AUTH.md`. |
 | `PUT` | `/profile` | `protect` | `updateProfile` | name, phoneNumber. `phoneNumber` is silently ignored for a `MANAGED` rider profile — see [`PROFILES.md`](PROFILES.md). |
 | `PUT` | `/avatar` | `protect` | `updateAvatar` | base64 data URL; size re-checked in controller. |
+| `PUT` | `/change-password` | `protect` | `changePassword` | Self-service; requires `currentPassword` + `newPassword` (same complexity rule as reset). Writes to the caller's `Identity`, so it also changes the login for every other role that Identity holds. 400 if the caller has no `identityId` (driver-code-only login). |
 
 ## 3. Key files (one job each)
 

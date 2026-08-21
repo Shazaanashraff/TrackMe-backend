@@ -23,6 +23,35 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-21 — Self-service change-password endpoint (cross-repo: TrackMe-WebAdmin#6)
+- **Branch:** issue/6-webadmin-settings-change-password (backend half)
+- **Modules touched:** [`docs/modules/AUTH.md`](modules/AUTH.md)
+- **What changed:** added `PUT /api/auth/change-password` (`protect`, `changePassword` in
+  `authController.js`), plus `validateChangePassword` (same complexity rule as
+  `resetPasswordWithToken`). Verifies `currentPassword` against the caller's `Identity` via
+  `comparePassword`, then writes `newPassword` (re-hashed by the existing `pre('save')` hook).
+  400 if the caller has no `identityId` (driver-code-only login has no Identity to change).
+- **Why:** `TrackMe-WebAdmin#6` needed a real settings surface instead of a permanent
+  "under development" placeholder; the WebAdmin acceptance criteria's suggested minimum is a
+  password-change shortcut, and no self-service (as opposed to admin-resetting-someone-else's)
+  password endpoint existed for any role.
+- **Contract impact:** new endpoint, additive only — no existing response shape changed.
+  Consumed by `web-admin`'s new Settings page (Manager + Super-Admin); documented in
+  `web-admin/docs/modules/SETTINGS.md` in the same cross-repo change.
+- **Tests:** `tests/integration/auth.test.js` — new `PUT /api/auth/change-password` describe
+  block (6 cases): manager and super-admin happy path (old password stops working, new one
+  signs in — proves the write landed on the shared `Identity`, not a dormant profile field);
+  wrong current password → 401, password left unchanged; weak new password → 400; 401
+  unauthenticated. **Could not run** — no MongoDB reachable in this environment (confirmed:
+  port 27017 closed, `mongodb-memory-server` times out), same gap noted on PR #103. `npm test`
+  (smoke) and `npx jest tests/unit` (182/182) are green and unaffected by this change.
+- **Docs updated:** `docs/modules/AUTH.md` API table, `docs/TESTING_GUIDE.md` new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** `npm run test:integration` needs to be run against a live
+  Mongo before merging — see PR body.
+
+---
+
 ## 2026-08-20 — Manager/Super-Admin role-boundary regression test (cross-repo: TrackMe-WebAdmin#25)
 - **Branch:** cross-repo/webadmin-25-role-boundary-test
 - **Modules touched:** docs/modules/AUTH.md, docs/modules/ADMIN.md (both stubs, unchanged)
