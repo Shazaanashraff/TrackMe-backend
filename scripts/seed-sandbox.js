@@ -137,16 +137,23 @@ async function seedManagers() {
   return managers;
 }
 
-async function seedDrivers() {
+// A driver belongs to exactly one manager (Driver.managerId), and every
+// manager-facing query scopes by it: the driver directory, the enrolment queue
+// and the enrolled roster all resolve through the drivers a manager owns. Seeded
+// with managerId null, the whole manager portal renders empty, so the fixtures
+// alternate between the two managers. One of them is deliberately `isPrivate`,
+// which is what decides whether redeeming their key queues a request (PENDING)
+// or enrols outright (ACTIVE) — both states need to exist to be seen.
+async function seedDrivers(managers) {
   const fixtures = [
-    { name: 'Driver One' },
-    { name: 'Driver Two' },
-    { name: 'Driver Three' },
-    { name: 'Driver Four' },
+    { name: 'Driver One', isPrivate: false },
+    { name: 'Driver Two', isPrivate: true },
+    { name: 'Driver Three', isPrivate: true },
+    { name: 'Driver Four', isPrivate: false },
   ];
 
   const drivers = [];
-  for (const fixture of fixtures) {
+  for (const [index, fixture] of fixtures.entries()) {
     // No Identity: a driver's permanent, human-readable driverCode is its real sign-in
     // credential (see src/models/Driver.js), same as managerDriversController.createManagerDriver.
     const driver = await Driver.create({
@@ -155,6 +162,8 @@ async function seedDrivers() {
       password: SANDBOX_PASSWORD,
       phoneNumber: '0770000000',
       isActive: true,
+      isPrivate: fixture.isPrivate,
+      managerId: managers[index % managers.length]._id,
     });
     drivers.push(driver);
   }
@@ -256,6 +265,23 @@ async function seedLiveTracking(rider, drivers, vehicles) {
     status: 'ACTIVE',
     requiredApproval: false,
   });
+
+  // A second enrolment, still queued, with a PRIVATE driver of the same manager.
+  // The manager's Enrollments screen needs both states to be worth looking at:
+  // ACTIVE is someone already riding (the Enrolled tab and the Riders count on
+  // the driver directory), PENDING is someone awaiting a decision.
+  const pendingDriver = drivers.find((d) => (
+    d.isPrivate && String(d.managerId) === String(enrolledDriver.managerId)
+  ));
+  if (pendingDriver) {
+    await DriverEnrollment.create({
+      studentId: riderProfile._id,
+      driverId: pendingDriver._id,
+      managerId: pendingDriver.managerId || null,
+      status: 'PENDING',
+      requiredApproval: true,
+    });
+  }
 
   const liveVehicle = vehicles.find((v) => String(v.driverId) === String(enrolledDriver._id));
   if (liveVehicle) {
@@ -380,7 +406,7 @@ async function main() {
   const managers = await seedManagers();
   console.log(`Seeded ${managers.length} managers`);
 
-  const drivers = await seedDrivers();
+  const drivers = await seedDrivers(managers);
   console.log(`Seeded ${drivers.length} drivers`);
 
   const routes = await seedRoutes();
