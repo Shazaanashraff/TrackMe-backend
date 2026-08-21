@@ -34,9 +34,23 @@ let managerId, driverId, driverToken, otherDriverToken;
 let route, vehicle;
 let riderOn, riderOff, riderNever, guest;
 
+// The enrolment's owner is `studentId`, a RiderProfile — `userId` is the
+// deprecated account-level owner, and the schema now requires studentId, so the
+// old fixture could not even be saved. The account holder's own rider row is
+// created with `_id: account._id` (utils/riders.js), which is also the id a
+// BoardingEvent carries, so materialising it the way the app does keeps the
+// roster and the events keyed the same way.
+async function ensureRiderProfile(rider) {
+  const res = await request(app)
+    .get('/api/riders')
+    .set('Authorization', `Bearer ${rider.token}`);
+  return res.body.data[0]._id;
+}
+
 async function enroll(rider) {
+  const studentId = await ensureRiderProfile(rider);
   await DriverEnrollment.create({
-    userId: rider.id, driverId, managerId, status: 'ACTIVE'
+    studentId, driverId, managerId, status: 'ACTIVE'
   });
 }
 
@@ -75,6 +89,9 @@ beforeAll(async () => {
   await enroll(riderOn);
   await enroll(riderOff);
   await enroll(riderNever);
+  // Not enrolled, but their profile still has to exist for the guest list to
+  // name them.
+  await ensureRiderProfile(guest);
 });
 
 afterAll(async () => {

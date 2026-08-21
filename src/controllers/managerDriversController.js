@@ -212,6 +212,33 @@ exports.getManagerDrivers = async (req, res, next) => {
       : [];
     const organizationById = new Map(organizations.map((o) => [String(o._id), o]));
 
+    // How many people have actually enrolled with each driver, in one aggregate
+    // for the whole page rather than a count per row. The directory is the only
+    // place this can be seen: a rider who redeems a NON-private driver's key is
+    // written straight to ACTIVE (enrollmentController) and so never appears in
+    // the approval queue at all.
+    const enrollmentCounts = drivers.length
+      ? await DriverEnrollment.aggregate([
+        {
+          $match: {
+            driverId: { $in: drivers.map((d) => d._id) },
+            status: { $in: ['ACTIVE', 'PENDING'] }
+          }
+        },
+        { $group: { _id: { driverId: '$driverId', status: '$status' }, count: { $sum: 1 } } }
+      ])
+      : [];
+
+    const ridersByDriver = new Map(
+      drivers.map((d) => [String(d._id), { active: 0, pending: 0 }])
+    );
+    for (const row of enrollmentCounts) {
+      const entry = ridersByDriver.get(String(row._id.driverId));
+      if (!entry) continue;
+      if (row._id.status === 'ACTIVE') entry.active = row.count;
+      else entry.pending = row.count;
+    }
+
     const data = drivers.map((driver) => {
       const vehicle = vehicleByDriver.get(String(driver._id)) || null;
       const organization = driver.organization
@@ -219,7 +246,8 @@ exports.getManagerDrivers = async (req, res, next) => {
         : null;
       return {
         ...sanitizeDriver(driver, vehicle, organization),
-        setupComplete: isSetupComplete(driver, vehicle)
+        setupComplete: isSetupComplete(driver, vehicle),
+        riders: ridersByDriver.get(String(driver._id)) || { active: 0, pending: 0 }
       };
     });
 

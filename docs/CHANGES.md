@@ -23,6 +23,44 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-21 — A manager can see, and remove, who is enrolled with each driver
+
+- **Branch:** feature/manager-enrolled-riders
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController,
+  managerDriversController), [`docs/modules/QR_ATTENDANCE.md`](modules/QR_ATTENDANCE.md)
+  (boardingController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` takes an optional `driverId`, so the queue
+    doubles as a per-driver roster. A driver the caller does not own is reported 404
+    rather than refused, so the portal cannot be used to probe for another manager's ids.
+  - `GET /api/manager/drivers` now carries `riders: { active, pending }` per driver, from
+    one aggregate for the whole page.
+  - New `DELETE /api/manager/enrollment-requests/:id` takes an already-enrolled rider off
+    a driver. ACTIVE only; a queued row 409s because declining it keeps the decision trail.
+    Emits the same `vehicle:access-revoked` a rider's own "leave" does, and notifies them.
+  - Fixed `GET /api/driver/boarding/roster`, which read the roster off the deprecated
+    `userId`. That field is null on every enrolment the current app writes, so each rider
+    came back named "Unknown" and keyed by an id from the wrong collection, meaning no
+    BoardingEvent ever matched and everyone read `NOT_BOARDED`. Guests had the same bug.
+- **Why:** a rider redeeming a NON-private driver's key is written straight to ACTIVE and
+  never reaches the approval queue, and the portal only ever asked for PENDING, so managers
+  had no way to see who was riding with their drivers.
+- **Contract impact:** additive on `/api/manager/drivers` (`riders`) and
+  `/api/manager/enrollment-requests` (`driverId` query); one new endpoint. The roster fix
+  changes no keys, so the driver app needs no change. web-admin docs updated in its repo.
+- **Tests:** added `tests/integration/manager-enrollment-roster.test.js` (15 cases incl. the
+  401/403/404 authz negatives and the cross-manager cases); repaired
+  `tests/integration/qr-roster.test.js`, whose fixtures still built enrolments with only
+  `userId` and could no longer be saved at all since `studentId` became required.
+- **Docs updated:** two TESTING_GUIDE rows (new manager roster row; corrected the stale
+  qr-roster row, which still said "RouteMembership" and "busId").
+- **Migration:** none.
+- **Follow-ups / known issues:** `getBoardingRoster` is still gated behind
+  `route.qrEnabled`, so a driver on a route without QR attendance cannot see their roster
+  at all. Out of scope here.
+
+---
+
 ## 2026-08-20 — The approval queue names the organization and labels its answers
 
 - **Branch:** feature/rider-photos

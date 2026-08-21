@@ -27,6 +27,29 @@ of your next change here — that is the change protocol, not optional extra wor
 > storage key "grade". `organizationValues` stays as the raw map for anything reading by key. See
 > [`PROFILES.md`](PROFILES.md) §6 and `tests/integration/manager-enrollments-managed-profile.test.js`.
 
+> **The enrolled roster** (same controller) also belongs here once written. `status` on
+> `GET /api/manager/enrollment-requests` has always accepted `PENDING|ACTIVE|REJECTED`, but only
+> `PENDING` was ever asked for, which left managers unable to see who actually rides with their
+> drivers: a rider redeeming a **non-private** driver's key is written straight to `ACTIVE`
+> (`enrollmentController`: `status = requiredApproval ? 'PENDING' : 'ACTIVE'`) and so never
+> reaches the queue at all. Three pieces close that:
+> - an optional **`driverId`** query narrows the list to one driver. It is filtered against the
+>   drivers this manager owns, and an id outside that set returns **404**, not 403, so the endpoint
+>   cannot be used to probe for another manager's driver ids. Compared as strings, so a malformed
+>   id takes the same 404 instead of raising a cast error.
+> - **`GET /api/manager/drivers`** carries `riders: { active, pending }` per driver
+>   (`managerDriversController`), from a single `DriverEnrollment.aggregate` for the whole page
+>   rather than a count per row.
+> - **`DELETE /api/manager/enrollment-requests/:id`** removes an enrolled rider. Ownership is
+>   checked through `findOwnedEnrollment` (the driver, never the denormalised `managerId`).
+>   **`ACTIVE` only**: a `PENDING` row 409s, because declining it keeps the `decidedBy`/`decidedAt`
+>   trail that deleting would throw away. It emits the same `vehicle:access-revoked` a rider's own
+>   leave does (see [`REALTIME.md`](REALTIME.md)) so a live map open on that vehicle is dropped at
+>   once, and writes the rider a `ROUTE_ACCESS_REVOKED` notification best-effort. Removal and
+>   `enrollmentController.leaveEnrollment` are now the two ways a rider comes off `ACTIVE`.
+>
+> See `tests/integration/manager-enrollment-roster.test.js`.
+
 ## What this doc must cover
 
 Follow the template's section order: Purpose · API surface (method/path/auth/controller) ·

@@ -325,10 +325,11 @@ exports.leaveEnrollment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Enrollment not found' });
     }
 
-    // This is the only place a rider ever comes off ACTIVE — there is no
-    // manager-side removal. If they had a live-tracking socket open on this
-    // vehicle it stays joined to the room until it disconnects or explicitly
-    // unsubscribes, so tell it to leave now rather than on a timeout.
+    // One of the two ways a rider comes off ACTIVE; the other is the manager
+    // removing them (managerEnrollmentsController.removeManagerEnrollment),
+    // which performs this same revoke. If they had a live-tracking socket open
+    // on this vehicle it stays joined to the room until it disconnects or
+    // explicitly unsubscribes, so tell it to leave now rather than on a timeout.
     if (enrollment.status === 'ACTIVE') {
       const vehicle = await Vehicle.findOne({ driverId: enrollment.driverId, isDeleted: false })
         .select('vehicleId')

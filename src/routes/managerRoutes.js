@@ -31,7 +31,8 @@ const {
   getManagerEnrollmentRequests,
   getManagerEnrollmentRequestCount,
   approveManagerEnrollmentRequest,
-  rejectManagerEnrollmentRequest
+  rejectManagerEnrollmentRequest,
+  removeManagerEnrollment
 } = require('../controllers/managerEnrollmentsController');
 const { protect, requireManager } = require('../middleware/auth');
 const {
@@ -76,6 +77,9 @@ router.get('/enrollment-requests/count', getManagerEnrollmentRequestCount);
 router.get('/enrollment-requests', getManagerEnrollmentRequests);
 router.post('/enrollment-requests/:id/approve', approveManagerEnrollmentRequest);
 router.post('/enrollment-requests/:id/reject', rejectManagerEnrollmentRequest);
+// Takes an already-enrolled rider back off the driver. `?status=ACTIVE` on the
+// list above is what surfaces them in the first place.
+router.delete('/enrollment-requests/:id', removeManagerEnrollment);
 
 // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md)
 router.get('/attendance', getManagerAttendance);

@@ -1,6 +1,7 @@
 const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
+const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
 const Identity = require('../models/Identity');
 const RiderProfile = require('../models/RiderProfile');
@@ -253,6 +254,7 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
   try {
     const requested = String(req.query.status || 'PENDING').toUpperCase();
     const status = STATUSES.includes(requested) ? requested : 'PENDING';
+    const requestedDriverId = req.query.driverId ? String(req.query.driverId) : '';
 
     // Scoped by the drivers this manager owns rather than the denormalised
     // managerId, so drivers moved between managers still list correctly.
@@ -261,13 +263,26 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
       .populate('organization', 'name serviceType')
       .lean();
 
-    if (!drivers.length) {
+    // Narrowing to one driver is the same ownership question as the queue
+    // itself, and gets the same answer: a driver this manager does not own is
+    // reported missing rather than refused, so the portal can never be used to
+    // probe for another manager's driver ids. Compared as strings, so a
+    // malformed id falls through to the same 404 instead of a cast error.
+    let scopedDrivers = drivers;
+    if (requestedDriverId) {
+      scopedDrivers = drivers.filter((d) => String(d._id) === requestedDriverId);
+      if (!scopedDrivers.length) {
+        return res.status(404).json({ success: false, message: 'Driver not found' });
+      }
+    }
+
+    if (!scopedDrivers.length) {
       return res.status(200).json({ success: true, data: [] });
     }
 
     const driverById = new Map(drivers.map((d) => [String(d._id), d]));
     const enrollments = await DriverEnrollment.find({
-      driverId: { $in: drivers.map((d) => d._id) },
+      driverId: { $in: scopedDrivers.map((d) => d._id) },
       status
     })
       .sort({ createdAt: -1 })
@@ -356,3 +371,67 @@ exports.approveManagerEnrollmentRequest = decide(true);
 
 // @route POST /api/manager/enrollment-requests/:id/reject
 exports.rejectManagerEnrollmentRequest = decide(false);
+
+// Tells the rider they were taken off the shuttle, and by whose driver. Best
+// effort for the same reason a decision notice is: a notification that fails to
+// write must not undo a removal the manager already made.
+async function notifyRemoved(enrollment, driver, rider) {
+  try {
+    await Notification.create({
+      userId: rider.accountId,
+      studentId: rider._id,
+      type: 'ROUTE_ACCESS_REVOKED',
+      title: 'Enrollment removed',
+      message: `${rider.fullName} is no longer enrolled with ${driver.name}.`,
+      data: { relatedId: String(enrollment._id), studentId: String(rider._id) },
+      priority: 'MEDIUM'
+    });
+  } catch (error) {
+    console.error('Failed to notify passenger of enrollment removal:', error.message);
+  }
+}
+
+// @route DELETE /api/manager/enrollment-requests/:id
+// The manager-side counterpart to a rider leaving. Only an ACTIVE enrolment can
+// be removed: a queued one is declined instead, which keeps the decision trail
+// (decidedBy / decidedAt) that deleting the row would throw away.
+exports.removeManagerEnrollment = async (req, res, next) => {
+  try {
+    const { enrollment, driver } = await findOwnedEnrollment(req.user._id, req.params.id);
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (enrollment.status !== 'ACTIVE') {
+      return res.status(409).json({
+        success: false,
+        message: enrollment.status === 'PENDING'
+          ? 'This request is still queued. Decline it instead.'
+          : 'This request was already declined'
+      });
+    }
+
+    await DriverEnrollment.deleteOne({ _id: enrollment._id });
+
+    const rider = await RiderProfile.findById(enrollment.studentId);
+    if (rider) await notifyRemoved(enrollment, driver, rider);
+
+    // The same revoke a rider's own "leave" performs (enrollmentController): if
+    // they have the live map open on this vehicle, drop them from the room now
+    // rather than leaving them watching until the socket happens to disconnect.
+    const vehicle = await Vehicle.findOne({ driverId: enrollment.driverId, isDeleted: false })
+      .select('vehicleId')
+      .lean();
+    if (vehicle) {
+      req.app.get('io')?.to(`vehicle:${vehicle.vehicleId}`).emit('vehicle:access-revoked', {
+        vehicleId: vehicle.vehicleId,
+        riderId: String(enrollment.studentId || '')
+      });
+    }
+
+    return res.status(200).json({ success: true, message: 'Rider removed' });
+  } catch (error) {
+    next(error);
+  }
+};
