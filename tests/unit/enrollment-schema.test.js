@@ -35,6 +35,21 @@ describe('organization enrollment schema', () => {
       errors: { className: 'This field is not accepted by the organization' }
     });
   });
+
+  test('rejects a symbol-only answer as not a real one, required or not', () => {
+    const config = {
+      fields: [
+        { key: 'grade', label: 'Grade', enabled: true, required: true },
+        { key: 'className', label: 'Class', enabled: true, required: false }
+      ]
+    };
+    expect(validateEnrollmentResponses(config, { grade: '%' }).errors).toEqual({
+      grade: 'Grade must include a letter or number'
+    });
+    expect(validateEnrollmentResponses(config, { grade: '7', className: '...' }).errors).toEqual({
+      className: 'Class must include a letter or number'
+    });
+  });
 });
 
 describe('signup category details', () => {
@@ -74,6 +89,13 @@ describe('signup category details', () => {
     expect(validateSignupDetails('OFFICE', { grade: '7' })).toMatchObject({
       valid: false,
       errors: { grade: 'This field is not asked for this category' }
+    });
+  });
+
+  test('rejects a symbol-only grade as not a real one', () => {
+    expect(validateSignupDetails('school', { grade: '%' })).toMatchObject({
+      valid: false,
+      errors: { grade: 'Grade must include a letter or number' }
     });
   });
 });

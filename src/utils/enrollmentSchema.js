@@ -1,3 +1,9 @@
+// A field answer must contain at least one letter or digit — stops a stray
+// symbol (e.g. "%") from passing as a real answer just because it's non-empty.
+// Mirrors the frontend's own check in lib/riderCategory.ts.
+const HAS_ALNUM = /[a-zA-Z0-9]/;
+const isMeaningfulValue = (value) => HAS_ALNUM.test(value);
+
 const FIELD_CATALOG = Object.freeze({
   SCHOOL: Object.freeze([
     { key: 'grade', label: 'Grade', type: 'text' },
@@ -62,6 +68,7 @@ function validateSignupDetails(category, details) {
   for (const field of fields) {
     const value = String(supplied[field.key] ?? '').trim();
     if (!value) errors[field.key] = `${field.label} is required`;
+    else if (!isMeaningfulValue(value)) errors[field.key] = `${field.label} must include a letter or number`;
     else values[field.key] = value;
   }
 
@@ -150,8 +157,12 @@ function validateEnrollmentResponses(config, responses) {
   }
   for (const field of enabled) {
     const value = String(supplied[field.key] ?? '').trim();
-    if (field.required && !value) errors[field.key] = `${field.label} is required`;
-    if (value) values[field.key] = value;
+    if (!value) {
+      if (field.required) errors[field.key] = `${field.label} is required`;
+      continue;
+    }
+    if (!isMeaningfulValue(value)) errors[field.key] = `${field.label} must include a letter or number`;
+    else values[field.key] = value;
   }
 
   return { valid: Object.keys(errors).length === 0, errors, values };
