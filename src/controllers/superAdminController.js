@@ -197,6 +197,7 @@ exports.getManagers = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
+      count: managers.length,
       data: managers.map(sanitizeManager),
       pagination: {
         page: pageNumber,
@@ -739,6 +740,7 @@ exports.getOperationsOverview = async (req, res, next) => {
 
     const response = {
       success: true,
+      count: data.length,
       data
     };
     if (paginated) {
@@ -755,6 +757,10 @@ exports.getOperationsOverview = async (req, res, next) => {
   }
 };
 
+// Single-resource endpoint (one manager's detail + their fleet) — intentionally
+// returns bare { success, data } like getManagerById elsewhere in this file.
+// count/pagination describe a *list* page, which this response isn't; nesting
+// vehicles.length here would just be a second, redundant way to read data.vehicles.length.
 exports.getManagerVehicleDetails = async (req, res, next) => {
   try {
     const manager = await Manager.findById(req.params.managerId)
