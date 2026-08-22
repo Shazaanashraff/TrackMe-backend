@@ -23,6 +23,39 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-23 — Audit remediation: security, offline and production-readiness findings
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`AUTH`](modules/AUTH.md), [`BOOKINGS`](modules/BOOKINGS.md),
+  [`REALTIME`](modules/REALTIME.md), [`QR_ATTENDANCE`](modules/QR_ATTENDANCE.md)
+- **What changed:**
+  - Commits the 2026-08-17 production-readiness / offline audit and the 2026-08-22 security
+    assessment work, which had been left uncommitted in the working tree. Each item was
+    re-checked against the source before committing; the full item-by-item verification lives
+    in `../../AUDITDONE.md`.
+  - Kept as written: refresh tokens rejected as REST credentials, CSPRNG OTPs, constant-time
+    hash comparison, verify-email attempt lockout and rate limit, atomic live-location upsert,
+    `helmet`/`compression`, CORS whitelist, graceful shutdown, `/health` dbName gating, and the
+    manifest / booking-overview / review authorization checks.
+  - Corrected five defects in that work. The two that mattered: the `req.user` projection was
+    an allow-list that silently dropped `phoneNumber`, `qrTokenVersion` and `qrIssuedAt`
+    (blanking rider contact phones and 400-ing `createRider`), and `createBooking` still
+    returned the client's `totalPrice` as the payable amount while falling back to a client
+    `pricePerSeat`. Details in the commit message and `AUDITDONE.md`.
+- **Why:** findings from the three audits listed above.
+- **Contract impact:** `POST /api/bookings` no longer reads `pricePerSeat`/`totalPrice` from the
+  body and no longer requires them; `amount` in the response is now the server-computed figure.
+  Existing clients that still send those fields are unaffected, since they are simply ignored.
+- **Tests:** none added. Smoke suite unchanged at 3 passing / 0 failing. The authz cases for
+  SEC-3/SEC-4/SEC-7 and a regression test for the booking price are still owed.
+- **Docs updated:** this entry, plus `../../AUDITDONE.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** integration coverage for the corrected pricing path and the
+  new authorization branches; `backend-run.log` is untracked and probably belongs in
+  `.gitignore`.
+
+---
+
 ## 2026-08-21 — A manager can see, and remove, who is enrolled with each driver
 
 - **Branch:** feature/manager-enrolled-riders

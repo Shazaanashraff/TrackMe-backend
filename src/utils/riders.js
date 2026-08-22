@@ -12,6 +12,16 @@ async function ensureLegacyRider(account, seed = {}) {
     .sort({ createdAt: 1 });
   if (rider) return rider;
 
+  // `avatarUrl` is select:false on the account schemas, because it holds a base64
+  // data URL that would otherwise ride along on every authenticated request, so
+  // the doc handed in here carries none. This migration is the one place that
+  // genuinely needs it, so read it back explicitly rather than losing the picture.
+  let legacyAvatar = account.avatarUrl;
+  if (legacyAvatar === undefined && typeof account.constructor?.findById === 'function') {
+    const withAvatar = await account.constructor.findById(account._id).select('+avatarUrl').lean();
+    legacyAvatar = withAvatar?.avatarUrl;
+  }
+
   const riderCode = await generateUniqueRiderCode(RiderProfile);
   try {
     rider = await RiderProfile.create({
@@ -19,7 +29,7 @@ async function ensureLegacyRider(account, seed = {}) {
       accountId: account._id,
       riderCode,
       fullName: account.name,
-      avatarUrl: account.avatarUrl || '',
+      avatarUrl: legacyAvatar || '',
       category: seed.category || null,
       details: seed.details && Object.keys(seed.details).length ? seed.details : undefined,
       qrTokenVersion: account.qrTokenVersion || 1,

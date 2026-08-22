@@ -75,7 +75,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
 // Stamp a fresh reset OTP on the identity and mail it. Returns the OTP so callers can
 // echo it in non-production when email delivery is unavailable.
 const issueResetOtpForIdentity = async (identity) => {
-  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const otp = String(crypto.randomInt(100000, 1000000));
 
   identity.passwordReset = {
     otpHash: hashToken(otp),

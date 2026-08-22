@@ -82,7 +82,8 @@ const applyAccountFields = (schema, { emailOptional = false, multiplePerIdentity
     },
     avatarUrl: {
       type: String,
-      default: ''
+      default: '',
+      select: false
     },
     isActive: {
       type: Boolean,

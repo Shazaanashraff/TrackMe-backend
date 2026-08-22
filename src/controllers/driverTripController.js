@@ -8,7 +8,9 @@ const Vehicle = require('../models/Vehicle');
 const getTripHistory = async (req, res) => {
   try {
     const driverId = req.user.id;
-    const { page = 1, limit = 10, startDate = null, endDate = null } = req.query;
+    const parsedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const { startDate = null, endDate = null } = req.query;
 
     const query = { driverId };
 
@@ -22,8 +24,8 @@ const getTripHistory = async (req, res) => {
       .populate('vehicleId', 'vehicleName registrationNumber')
       .populate('routeId', 'source destination')
       .sort({ journeyDate: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(parsedLimit)
+      .skip((parsedPage - 1) * parsedLimit)
       .lean();
 
     const total = await DriverTrip.countDocuments(query);
@@ -31,8 +33,8 @@ const getTripHistory = async (req, res) => {
     return res.json({
       trips,
       pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
+        currentPage: parsedPage,
+        totalPages: Math.ceil(total / parsedLimit),
         totalTrips: total
       }
     });

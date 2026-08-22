@@ -4,6 +4,8 @@ const http = require('http');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 const connectDB = require('./config/db');
 const setupSocket = require('./socket/socketHandler');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -35,10 +37,18 @@ const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 const app = express();
 const server = http.createServer(app);
 
+const rawClientOrigins = process.env.CLIENT_ORIGINS;
+if (process.env.NODE_ENV === 'production' && (!rawClientOrigins || rawClientOrigins === '*')) {
+  console.warn('⚠️  WARNING: Running in production without explicit CLIENT_ORIGINS whitelist.');
+}
+const allowedOrigins = rawClientOrigins && rawClientOrigins !== '*'
+  ? rawClientOrigins.split(',').map((s) => s.trim())
+  : '*';
+
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGINS || '*',
+    origin: allowedOrigins,
     methods: ['GET', 'POST']
   }
 });
@@ -73,8 +83,22 @@ const bootstrap = async () => {
 // socket events without importing the io instance directly.
 app.set('io', io);
 
-// Middleware
-app.use(cors());
+// Security & Performance Middleware
+app.use(helmet({
+  crossOriginResourcePolicy: false
+}));
+app.use(compression({
+  threshold: 1024
+}));
+// `credentials: true` is only legal alongside an explicit origin. A browser
+// rejects any credentialed response that answers with `Access-Control-Allow-Origin: *`.
+// Auth travels as a Bearer header, so the wildcard (dev) case needs no credentials.
+app.use(cors(
+  allowedOrigins === '*'
+    ? { origin: '*' }
+    : { origin: allowedOrigins, credentials: true }
+));
+
 // 3 MB accommodates base64 profile-picture data URLs (capped to ~2 MB decoded in
 // authController.updateAvatar); every other endpoint sends small JSON well under this.
 app.use(express.json({ limit: '3mb' }));
@@ -120,7 +144,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     isReady: startupState.bootstrapComplete,
     mode,
-    dbName
+    ...(process.env.NODE_ENV !== 'production' ? { dbName } : {})
   });
 });
 
@@ -194,6 +218,33 @@ if (require.main === module) {
     console.error('Unhandled Rejection:', err);
     process.exit(1);
   });
+
+  const gracefulShutdown = (signal) => {
+    console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
+    // Tell watchers first: once server.close() has run, the sockets carrying this
+    // notice are already going away and the clients never see it.
+    io.emit('server:shutdown', { timestamp: new Date().toISOString() });
+    server.close(async () => {
+      console.log('HTTP server closed.');
+      try {
+        await mongoose.connection.close(false);
+        console.log('MongoDB connection closed.');
+        process.exit(0);
+      } catch (err) {
+        console.error('Error during shutdown:', err);
+        process.exit(1);
+      }
+    });
+
+    // Force shutdown after 10s if hanging
+    setTimeout(() => {
+      console.error('Could not close connections in time, forcefully shutting down');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 module.exports = app;

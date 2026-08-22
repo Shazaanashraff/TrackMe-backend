@@ -195,7 +195,7 @@ exports.removeProfile = async (req, res, next) => {
     target.qrTokenVersion += 1;
     await target.save();
 
-    await DriverEnrollment.deleteMany({ userId: target._id });
+    await DriverEnrollment.deleteMany({ $or: [{ studentId: target._id }, { userId: target._id }] });
 
     return res.status(200).json({ success: true });
   } catch (error) {
