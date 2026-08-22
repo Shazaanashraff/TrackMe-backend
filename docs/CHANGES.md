@@ -23,6 +23,37 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-22 — Standardize superAdminController's list-endpoint response envelope (#61)
+- **Branch:** claude/friendly-pasteur-yvly35
+- **Modules touched:** docs/modules/ADMIN.md (stub, note added)
+- **What changed:** `getManagers` and `getOperationsOverview` now include `count` (the returned
+  page's length) alongside `data`, matching the shape `getPendingVehicleRequests`, `getAuditLogs`,
+  and `getOrganizations` already used. `pagination` behavior is unchanged (opt-in via page/limit).
+  `getManagerVehicleDetails` deliberately keeps its bare `{success, data}` shape — it returns one
+  manager's detail, not a list page — and a comment now says so explicitly instead of leaving it
+  looking like an oversight.
+- **Why:** issue #61 — the same controller file returned three different envelope shapes for its
+  list endpoints, so callers couldn't rely on a uniform shape within one file.
+- **Contract impact:** additive only (new field, nothing removed/renamed). Verified web-admin's
+  consumers (`use-managers.js`, `use-operations.js`, `OperationsPage.jsx`, `ManagersPage.jsx`) only
+  read `.data` off these responses today, so no web-admin change was required.
+- **Tests:** added `tests/unit/superadmin-envelope-shape.test.js` (mocked Manager/Vehicle/Booking/
+  VehicleReview models — **no MongoDB is reachable in this environment**, so the integration-test
+  coverage this kind of response-shape change normally gets per `docs/guides/ADDING_A_TEST.md`
+  could not be run/added here; this mocked-model unit test is a substitute, not a replacement —
+  `tests/integration/superadmin-operations-pagination.test.js` and `superadmin-reads.test.js`
+  should still be run against real Mongo before/after this change to be fully sure). `npm test`
+  and `npx jest tests/unit` are green.
+- **Docs updated:** docs/modules/ADMIN.md (envelope convention note), docs/TESTING_GUIDE.md (new
+  row).
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #61's acceptance criteria also says "ideally the whole
+  API" — left as a follow-up; this change scoped to superAdminController.js only, per the issue's
+  primary bullet. Issues #74 and #19 were investigated in the same session but not committed —
+  see the comments left on those issues instead.
+
+---
+
 ## 2026-08-20 — Manager/Super-Admin role-boundary regression test (cross-repo: TrackMe-WebAdmin#25)
 - **Branch:** cross-repo/webadmin-25-role-boundary-test
 - **Modules touched:** docs/modules/AUTH.md, docs/modules/ADMIN.md (both stubs, unchanged)

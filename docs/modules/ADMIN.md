@@ -16,6 +16,27 @@ of your next change here — that is the change protocol, not optional extra wor
 > email/phone) for a managed rider profile, since that profile has no email of its own. See
 > [`PROFILES.md`](PROFILES.md) §6 and `tests/integration/manager-enrollments-managed-profile.test.js`.
 
+## Response envelope convention (superAdminController)
+
+Issue #61 found this controller's list endpoints returning three different shapes. Standardized
+on (this file remains a stub otherwise — see below, fill in the rest from the template):
+
+- **List endpoints** (`getManagers`, `getOperationsOverview`, `getPendingVehicleRequests`,
+  `getAuditLogs`, `getOrganizations`) always return `{ success, count, data }`, where `count` is
+  `data.length` for the page returned — **not** the total across all pages. `getManagers` and
+  `getOperationsOverview` additionally paginate: `pagination: { page, limit, total, pages }` is
+  present only when the caller passes `page` and/or `limit` (opt-in — same convention as
+  `vehicleController.getAllRoutes`); with neither, the full unbounded list is returned and
+  `pagination` is omitted, unchanged from before this fix.
+- **Single-resource endpoints** (`getManagerById`, `getManagerVehicleDetails`) return a bare
+  `{ success, data }` — `data` is one object, not a page of a list, so there is nothing to count
+  or paginate.
+
+See `tests/unit/superadmin-envelope-shape.test.js`. This is additive only (no field was removed
+or renamed), so no consuming app needed a change to keep working — verified by reading
+`TrackMe-WebAdmin/src/hooks/use-managers.js` and `use-operations.js`, which only ever read `.data`
+off these responses.
+
 ## What this doc must cover
 
 Follow the template's section order: Purpose · API surface (method/path/auth/controller) ·
