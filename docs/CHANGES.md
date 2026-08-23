@@ -23,6 +23,211 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-23 — Audit remediation: security, offline and production-readiness findings
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`AUTH`](modules/AUTH.md), [`BOOKINGS`](modules/BOOKINGS.md),
+  [`REALTIME`](modules/REALTIME.md), [`QR_ATTENDANCE`](modules/QR_ATTENDANCE.md)
+- **What changed:**
+  - Commits the 2026-08-17 production-readiness / offline audit and the 2026-08-22 security
+    assessment work, which had been left uncommitted in the working tree. Each item was
+    re-checked against the source before committing; the full item-by-item verification lives
+    in [`AUDITDONE.md`](AUDITDONE.md).
+  - Kept as written: refresh tokens rejected as REST credentials, CSPRNG OTPs, constant-time
+    hash comparison, verify-email attempt lockout and rate limit, atomic live-location upsert,
+    `helmet`/`compression`, CORS whitelist, graceful shutdown, `/health` dbName gating, and the
+    manifest / booking-overview / review authorization checks.
+  - Corrected five defects in that work. The two that mattered: the `req.user` projection was
+    an allow-list that silently dropped `phoneNumber`, `qrTokenVersion` and `qrIssuedAt`
+    (blanking rider contact phones and 400-ing `createRider`), and `createBooking` still
+    returned the client's `totalPrice` as the payable amount while falling back to a client
+    `pricePerSeat`. Details in the commit message and `AUDITDONE.md`.
+- **Why:** findings from the three audits listed above.
+- **Contract impact:** `POST /api/bookings` no longer reads `pricePerSeat`/`totalPrice` from the
+  body and no longer requires them; `amount` in the response is now the server-computed figure.
+  Existing clients that still send those fields are unaffected, since they are simply ignored.
+- **Tests:** none added. Smoke suite unchanged at 3 passing / 0 failing. The authz cases for
+  SEC-3/SEC-4/SEC-7 and a regression test for the booking price are still owed.
+- **Docs updated:** this entry, plus [`AUDITDONE.md`](AUDITDONE.md).
+- **Migration:** none.
+- **Follow-ups / known issues:** integration coverage for the corrected pricing path and the
+  new authorization branches; `backend-run.log` is untracked and probably belongs in
+  `.gitignore`.
+
+---
+
+## 2026-08-21 — A manager can see, and remove, who is enrolled with each driver
+
+- **Branch:** feature/manager-enrolled-riders
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController,
+  managerDriversController), [`docs/modules/QR_ATTENDANCE.md`](modules/QR_ATTENDANCE.md)
+  (boardingController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` takes an optional `driverId`, so the queue
+    doubles as a per-driver roster. A driver the caller does not own is reported 404
+    rather than refused, so the portal cannot be used to probe for another manager's ids.
+  - `GET /api/manager/drivers` now carries `riders: { active, pending }` per driver, from
+    one aggregate for the whole page.
+  - New `DELETE /api/manager/enrollment-requests/:id` takes an already-enrolled rider off
+    a driver. ACTIVE only; a queued row 409s because declining it keeps the decision trail.
+    Emits the same `vehicle:access-revoked` a rider's own "leave" does, and notifies them.
+  - Fixed `GET /api/driver/boarding/roster`, which read the roster off the deprecated
+    `userId`. That field is null on every enrolment the current app writes, so each rider
+    came back named "Unknown" and keyed by an id from the wrong collection, meaning no
+    BoardingEvent ever matched and everyone read `NOT_BOARDED`. Guests had the same bug.
+- **Why:** a rider redeeming a NON-private driver's key is written straight to ACTIVE and
+  never reaches the approval queue, and the portal only ever asked for PENDING, so managers
+  had no way to see who was riding with their drivers.
+- **Contract impact:** additive on `/api/manager/drivers` (`riders`) and
+  `/api/manager/enrollment-requests` (`driverId` query); one new endpoint. The roster fix
+  changes no keys, so the driver app needs no change. web-admin docs updated in its repo.
+- **Tests:** added `tests/integration/manager-enrollment-roster.test.js` (15 cases incl. the
+  401/403/404 authz negatives and the cross-manager cases); repaired
+  `tests/integration/qr-roster.test.js`, whose fixtures still built enrolments with only
+  `userId` and could no longer be saved at all since `studentId` became required.
+- **Docs updated:** two TESTING_GUIDE rows (new manager roster row; corrected the stale
+  qr-roster row, which still said "RouteMembership" and "busId").
+- **Migration:** none.
+- **Follow-ups / known issues:** `getBoardingRoster` is still gated behind
+  `route.qrEnabled`, so a driver on a route without QR attendance cannot see their roster
+  at all. Out of scope here.
+
+---
+
+## 2026-08-20 — The approval queue names the organization and labels its answers
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` (and the approve/reject response) now carry
+    `organization: {_id, name, serviceType}` per row, resolved from the rider's organization
+    profile and falling back to the driver's own organization for a legacy row.
+  - `passenger.organizationDetails` repeats the form answers as an ordered
+    `{key, label, value}` list, labelled through `normalizedEnrollmentConfig()`.
+    `passenger.organizationValues` is unchanged.
+- **Why:** the web-admin queue could only render `grade: 4` with no sign of which organization
+  asked, because the answers are stored keyed by field key and the payload named no organization.
+- **Contract impact:** additive only. Consumer doc updated:
+  `web-admin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` (two new cases plus
+  approve-response assertions), run against an isolated `trackme_test` database.
+- **Docs updated:** [`docs/modules/ADMIN.md`](modules/ADMIN.md), TESTING_GUIDE row.
+- **Migration:** none. Nothing is stored differently; the extra fields are derived per request.
+- **Follow-ups / known issues:** sandbox seeds no PENDING enrollment, so this queue stays empty
+  in Developer Mode.
+
+## 2026-08-20 — Enrollments are read back per rider profile, not per account
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md) (enrollment read path)
+- **What changed:**
+  - `GET /api/enrollments/mine` now honours the `riderId` query parameter the passenger app
+    has always sent, returning only that rider profile's enrollments.
+  - Omitting `riderId` keeps the previous full-merge behaviour, so older clients are unaffected.
+- **Why:** on an account with two rider profiles, `getMyEnrollments` merged every profile's
+  enrollments into one list, so both riders showed the same cards. Enrolling one rider looked
+  like it enrolled the other, and a Leave tap could delete the sibling rider's enrollment
+  because the wrong record was on screen.
+- **Contract impact:** `GET /api/enrollments/mine` gains an optional `riderId` filter; response
+  shape unchanged. Documented on the client side in the user-app's
+  `docs/modules/DRIVER_ENROLLMENT.md`. `getHouseholdEnrollments` and the shared
+  `loadEnrollmentsByProfile` loader are untouched.
+- **Tests:** `tests/integration/enrollment-rider-path.test.js` — new "multiple rider profiles on
+  one account" case covering per-rider reads, the no-`riderId` back-compat path, and that leaving
+  one rider's enrollment leaves the sibling's intact.
+- **Docs updated:** user-app `docs/modules/DRIVER_ENROLLMENT.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** an enrollment already destroyed by this bug before the fix
+  cannot be recovered in code — the affected rider has to redeem the enrollment key again.
+
+---
+
+## 2026-08-19 — A picture per rider, fetched on its own and versioned for caching
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md)
+- **What changed:**
+  - `RiderProfile` gains `avatarVersion`, bumped on every write to `avatarUrl`, including a clear.
+  - `publicRider` no longer returns `avatarUrl`. It returns `hasAvatar` and `avatarVersion`, and
+    the picture comes from the new `GET /api/riders/:riderId/avatar` (mirrored on the
+    `/api/students` alias). Twenty riders at the 512 KB ceiling would otherwise have put ten
+    megabytes into every list load, the same reason a MANAGED profile's avatar is off
+    `/api/profiles`.
+  - `createRider` / `updateRider` now validate `avatarUrl` through `utils/avatar.js`
+    (`validateAvatarDataUrl`, 512 KB). The field was previously stored as
+    `String(req.body.avatarUrl || '')` with no format or size check at all.
+- **Why:** The passenger app is adding rider photos; the field existed but was unguarded, and
+  inline delivery would have made every rider-list load carry every image.
+- **Contract impact:** `GET /api/riders` **drops `avatarUrl`** and adds `hasAvatar` +
+  `avatarVersion`; new `GET /api/riders/:riderId/avatar`. No client read the rider's `avatarUrl`
+  (the only avatar in the UI is the account's), so nothing breaks today. `TrackMe-UserApp` picks
+  this up in the same feature.
+- **Tests:** `tests/integration/rider-avatar.test.js` (new).
+- **Docs updated:** `docs/modules/PROFILES.md` (§2 rider table, §8), `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `avatarVersion` defaults to 0 and existing pictures keep working; their
+  first edit moves the version to 1.
+- **Follow-ups / known issues:** none.
+
+## 2026-08-19 — The manager's approval queue knows who the request is for
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [admin](modules/ADMIN.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:** `managerEnrollmentsController` resolves the passenger from the enrolment's
+  `studentId` (a `RiderProfile`) instead of the deprecated `userId`, which `createEnrollment`
+  writes as null — so every request made through the rider path reached the manager as
+  `passenger: null`. Rows from the legacy `/redeem` path still resolve by `userId` as a fallback.
+  The payload now also carries `riderCode`, `contactPhone` and `organizationValues` (the answers
+  that organization's enrolment form collected), and `isManagedProfile` means "not the account
+  holder's own rider row".
+- **Why:** The queue showed an unnamed request with no account and none of the details the rider
+  had just entered, so a manager had nothing to decide on.
+- **Contract impact:** Same response shape, correctly populated, plus three additive
+  `passenger` fields. `passenger._id` is a rider profile id (it was an account id for legacy rows).
+  `web-admin`'s page already read `riderCode` and `organizationValues`, so it needed no change;
+  its `docs/modules/ENROLLMENT_REQUESTS.md` contract table is updated.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` rewritten around the
+  rider path (it previously built rows with a `userId` and no `studentId`, which the model has
+  required for some time, so the suite could not run at all).
+- **Docs updated:** `docs/modules/ADMIN.md`, `docs/modules/PROFILES.md`, `docs/TESTING_GUIDE.md`,
+  and `TrackMe-WebAdmin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** none for this queue.
+
+## 2026-08-19 — A rider picks their category when the account is created
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [auth](modules/AUTH.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:**
+  - `RiderProfile` gains `category` (`SCHOOL` / `UNIVERSITY` / `OFFICE`) and a `details` map, keyed
+    by the enrolment field catalog so a school's `grade` given at signup is the same `grade` the
+    school's enrolment form asks for.
+  - `POST /api/auth/register` optionally takes `category` + `details` and seeds them onto the
+    account holder's own rider row, which registration now creates rather than leaving to the
+    first `GET /api/riders`.
+  - `POST/PATCH /api/riders` accept the same pair, and every rider now returns `category`,
+    `details` and `isSelf`.
+  - Editing the `isSelf` rider mirrors `fullName` / contact phone onto the `User` account, so the
+    passenger app's two competing profile editors can collapse into one without the two documents
+    drifting apart.
+  - `POST /api/enrollments/resolve-key` prefills `existingValues` from the rider's signup answers,
+    overlaid by anything already saved for that organization. Every enabled field is still listed.
+- **Why:** Signup asked nothing, so nothing was known about a rider until they redeemed a key, and
+  the profile screen edited the same person through two unsynchronised documents.
+- **Contract impact:** Additive on `/api/auth/register`, `/api/riders` (and the `/api/students`
+  alias) and `resolve-key`. `PATCH /api/riders/:id` on the self record now also writes the account's
+  name and phone. `TrackMe-UserApp` docs updated alongside its own change.
+- **Tests:** `tests/integration/signup-category.test.js` (new), `tests/unit/enrollment-schema.test.js`
+  (signup details cases).
+- **Docs updated:** `docs/modules/AUTH.md`, `docs/modules/PROFILES.md` (§2 rider endpoints, §8),
+  `docs/architecture/parent-student-profiles.md`, `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `category` is null on existing riders and the app collects it on first launch.
+- **Follow-ups / known issues:** `createEnrollment` still writes `userId: null` while
+  `managerEnrollmentsController` looks passengers up by `userId`, so the manager's approval queue
+  shows `passenger: null` for enrolments made through the rider path, and never shows the values a
+  rider entered. Untouched here.
+
+---
+
 ## 2026-08-22 — Standardize superAdminController's list-endpoint response envelope (#61)
 - **Branch:** claude/friendly-pasteur-yvly35
 - **Modules touched:** docs/modules/ADMIN.md (stub, note added)
@@ -522,7 +727,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ## 2026-08-14 — Active enrolments expose driver and vehicle details
 
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** driver enrolment (cross-client contract)
 - **What changed:** The enrollment driver summary now includes an optional email and expands its
   vehicle object with vehicle name, type, and service type alongside the existing ID, plate, and
@@ -541,7 +746,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ## 2026-08-14 — Live vehicle location: driver GO → enrolled riders + manager
 
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** realtime — [`docs/modules/REALTIME.md`](modules/REALTIME.md) (rewritten;
   the previous version documented a `bus:update`/`manager:join-bus` contract deleted in `6680eac`)
 - **What changed:**
@@ -629,7 +834,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 ---
 
 ## 2026-08-13 — Vehicle creation past the first requires super-admin approval
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, not updated)
 - **What changed:**
   - `POST /api/manager/vehicle-accounts` now creates a manager's *first* vehicle
@@ -820,7 +1025,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   environment (no local Mongo) — run them before deploy.
 
 ## 2026-07-22 — Driver on-board roster endpoint
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** qr-attendance — [docs/modules/QR_ATTENDANCE.md](modules/QR_ATTENDANCE.md)
 - **What changed:** Added `GET /api/driver/boarding/roster?busId=&tripId=` returning the enrolled
   roster (ACTIVE `RouteMembership` on the bus's route) joined with each rider's current on-board
@@ -839,7 +1044,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   the computed `guests`/boarded-this-trip count can become a fallback denominator later.
 
 ## 2026-07-22 — Documentation system (backend variant)
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** docs only (no `src/` change)
 - **What changed:**
   - `CLAUDE.md` rewritten as a **router** (architecture overview, mounted API surface, the

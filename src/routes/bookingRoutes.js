@@ -12,9 +12,10 @@ router.post(
     body('vehicleId').isMongoId().withMessage('Valid vehicleId required'),
     body('routeId').isMongoId().withMessage('Valid routeId required'),
     body('seatNumbers').isArray({ min: 1 }).withMessage('At least one seat required'),
-    body('journeyDate').isISO8601().withMessage('Valid journeyDate required'),
-    body('pricePerSeat').isFloat({ min: 0 }).withMessage('Valid pricePerSeat required'),
-    body('totalPrice').isFloat({ min: 0 }).withMessage('Valid totalPrice required')
+    body('journeyDate').isISO8601().withMessage('Valid journeyDate required')
+    // pricePerSeat/totalPrice are deliberately not validated: createBooking prices
+    // the booking from Route.fare and ignores any amount in the body. Older clients
+    // may still send them, which is harmless: they are simply not read.
   ],
   bookingController.createBooking
 );

@@ -29,7 +29,7 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 
 | Method | Path | Auth | Controller fn | Notes |
 |---|---|---|---|---|
-| `POST` | `/register` | public | `register` | `validateRegister`. Creates an `Identity` + unverified `User` profile + OTP. Duplicate email ⇒ 409 `code: 'EMAIL_IN_USE'`; if the match is the caller's own `User` profile and the submitted password is correct, adds `canSignIn: true`. |
+| `POST` | `/register` | public | `register` | `validateRegister`. Creates an `Identity` + unverified `User` profile + the account holder's own `RiderProfile` + OTP. Optionally takes `category` (`SCHOOL`/`UNIVERSITY`/`OFFICE`) and `details` (what that category asks for, e.g. `{ grade }`), validated by `validateSignupDetails` and seeded onto that rider — see [`PROFILES.md`](PROFILES.md) §8. Both optional, so a client released before they existed still registers; Google sign-in never carries them and the app collects them on first launch. Duplicate email ⇒ 409 `code: 'EMAIL_IN_USE'`; if the match is the caller's own `User` profile and the submitted password is correct, adds `canSignIn: true`. |
 | `POST` | `/verify-email` | public | `verifyEmail` | 6-digit OTP. |
 | `POST` | `/resend-verification-otp` | public | `resendVerificationOtp` | **No validator** — see §9. |
 | `POST` | `/login` | public | `login` | Accepts `identifier`/`email` + `password` (+ optional `audience`). Unverified ⇒ 403 `requiresVerification`, not a generic failure. A driver code as `identifier` bypasses `Identity` entirely — see §4. |

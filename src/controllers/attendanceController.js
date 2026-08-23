@@ -62,7 +62,7 @@ const getRiderAttendance = async (req, res, next) => {
           const managedVehicleIds = await Vehicle.find({
             managerId: req.user._id,
             isDeleted: false
-          }).distinct('_id');
+          }).distinct('vehicleId');
 
           const managesRider = await BoardingEvent.exists({
             studentId,

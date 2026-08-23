@@ -4,6 +4,7 @@ const Route = require('../models/Route');
 const BoardingEvent = require('../models/BoardingEvent');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const User = require('../models/User');
+const RiderProfile = require('../models/RiderProfile');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
 const Notification = require('../models/Notification');
@@ -239,14 +240,27 @@ exports.getBoardingRoster = async (req, res, next) => {
       .populate('userId', 'name')
       .lean();
 
+    // The owner is `studentId`, a RiderProfile — `userId` is the deprecated
+    // account-level owner that the current enrolment path writes as null. Reading
+    // the roster off `userId` therefore named every modern rider "Unknown", and,
+    // worse, keyed them by an id from the wrong collection: BoardingEvent.studentId
+    // is a RiderProfile id, so no boarding event ever matched and everyone showed
+    // NOT_BOARDED. Legacy rows that still carry a userId keep working through the
+    // populate above.
+    const riderIds = enrollments.map((e) => e.studentId).filter(Boolean);
+    const riders = riderIds.length
+      ? await RiderProfile.find({ _id: { $in: riderIds } }).select('fullName').lean()
+      : [];
+    const riderNameById = new Map(riders.map((r) => [String(r._id), r.fullName]));
+
     const enrolledIds = new Set();
     const roster = enrollments.map((e) => {
-      const studentId = String(e.userId?._id || e.userId);
+      const studentId = String(e.studentId || e.userId?._id || e.userId);
       enrolledIds.add(studentId);
       const trip = statusByStudent.get(studentId);
       return {
         studentId,
-        studentName: e.userId?.name || 'Unknown',
+        studentName: riderNameById.get(studentId) || e.userId?.name || 'Unknown',
         status: trip?.status || 'NOT_BOARDED',
         lastEventAt: trip?.lastEventAt || null
       };
@@ -266,8 +280,13 @@ exports.getBoardingRoster = async (req, res, next) => {
       .map((e) => e._id);
     let guests = [];
     if (guestIds.length > 0) {
-      const guestUsers = await User.find({ _id: { $in: guestIds } }).select('name').lean();
-      const nameById = new Map(guestUsers.map((u) => [String(u._id), u.name]));
+      // Same collection the events point at: a guest id came off
+      // BoardingEvent.studentId, which is a RiderProfile, so looking it up in
+      // User named every guest "Unknown" too.
+      const guestRiders = await RiderProfile.find({ _id: { $in: guestIds } })
+        .select('fullName')
+        .lean();
+      const nameById = new Map(guestRiders.map((r) => [String(r._id), r.fullName]));
       guests = guestIds
         .map((id) => {
           const trip = statusByStudent.get(String(id));

@@ -54,16 +54,24 @@ Returns the driver's currently-assigned bus's roster for the trip:
 }
 ```
 
-- **Enrollment (the `/Y`)** = `RouteMembership` with `status:'ACTIVE'` on the bus's `routeId`. This
-  only exists for PRIVATE / shuttle routes; a PUBLIC route with no memberships returns
-  `enrolledCount: 0` and an empty `roster`.
+- **Enrollment (the `/Y`)** = `DriverEnrollment` with `status:'ACTIVE'` for the requesting driver.
+  Enrollment is driver-scoped, not route-scoped: a passenger enrols with a specific driver by
+  redeeming their enrollment key. A driver nobody has enrolled with returns `enrolledCount: 0`
+  and an empty `roster`.
+- **Rider identity** comes from the enrolment's **`studentId`** (a `RiderProfile`), which is the
+  same id a `BoardingEvent` carries, so the roster and the events line up. `userId` is the
+  deprecated account-level owner and is null on every enrolment the current app writes; reading
+  the roster off it named every rider "Unknown" *and* keyed them by an id from the wrong
+  collection, so no event ever matched and everyone read `NOT_BOARDED`. It survives only as a
+  fallback for legacy rows. Guests are named from `RiderProfile` for the same reason.
 - **status** is derived from each rider's *latest* `BoardingEvent` in the trip: latest `BOARD` ⇒
   `ON`, latest `ALIGHT` ⇒ `OFF`, no event ⇒ `NOT_BOARDED`.
 - **onBoardCount** counts only enrolled members currently `ON`.
 - **guests** = riders currently on board (latest event `BOARD`) who are *not* enrolled members;
   surfaced separately so the `onBoardCount / enrolledCount` headline stays clean.
 - Roster is sorted `ON → NOT_BOARDED → OFF`, then by name.
-- Errors: 400 missing `busId`; 404 bus not assigned to the caller; 403 route `qrEnabled:false`.
+- Errors: 400 missing `vehicleId`; 404 vehicle not assigned to the caller; 403 route
+  `qrEnabled:false`.
 
 ## Key files
 

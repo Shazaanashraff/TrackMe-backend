@@ -54,6 +54,8 @@ and must be filled in from the template as part of the next change touching it:
 - **[CHANGES.md](CHANGES.md)** — append-only session log (write before every push).
 - **[../CHANGELOG.md](../CHANGELOG.md)** — release history; breaking contract changes called out.
 - **[PROGRESS.md](PROGRESS.md)** — phase rollup.
+- **[AUDITDONE.md](AUDITDONE.md)** — cross-repo audit remediation record (2026-08 audits),
+  verified item by item against the source. Covers all four repos.
 - **[SELF_CONTAINED_CHECKLIST.md](SELF_CONTAINED_CHECKLIST.md)** — standalone-readiness.
 - **Enforcement:** [`../scripts/check-docs.mjs`](../scripts/check-docs.mjs) + `.githooks/pre-push`.
   Enable with `git config core.hooksPath .githooks`.

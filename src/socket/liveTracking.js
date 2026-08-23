@@ -284,17 +284,6 @@ function registerLiveTracking(io, socket) {
       const recordedAt = resolveRecordedAt(data?.timestamp, now);
       const receivedAt = new Date(now);
 
-      // An offline buffer replays oldest-first on reconnect. Writing those would
-      // walk every watcher's marker backwards through the last 50 positions, so
-      // an older fix is accepted and dropped. It must ACK success: a NACK would
-      // send the client's isNackResponse path straight back to re-buffering it.
-      const current = await VehicleLiveLocation.findOne({ vehicleId })
-        .select('recordedAt')
-        .lean();
-      if (current?.recordedAt && recordedAt < current.recordedAt) {
-        return callback?.({ success: true, data: { acceptedAt: receivedAt.toISOString(), stale: true } });
-      }
-
       const update = {
         vehicleRef: session.vehicleRef,
         driverId: session.driverId,
@@ -314,11 +303,28 @@ function registerLiveTracking(io, socket) {
         endedReason: null
       };
 
-      await VehicleLiveLocation.findOneAndUpdate(
-        { vehicleId },
-        { $set: update },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
-      );
+      try {
+        const result = await VehicleLiveLocation.updateOne(
+          {
+            vehicleId,
+            $or: [{ recordedAt: null }, { recordedAt: { $lte: recordedAt } }]
+          },
+          { $set: update },
+          { upsert: true, setDefaultsOnInsert: true }
+        );
+
+        if (result.matchedCount === 0 && result.upsertedCount === 0) {
+          // A newer fix is already in the database, so this older buffered fix is
+          // safely dropped.
+          return callback?.({ success: true, data: { acceptedAt: receivedAt.toISOString(), stale: true } });
+        }
+      } catch (err) {
+        // Duplicate-key error on concurrent upsert race means a concurrent write won
+        if (err.code === 11000) {
+          return callback?.({ success: true, data: { acceptedAt: receivedAt.toISOString(), stale: true } });
+        }
+        throw err;
+      }
 
       io.to(roomFor(vehicleId)).emit('vehicle:update', {
         vehicleId,

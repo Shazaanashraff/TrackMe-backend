@@ -166,3 +166,60 @@ describe('enrolling a rider profile', () => {
     expect(await DriverEnrollment.countDocuments({})).toBe(1);
   });
 });
+
+describe('multiple rider profiles on one account', () => {
+  // Regression: GET /mine used to merge every rider profile's enrolments into
+  // one list regardless of ?riderId, so enrolling or leaving as one rider
+  // profile appeared to affect a sibling profile on the same account too.
+  test('each rider profile only sees, and only loses, its own enrolment', async () => {
+    const { driver: driverA } = await makeDriverWithVehicle({ isPrivate: false, name: 'Sibling Driver A' });
+    const { driver: driverB } = await makeDriverWithVehicle({ isPrivate: false, name: 'Sibling Driver B' });
+    const keyA = await ensureDriverEnrollmentKey(driverA._id);
+    const keyB = await ensureDriverEnrollmentKey(driverB._id);
+
+    const secondRider = await request(app)
+      .post('/api/riders')
+      .set(...asPassenger())
+      .send({ fullName: 'Kavi', contactPhone: '0779998887' });
+    const secondRiderId = secondRider.body.data._id;
+
+    const enrolledFirst = await enrolRider(keyA);
+    expect(enrolledFirst.status).toBe(201);
+    const enrolledSecond = await request(app)
+      .post(`/api/enrollments/riders/${secondRiderId}`)
+      .set(...asPassenger())
+      .send({ key: keyB, schemaVersion: 1, responses: {} });
+    expect(enrolledSecond.status).toBe(201);
+
+    const mineFirst = await request(app)
+      .get('/api/enrollments/mine')
+      .query({ riderId })
+      .set(...asPassenger());
+    expect(mineFirst.body.data).toHaveLength(1);
+    expect(mineFirst.body.data[0].driver.name).toBe('Sibling Driver A');
+
+    const mineSecond = await request(app)
+      .get('/api/enrollments/mine')
+      .query({ riderId: secondRiderId })
+      .set(...asPassenger());
+    expect(mineSecond.body.data).toHaveLength(1);
+    expect(mineSecond.body.data[0].driver.name).toBe('Sibling Driver B');
+
+    // No riderId keeps the old full-merge behaviour for back-compat.
+    const mineAll = await request(app).get('/api/enrollments/mine').set(...asPassenger());
+    expect(mineAll.body.data).toHaveLength(2);
+
+    // Leaving the first rider's enrolment must not touch the second rider's.
+    await request(app)
+      .delete(`/api/enrollments/${enrolledFirst.body.data._id}`)
+      .set(...asPassenger())
+      .expect(200);
+
+    const mineSecondAfter = await request(app)
+      .get('/api/enrollments/mine')
+      .query({ riderId: secondRiderId })
+      .set(...asPassenger());
+    expect(mineSecondAfter.body.data).toHaveLength(1);
+    expect(mineSecondAfter.body.data[0].driver.name).toBe('Sibling Driver B');
+  });
+});

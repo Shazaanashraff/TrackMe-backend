@@ -90,8 +90,13 @@ exports.updateReview = async (req, res, next) => {
     }
 
     const isOwner = String(review.userId) === String(req.user._id);
-    const isPrivileged = ['admin', 'super-admin'].includes(req.user.role);
-    if (!isOwner && !isPrivileged) {
+    const isSuperAdmin = req.user.role === 'super-admin';
+    let isManagerOfVehicle = false;
+    if (req.user.role === 'admin') {
+      const vehicle = await Vehicle.findById(review.vehicleId).select('managerId');
+      isManagerOfVehicle = vehicle && String(vehicle.managerId) === String(req.user._id);
+    }
+    if (!isOwner && !isSuperAdmin && !isManagerOfVehicle) {
       return res.status(403).json({ success: false, message: 'Not authorized to update this review' });
     }
 
@@ -121,8 +126,13 @@ exports.deleteReview = async (req, res, next) => {
     }
 
     const isOwner = String(review.userId) === String(req.user._id);
-    const isPrivileged = ['admin', 'super-admin'].includes(req.user.role);
-    if (!isOwner && !isPrivileged) {
+    const isSuperAdmin = req.user.role === 'super-admin';
+    let isManagerOfVehicle = false;
+    if (req.user.role === 'admin') {
+      const vehicle = await Vehicle.findById(review.vehicleId).select('managerId');
+      isManagerOfVehicle = vehicle && String(vehicle.managerId) === String(req.user._id);
+    }
+    if (!isOwner && !isSuperAdmin && !isManagerOfVehicle) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this review' });
     }
 

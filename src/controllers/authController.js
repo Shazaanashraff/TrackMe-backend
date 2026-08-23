@@ -8,6 +8,7 @@ const {
   accessTokenExpiresIn,
   refreshTokenExpiresIn,
   hashToken,
+  safeCompare,
   issueTokensForUser
 } = require('../utils/tokens');
 const { userPayload, hydrateIdentity } = require('../utils/accountPayload');
@@ -23,6 +24,8 @@ const {
 } = require('../utils/identityRegistry');
 const { sendPasswordResetOtpEmail } = require('../utils/passwordReset');
 const { looksLikeDriverCode, normalizeDriverCode } = require('../utils/driverCode');
+const { validateSignupDetails } = require('../utils/enrollmentSchema');
+const { ensureLegacyRider } = require('../utils/riders');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -158,6 +161,19 @@ exports.register = async (req, res, next) => {
     const { name, email, password } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
+    // The category the rider picked while creating the account, plus whatever that
+    // category asks for (a school's grade). Optional, so a client released before
+    // this shipped still registers; the app collects it on first launch instead.
+    const signup = validateSignupDetails(req.body?.category, req.body?.details);
+    if (!signup.valid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete the details for the category you picked',
+        errors: signup.errors
+      });
+    }
+    const riderSeed = { category: signup.category, details: signup.values };
+
     const derivedName = (name && name.trim()) || normalizedEmail.split('@')[0];
     const existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
 
@@ -198,6 +214,7 @@ exports.register = async (req, res, next) => {
           role: 'user',
           fields: { name: derivedName }
         });
+        await ensureLegacyRider(newRider, riderSeed);
 
         const tokens = await issueTokensForUser(newRider, 'user');
         return res.status(200).json({
@@ -217,7 +234,7 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = String(crypto.randomInt(100000, 1000000));
     const otpHash = hashToken(otp);
 
     const { identity, doc: user } = await createIdentityWithProfile({
@@ -227,10 +244,14 @@ exports.register = async (req, res, next) => {
       role: 'user',
       fields: { name: derivedName }
     });
+    // Seeded here rather than lazily on the first GET /api/riders, so the category
+    // answered at signup is on the rider before anything can read it.
+    await ensureLegacyRider(user, riderSeed);
 
     identity.emailVerification = {
       otpHash,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS),
+      attempts: 0
     };
     await identity.save();
 
@@ -269,7 +290,7 @@ exports.verifyEmail = async (req, res, next) => {
     const normalizedEmail = String(email).trim().toLowerCase();
 
     const identity = await findIdentityByEmail(normalizedEmail, {
-      select: '+emailVerification.otpHash +emailVerification.expiresAt'
+      select: '+emailVerification.otpHash +emailVerification.expiresAt +emailVerification.attempts'
     });
     if (!identity) {
       return res.status(404).json({
@@ -295,20 +316,41 @@ exports.verifyEmail = async (req, res, next) => {
     if (identity.emailVerification.expiresAt.getTime() < Date.now()) {
       return res.status(400).json({
         success: false,
-        message: 'OTP expired. Please register again.'
+        message: 'OTP expired. Please request a new verification code.'
       });
     }
 
-    if (hashToken(otp) !== identity.emailVerification.otpHash) {
+    const MAX_VERIFY_ATTEMPTS = 5;
+    if ((identity.emailVerification.attempts || 0) >= MAX_VERIFY_ATTEMPTS) {
+      identity.emailVerification = { otpHash: null, expiresAt: null, attempts: 0 };
+      await identity.save();
+      return res.status(429).json({
+        success: false,
+        message: 'Too many failed attempts. Please request a new verification code.'
+      });
+    }
+
+    if (!safeCompare(hashToken(otp), identity.emailVerification.otpHash)) {
+      const attempts = (identity.emailVerification.attempts || 0) + 1;
+      if (attempts >= MAX_VERIFY_ATTEMPTS) {
+        identity.emailVerification = { otpHash: null, expiresAt: null, attempts: 0 };
+        await identity.save();
+        return res.status(429).json({
+          success: false,
+          message: 'Too many failed attempts. Please request a new verification code.'
+        });
+      }
+      identity.emailVerification.attempts = attempts;
+      await identity.save();
       return res.status(400).json({
         success: false,
-        message: 'Invalid OTP code'
+        message: `Invalid OTP code. ${MAX_VERIFY_ATTEMPTS - attempts} attempt(s) remaining.`
       });
     }
 
     // Verification is a property of the person, so it covers every role they hold.
     identity.isEmailVerified = true;
-    identity.emailVerification = { otpHash: null, expiresAt: null };
+    identity.emailVerification = { otpHash: null, expiresAt: null, attempts: 0 };
     await identity.save();
 
     // Only riders ever reach this endpoint (every other role is admin-provisioned and
@@ -622,7 +664,7 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    if (hashToken(refreshToken) !== user.refreshToken.tokenHash) {
+    if (!safeCompare(hashToken(refreshToken), user.refreshToken.tokenHash)) {
       return res.status(401).json({
         success: false,
         message: 'Invalid refresh token'
@@ -700,7 +742,7 @@ exports.requestPasswordResetOtp = async (req, res, next) => {
       return res.status(200).json(genericSuccess);
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = String(crypto.randomInt(100000, 1000000));
     identity.passwordReset = {
       otpHash: hashToken(otp),
       expiresAt: new Date(Date.now() + PASSWORD_RESET_OTP_EXPIRY_MS),
@@ -774,7 +816,7 @@ exports.verifyPasswordResetOtp = async (req, res, next) => {
 
     const MAX_OTP_ATTEMPTS = 5;
 
-    if (hashToken(otp) !== identity.passwordReset.otpHash) {
+    if (!safeCompare(hashToken(otp), identity.passwordReset.otpHash)) {
       const attempts = (identity.passwordReset.attempts || 0) + 1;
 
       if (attempts >= MAX_OTP_ATTEMPTS) {
@@ -852,7 +894,7 @@ exports.resetPasswordWithToken = async (req, res, next) => {
       });
     }
 
-    if (hashToken(String(resetToken)) !== identity.passwordReset.resetTokenHash) {
+    if (!safeCompare(hashToken(String(resetToken)), identity.passwordReset.resetTokenHash)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid password reset session.'
@@ -1123,10 +1165,11 @@ exports.resendVerificationOtp = async (req, res, next) => {
       return res.status(200).json({ success: true, message: 'If unverified, a new code has been sent.' });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = String(crypto.randomInt(100000, 1000000));
     identity.emailVerification = {
       otpHash: hashToken(otp),
-      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS)
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_OTP_EXPIRY_MS),
+      attempts: 0
     };
     await identity.save();
 
