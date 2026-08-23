@@ -32,7 +32,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   - Commits the 2026-08-17 production-readiness / offline audit and the 2026-08-22 security
     assessment work, which had been left uncommitted in the working tree. Each item was
     re-checked against the source before committing; the full item-by-item verification lives
-    in `../../AUDITDONE.md`.
+    in [`AUDITDONE.md`](AUDITDONE.md).
   - Kept as written: refresh tokens rejected as REST credentials, CSPRNG OTPs, constant-time
     hash comparison, verify-email attempt lockout and rate limit, atomic live-location upsert,
     `helmet`/`compression`, CORS whitelist, graceful shutdown, `/health` dbName gating, and the
@@ -48,7 +48,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   Existing clients that still send those fields are unaffected, since they are simply ignored.
 - **Tests:** none added. Smoke suite unchanged at 3 passing / 0 failing. The authz cases for
   SEC-3/SEC-4/SEC-7 and a regression test for the booking price are still owed.
-- **Docs updated:** this entry, plus `../../AUDITDONE.md`.
+- **Docs updated:** this entry, plus [`AUDITDONE.md`](AUDITDONE.md).
 - **Migration:** none.
 - **Follow-ups / known issues:** integration coverage for the corrected pricing path and the
   new authorization branches; `backend-run.log` is untracked and probably belongs in
