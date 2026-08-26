@@ -89,6 +89,10 @@ describe('getOperationsOverview response envelope (issue #61)', () => {
   beforeEach(() => {
     Manager.find.mockReturnValue(chainable([sampleManager]));
     Manager.countDocuments.mockResolvedValue(1);
+    // getOperationsOverview (issue #83) fetches the page's vehicles first — via
+    // Vehicle.find(...).select(...).lean() — to $match Booking/VehicleReview
+    // aggregations directly on vehicleId instead of $lookup-ing against `vehicles`.
+    Vehicle.find.mockReturnValue(chainable([]));
     Vehicle.aggregate.mockResolvedValue([]);
     Booking.aggregate.mockResolvedValue([]);
     VehicleReview.aggregate.mockResolvedValue([]);
