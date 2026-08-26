@@ -23,6 +23,33 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-26 — Verify + merge #83's Booking/VehicleReview KPI aggregation fix
+- **Branch:** issue/83-lookup-to-indexed-match
+- **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md))
+- **What changed:** No production code changed in this entry — this closes out the verification
+  gap left by the 2026-08-14 entry below. A working `mongodb-memory-server` was available this
+  session, so: (1) merged `main` into this branch (it was 42 commits behind, including #61's
+  `superAdminController` envelope-shape change to `getOperationsOverview` — merged cleanly, no
+  semantic overlap with issue #83's aggregation restructuring, confirmed by re-reading the merged
+  function); (2) ran the full `npm run test:integration` suite on the merged branch; (3) added
+  `tests/integration/superadmin-manager-kpis.test.js` covering the one acceptance criterion
+  nothing already covered (`explain()` proving an index seek, not a collection scan).
+- **Why:** issue #83's acceptance criteria required both correct KPI numbers *and* verified index
+  usage; the original PR could only ship the latter as a code-review argument by analogy, not a
+  running test, because no Mongo was reachable in that session.
+- **Contract impact:** none.
+- **Tests:** full `npm run test:integration` on the merged branch — 13 pre-existing failing
+  suites (confirmed identical on `main` before merging in this branch's change: rate-limit/env
+  config gaps in this sandbox, `route-path`/`transit`/`places-proxy` needing external API keys,
+  `session-revocation` needing a working login path unrelated to this change), zero new
+  failures. `tests/integration/superadmin-reads.test.js` (issue #70, already on `main`) passed
+  unmodified against this change — its multi-manager seeded-dataset assertions are exactly the
+  end-to-end KPI-correctness check the 2026-08-14 entry flagged as missing, so no separate test
+  duplicates it. New `superadmin-manager-kpis.test.js` (1 case, explain()-based) is green.
+- **Docs updated:** `docs/TESTING_GUIDE.md` (revised #83 row + new index-usage row).
+- **Migration:** none.
+- **Follow-ups / known issues:** none — issue #83 fully closed.
+
 ## 2026-08-23 — Audit remediation: security, offline and production-readiness findings
 
 - **Branch:** feature/audit-remediation
@@ -598,6 +625,44 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 ---
 
 ## 2026-08-17 — Clear all dependency vulnerabilities (0 remaining)
+## 2026-08-14 — Super-admin dashboard KPIs stop full-scanning Booking/VehicleReview
+- **Branch:** issue/83-lookup-to-indexed-match
+- **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, note added)
+- **What changed:**
+  - `getManagerById` and `getOperationsOverview` in `superAdminController.js` no longer
+    `$lookup` every `Booking`/`VehicleReview` document against `vehicles` and filter after
+    the join. Both now fetch the relevant vehicle ids first (a fast, `managerId`-indexed
+    `Vehicle` query) and `$match` the aggregation directly on `vehicleId` — an index seek on
+    the existing `{ vehicleId, journeyDate, status }` / `{ vehicleId, createdAt }` compound
+    indexes, instead of a full collection scan on every dashboard/operations load.
+  - Added `src/utils/vehicleManagerRollup.js` — pure helpers that roll per-vehicle
+    Booking/VehicleReview aggregation results up to per-manager totals (including a
+    count-weighted average-rating rollup), since neither collection carries a `managerId`
+    field of its own. `getManagerVehicleDetails` already used the equivalent
+    pre-filtered-match pattern for its per-vehicle (not per-manager) view; this change
+    brings the other two KPI endpoints in line with it.
+  - Response shape is unchanged for both endpoints — this is an internal query-strategy fix.
+- **Why:** issue #83 — these collections' compound indexes on `vehicleId` were going unused
+  because the aggregation pipelines only matched on the joined `vehicleInfo.managerId` field,
+  *after* `$lookup`/`$unwind`, which forces a full scan regardless of any index.
+- **Contract impact:** none — response shape, status codes, and payload fields are identical.
+- **Tests:** added `tests/unit/vehicle-manager-rollup.test.js` (14 cases, no DB needed) covering
+  the new pure rollup helpers, incl. the weighted-average-rating math verified against a direct
+  average of raw ratings, and orphaned-vehicle-id handling. `npm test` and `npx jest tests/unit`
+  are green. The aggregation pipeline change itself (the Mongo query behavior) has **not** been
+  verified end-to-end — `npm run test:integration` cannot run in this environment (no MongoDB /
+  mongodb-memory-server available); see the PR for detail. Not merged for that reason.
+- **Docs updated:** `docs/modules/ADMIN.md` (note), `docs/TESTING_GUIDE.md` (new row).
+- **Migration:** none — no schema/index changes, only a query-strategy change.
+- **Follow-ups / known issues:** `getOperationsOverview`'s KPI aggregations still run
+  unconditionally on every page load with no caching (issue #62's broader concern) — out of
+  scope here. Integration-test verification of the new pipelines is blocked on MongoDB
+  availability in this environment; a future session with a working `mongodb-memory-server`
+  should add an integration test asserting `getManagerById`/`getOperationsOverview` return
+  identical KPI numbers before/after this change (e.g. via a seeded fixture with several
+  managers, vehicles, bookings, and reviews) before merging.
+
+## 2026-08-13 — Vehicle creation past the first requires super-admin approval
 - **Branch:** main
 - **Modules touched:** none — dependency maintenance, not a feature
 - **What changed:**
