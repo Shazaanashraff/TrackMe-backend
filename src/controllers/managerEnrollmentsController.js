@@ -1,8 +1,14 @@
 const Driver = require('../models/Driver');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const Notification = require('../models/Notification');
+const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
 const Identity = require('../models/Identity');
+const RiderProfile = require('../models/RiderProfile');
+const RiderOrganizationProfile = require('../models/StudentOrganizationProfile');
+const Organization = require('../models/Organization');
+const { mapValuesToObject } = require('../utils/riders');
+const { normalizedEnrollmentConfig } = require('../utils/enrollmentSchema');
 
 const STATUSES = ['PENDING', 'ACTIVE', 'REJECTED'];
 
@@ -52,26 +58,162 @@ async function resolveAccountsForPassengers(passengers) {
   return accountByPassengerId;
 }
 
-const requestSummary = (enrollment, driver, passenger, account) => ({
+// Who a queued request is actually for.
+//
+// The enrolment's owner is `studentId` (a RiderProfile) — `userId` is the
+// deprecated account-level owner, and `createEnrollment` writes it as null, so
+// resolving by it alone showed the manager `passenger: null` for every request
+// the current app makes. Rows written by the legacy `/redeem` path still carry a
+// `userId`, so that lookup stays as the fallback rather than being dropped.
+async function resolvePassengers(enrollments) {
+  const riderIds = [...new Set(enrollments.map((e) => e.studentId).filter(Boolean).map(String))];
+  const legacyUserIds = [...new Set(
+    enrollments.filter((e) => !e.studentId).map((e) => e.userId).filter(Boolean).map(String)
+  )];
+  const organizationProfileIds = [...new Set(
+    enrollments.map((e) => e.organizationProfileId).filter(Boolean).map(String)
+  )];
+
+  const [riders, legacyPassengers, organizationProfiles] = await Promise.all([
+    riderIds.length
+      ? RiderProfile.find({ _id: { $in: riderIds } })
+        .select('fullName riderCode avatarUrl accountId guardianPhoneOverride category details')
+        .lean()
+      : [],
+    legacyUserIds.length
+      ? User.find({ _id: { $in: legacyUserIds } })
+        .select('name email avatarUrl relation profileKind identityId phoneNumber')
+        .lean()
+      : [],
+    organizationProfileIds.length
+      ? RiderOrganizationProfile.find({ _id: { $in: organizationProfileIds } })
+        .select('values organizationId')
+        .lean()
+      : []
+  ]);
+
+  const accountIds = [...new Set(riders.map((r) => r.accountId).filter(Boolean).map(String))];
+  const accounts = accountIds.length
+    ? await User.find({ _id: { $in: accountIds } }).select('name email phoneNumber').lean()
+    : [];
+
+  // The form answers are stored keyed by field key ("grade"), so the manager
+  // deciding a request would otherwise see the bare key and no sign of which
+  // organization asked for it. The organization carries both: its name, and the
+  // label and order it configured for each field.
+  const organizationIds = [...new Set(
+    organizationProfiles.map((p) => p.organizationId).filter(Boolean).map(String)
+  )];
+  const organizations = organizationIds.length
+    ? await Organization.find({ _id: { $in: organizationIds } })
+      .select('name serviceType enrollmentConfig')
+      .lean()
+    : [];
+
+  const riderById = new Map(riders.map((r) => [String(r._id), r]));
+  const accountById = new Map(accounts.map((a) => [String(a._id), a]));
+  const organizationById = new Map(organizations.map((o) => [String(o._id), o]));
+  const organizationByProfileId = new Map(
+    organizationProfiles.map((p) => [String(p._id), organizationById.get(String(p.organizationId)) || null])
+  );
+  const valuesByProfileId = new Map(
+    organizationProfiles.map((p) => [String(p._id), mapValuesToObject(p.values)])
+  );
+  const legacyById = new Map(legacyPassengers.map((p) => [String(p._id), p]));
+  const legacyAccounts = await resolveAccountsForPassengers(legacyPassengers);
+
+  // Labelled and ordered the way the organization's own enrolment form is, with
+  // an answer to a field it has since removed kept at the end rather than
+  // dropped: it is still what this request was raised with.
+  const detailsFor = (organization, values) => {
+    // Normalized rather than read straight off the document: an organization
+    // that has never opened the form builder stores no config at all, and the
+    // catalog default is where "grade" gets to be labelled "Grade" — the same
+    // label the passenger answered it under.
+    const fields = organization ? normalizedEnrollmentConfig(organization).fields : [];
+    const labelled = fields
+      .filter((field) => Object.prototype.hasOwnProperty.call(values, field.key))
+      .map((field) => ({ key: field.key, label: field.label || field.key, value: values[field.key] }));
+    const known = new Set(labelled.map((entry) => entry.key));
+    const rest = Object.entries(values)
+      .filter(([key]) => !known.has(key))
+      .map(([key, value]) => ({ key, label: key, value }));
+    return [...labelled, ...rest].filter((entry) => String(entry.value == null ? '' : entry.value).trim() !== '');
+  };
+
+  return (enrollment) => {
+    const profileId = String(enrollment.organizationProfileId);
+    const organization = organizationByProfileId.get(profileId) || null;
+    const organizationValues = valuesByProfileId.get(profileId) || {};
+    const organizationSummary = organization
+      ? { _id: organization._id, name: organization.name, serviceType: organization.serviceType || '' }
+      : null;
+    const organizationDetails = detailsFor(organization, organizationValues);
+
+    const rider = riderById.get(String(enrollment.studentId));
+    if (rider) {
+      const account = accountById.get(String(rider.accountId)) || null;
+      return {
+        passenger: {
+          _id: rider._id,
+          name: rider.fullName,
+          riderCode: rider.riderCode || '',
+          avatarUrl: rider.avatarUrl || '',
+          relation: '',
+          // The account holder's own rider row is created with the account's id
+          // (utils/riders.js), so anyone else is someone they added.
+          isManagedProfile: String(rider._id) !== String(rider.accountId),
+          email: account?.email || '',
+          contactPhone: rider.guardianPhoneOverride || account?.phoneNumber || '',
+          // What the rider answered on this organization's enrolment form: the
+          // grade or employee ID the manager is being asked to approve.
+          // `organizationDetails` is the labelled, ordered form of the same
+          // answers; the raw map stays for anything reading them by field key.
+          organizationValues,
+          organizationDetails
+        },
+        account: account
+          ? { name: account.name || '', email: account.email || '', phoneNumber: account.phoneNumber || '' }
+          : null,
+        organization: organizationSummary
+      };
+    }
+
+    const legacy = legacyById.get(String(enrollment.userId));
+    if (!legacy) return { passenger: null, account: null, organization: organizationSummary };
+    const account = legacyAccounts.get(String(legacy._id)) || null;
+    return {
+      passenger: {
+        _id: legacy._id,
+        name: legacy.name,
+        riderCode: '',
+        avatarUrl: legacy.avatarUrl || '',
+        relation: legacy.relation || '',
+        isManagedProfile: legacy.profileKind === 'MANAGED',
+        email: legacy.email || account?.email || '',
+        contactPhone: legacy.phoneNumber || account?.phoneNumber || '',
+        organizationValues,
+        organizationDetails
+      },
+      account,
+      organization: organizationSummary
+    };
+  };
+}
+
+const requestSummary = (enrollment, driver, passenger, account, organization = null) => ({
   _id: enrollment._id,
   status: enrollment.status,
   requestedAt: enrollment.createdAt,
   decidedAt: enrollment.decidedAt || null,
   driver: driver ? { _id: driver._id, name: driver.name, driverCode: driver.driverCode || null } : null,
-  passenger: passenger
-    ? {
-      _id: passenger._id,
-      name: passenger.name,
-      avatarUrl: passenger.avatarUrl || '',
-      relation: passenger.relation || '',
-      isManagedProfile: passenger.profileKind === 'MANAGED',
-      // Kept populated from the owning account so the existing web-admin
-      // column (which reads passenger.email) does not break for a managed
-      // profile, which has no email of its own.
-      email: passenger.email || account?.email || '',
-      account: account || null
-    }
-    : null
+  // Which organization's form the answers below belong to. A manager can run
+  // more than one, so the queue names it per request instead of assuming.
+  organization,
+  // `passenger` is already normalized by resolvePassengers, whichever owner
+  // field the row carries. `email` there is the owning account's, so the
+  // web-admin column keeps working for a rider that has no email of its own.
+  passenger: passenger ? { ...passenger, account: account || null } : null
 });
 
 // The enrollment must belong to a driver this manager owns. Checked against the
@@ -89,16 +231,17 @@ async function findOwnedEnrollment(managerId, enrollmentId) {
 
 // Tells the passenger what happened. Best effort: a notification that fails to
 // write must not roll back a decision the manager already made.
-async function notifyPassenger(enrollment, driver, approved) {
+async function notifyPassenger(enrollment, driver, approved, student) {
   try {
     await Notification.create({
-      userId: enrollment.userId,
+      userId: student.accountId,
+      studentId: student._id,
       type: approved ? 'ENROLLMENT_APPROVED' : 'ENROLLMENT_REJECTED',
       title: approved ? 'Enrollment approved' : 'Enrollment declined',
       message: approved
-        ? `You are now enrolled with ${driver.name}.`
-        : `Your request to enrol with ${driver.name} was declined.`,
-      data: { relatedId: String(enrollment._id) },
+        ? `${student.fullName} is now enrolled with ${driver.name}.`
+        : `${student.fullName}'s request to enrol with ${driver.name} was declined.`,
+      data: { relatedId: String(enrollment._id), studentId: String(student._id) },
       priority: 'MEDIUM'
     });
   } catch (error) {
@@ -111,41 +254,55 @@ exports.getManagerEnrollmentRequests = async (req, res, next) => {
   try {
     const requested = String(req.query.status || 'PENDING').toUpperCase();
     const status = STATUSES.includes(requested) ? requested : 'PENDING';
+    const requestedDriverId = req.query.driverId ? String(req.query.driverId) : '';
 
     // Scoped by the drivers this manager owns rather than the denormalised
     // managerId, so drivers moved between managers still list correctly.
     const drivers = await Driver.find({ managerId: req.user._id })
-      .select('name driverCode')
+      .select('name driverCode organization')
+      .populate('organization', 'name serviceType')
       .lean();
 
-    if (!drivers.length) {
+    // Narrowing to one driver is the same ownership question as the queue
+    // itself, and gets the same answer: a driver this manager does not own is
+    // reported missing rather than refused, so the portal can never be used to
+    // probe for another manager's driver ids. Compared as strings, so a
+    // malformed id falls through to the same 404 instead of a cast error.
+    let scopedDrivers = drivers;
+    if (requestedDriverId) {
+      scopedDrivers = drivers.filter((d) => String(d._id) === requestedDriverId);
+      if (!scopedDrivers.length) {
+        return res.status(404).json({ success: false, message: 'Driver not found' });
+      }
+    }
+
+    if (!scopedDrivers.length) {
       return res.status(200).json({ success: true, data: [] });
     }
 
     const driverById = new Map(drivers.map((d) => [String(d._id), d]));
     const enrollments = await DriverEnrollment.find({
-      driverId: { $in: drivers.map((d) => d._id) },
+      driverId: { $in: scopedDrivers.map((d) => d._id) },
       status
     })
       .sort({ createdAt: -1 })
       .lean();
 
-    const passengers = enrollments.length
-      ? await User.find({ _id: { $in: enrollments.map((e) => e.userId) } })
-        .select('name email avatarUrl relation profileKind identityId phoneNumber')
-        .lean()
-      : [];
-    const passengerById = new Map(passengers.map((p) => [String(p._id), p]));
-    const accountByPassengerId = await resolveAccountsForPassengers(passengers);
+    const resolve = await resolvePassengers(enrollments);
 
     const data = enrollments.map((enrollment) => {
-      const passenger = passengerById.get(String(enrollment.userId));
-      return requestSummary(
-        enrollment,
-        driverById.get(String(enrollment.driverId)),
-        passenger,
-        passenger ? accountByPassengerId.get(String(passenger._id)) : null
-      );
+      const { passenger, account, organization } = resolve(enrollment);
+      const driver = driverById.get(String(enrollment.driverId));
+      // A legacy row carries no organization profile to read the name from; the
+      // driver it was raised against belongs to one either way.
+      const driverOrganization = driver?.organization
+        ? {
+          _id: driver.organization._id,
+          name: driver.organization.name,
+          serviceType: driver.organization.serviceType || ''
+        }
+        : null;
+      return requestSummary(enrollment, driver, passenger, account, organization || driverOrganization);
     });
 
     return res.status(200).json({ success: true, data });
@@ -193,19 +350,16 @@ const decide = (approved) => async (req, res, next) => {
     enrollment.managerId = driver.managerId || null;
     await enrollment.save();
 
-    await notifyPassenger(enrollment, driver, approved);
+    const student = await RiderProfile.findById(enrollment.studentId);
+    if (student) await notifyPassenger(enrollment, driver, approved, student);
 
-    const passenger = await User.findById(enrollment.userId)
-      .select('name email avatarUrl relation profileKind identityId phoneNumber')
-      .lean();
-    const account = passenger
-      ? (await resolveAccountsForPassengers([passenger])).get(String(passenger._id))
-      : null;
+    const resolve = await resolvePassengers([enrollment]);
+    const { passenger, account, organization } = resolve(enrollment);
 
     return res.status(200).json({
       success: true,
       message: approved ? 'Enrollment approved' : 'Enrollment declined',
-      data: requestSummary(enrollment, driver, passenger, account)
+      data: requestSummary(enrollment, driver, passenger, account, organization)
     });
   } catch (error) {
     next(error);
@@ -217,3 +371,67 @@ exports.approveManagerEnrollmentRequest = decide(true);
 
 // @route POST /api/manager/enrollment-requests/:id/reject
 exports.rejectManagerEnrollmentRequest = decide(false);
+
+// Tells the rider they were taken off the shuttle, and by whose driver. Best
+// effort for the same reason a decision notice is: a notification that fails to
+// write must not undo a removal the manager already made.
+async function notifyRemoved(enrollment, driver, rider) {
+  try {
+    await Notification.create({
+      userId: rider.accountId,
+      studentId: rider._id,
+      type: 'ROUTE_ACCESS_REVOKED',
+      title: 'Enrollment removed',
+      message: `${rider.fullName} is no longer enrolled with ${driver.name}.`,
+      data: { relatedId: String(enrollment._id), studentId: String(rider._id) },
+      priority: 'MEDIUM'
+    });
+  } catch (error) {
+    console.error('Failed to notify passenger of enrollment removal:', error.message);
+  }
+}
+
+// @route DELETE /api/manager/enrollment-requests/:id
+// The manager-side counterpart to a rider leaving. Only an ACTIVE enrolment can
+// be removed: a queued one is declined instead, which keeps the decision trail
+// (decidedBy / decidedAt) that deleting the row would throw away.
+exports.removeManagerEnrollment = async (req, res, next) => {
+  try {
+    const { enrollment, driver } = await findOwnedEnrollment(req.user._id, req.params.id);
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (enrollment.status !== 'ACTIVE') {
+      return res.status(409).json({
+        success: false,
+        message: enrollment.status === 'PENDING'
+          ? 'This request is still queued. Decline it instead.'
+          : 'This request was already declined'
+      });
+    }
+
+    await DriverEnrollment.deleteOne({ _id: enrollment._id });
+
+    const rider = await RiderProfile.findById(enrollment.studentId);
+    if (rider) await notifyRemoved(enrollment, driver, rider);
+
+    // The same revoke a rider's own "leave" performs (enrollmentController): if
+    // they have the live map open on this vehicle, drop them from the room now
+    // rather than leaving them watching until the socket happens to disconnect.
+    const vehicle = await Vehicle.findOne({ driverId: enrollment.driverId, isDeleted: false })
+      .select('vehicleId')
+      .lean();
+    if (vehicle) {
+      req.app.get('io')?.to(`vehicle:${vehicle.vehicleId}`).emit('vehicle:access-revoked', {
+        vehicleId: vehicle.vehicleId,
+        riderId: String(enrollment.studentId || '')
+      });
+    }
+
+    return res.status(200).json({ success: true, message: 'Rider removed' });
+  } catch (error) {
+    next(error);
+  }
+};

@@ -40,10 +40,11 @@ const createBooking = async (req, res) => {
       journeyDate,
       pickupStopIndex,
       dropoffStopIndex,
-      passengerDetails,
-      pricePerSeat,
-      totalPrice
+      passengerDetails
     } = req.body;
+    // Pricing is deliberately NOT read from the body. Route.fare is required by
+    // the schema, so the server always has an authoritative number; accepting a
+    // client price, even only as a fallback, lets a caller book at any amount.
 
     const { end: journeyEndOfDay } = getStartAndEndOfDay(journeyDate);
     if (Number.isNaN(journeyEndOfDay.getTime())) {
@@ -122,15 +123,19 @@ const createBooking = async (req, res) => {
       });
     }
 
+    // Calculate authoritative pricing server-side from route.fare
+    const calculatedPricePerSeat = typeof route.fare === 'number' && route.fare >= 0 ? route.fare : 0;
+    const calculatedTotalPrice = calculatedPricePerSeat * requestedSeats.length;
+
     // Create booking
     const booking = new Booking({
       userId,
       vehicleId,
       routeId,
       seatNumbers: requestedSeats,
-      totalPassengers: passengerDetails?.length || 1,
-      pricePerSeat,
-      totalPrice,
+      totalPassengers: passengerDetails?.length || requestedSeats.length || 1,
+      pricePerSeat: calculatedPricePerSeat,
+      totalPrice: calculatedTotalPrice,
       serviceType: vehicle.serviceType || 'PUBLIC',
       journeyDate: new Date(journeyDate),
       pickupStop: normalizeStop(pickupStop),
@@ -148,7 +153,7 @@ const createBooking = async (req, res) => {
       message: 'Booking created successfully',
       booking,
       paymentRequired: true,
-      amount: totalPrice
+      amount: calculatedTotalPrice
     });
   } catch (error) {
     console.error('Create booking error:', error);
@@ -384,6 +389,19 @@ const getVehicleBookings = async (req, res) => {
     const { vehicleId } = req.params;
     const { journeyDate } = req.query;
 
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    const isDriver = req.user.role === 'driver' && String(vehicle.driverId) === String(req.user._id);
+    const isManager = req.user.role === 'admin' && String(vehicle.managerId) === String(req.user._id);
+    const isSuperAdmin = req.user.role === 'super-admin';
+
+    if (!isDriver && !isManager && !isSuperAdmin) {
+      return res.status(403).json({ message: 'Not authorized to view passenger manifest for this vehicle' });
+    }
+
     const query = {
       vehicleId,
       status: 'CONFIRMED',
@@ -431,13 +449,23 @@ const getAdminBookingOverview = async (req, res) => {
     const limitNumber = Math.max(1, Number(limit) || 8);
     const fromDate = new Date(Date.now() - daysNumber * 24 * 60 * 60 * 1000);
 
+    const matchFilter = {
+      isDeleted: false,
+      createdAt: { $gte: fromDate }
+    };
+
+    const bookingQuery = { isDeleted: false };
+
+    if (req.user.role === 'admin') {
+      const managerVehicleIds = await Vehicle.find({ managerId: req.user._id, isDeleted: false }).distinct('_id');
+      matchFilter.vehicleId = { $in: managerVehicleIds };
+      bookingQuery.vehicleId = { $in: managerVehicleIds };
+    }
+
     const [summary, recentBookings] = await Promise.all([
       Booking.aggregate([
         {
-          $match: {
-            isDeleted: false,
-            createdAt: { $gte: fromDate }
-          }
+          $match: matchFilter
         },
         {
           $group: {
@@ -460,7 +488,7 @@ const getAdminBookingOverview = async (req, res) => {
           }
         }
       ]),
-      Booking.find({ isDeleted: false })
+      Booking.find(bookingQuery)
         .populate('userId', 'name email')
         .populate('vehicleId', 'vehicleName vehicleId')
         .populate('routeId', 'routeId source destination')

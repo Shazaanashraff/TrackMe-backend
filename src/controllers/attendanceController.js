@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const BoardingEvent = require('../models/BoardingEvent');
 const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
+const RiderProfile = require('../models/RiderProfile');
 const { resolveRange } = require('../utils/dateRange');
 
 function summarize(events) {
@@ -27,14 +28,18 @@ function summarize(events) {
 // Authorized for the rider themselves, anyone sharing their identity (the
 // account holder reading a managed child's history, or vice versa), or a
 // manager who manages a route this rider has (or had) membership on.
-exports.getStudentAttendance = async (req, res, next) => {
+const getRiderAttendance = async (req, res, next) => {
   try {
-    const { studentId } = req.params;
+    const studentId = req.params.riderId || req.params.studentId;
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
-      return res.status(400).json({ success: false, message: 'Invalid studentId' });
+      return res.status(400).json({ success: false, message: 'Invalid riderId' });
     }
 
-    const isSelf = String(req.user._id) === String(studentId);
+    const isSelf = req.user.role === 'user' && Boolean(await RiderProfile.exists({
+      _id: studentId,
+      accountId: req.user._id,
+      isActive: { $ne: false }
+    }));
     const isManager = ['admin', 'super-admin'].includes(req.user.role);
 
     if (!isSelf) {
@@ -57,7 +62,7 @@ exports.getStudentAttendance = async (req, res, next) => {
           const managedVehicleIds = await Vehicle.find({
             managerId: req.user._id,
             isDeleted: false
-          }).distinct('_id');
+          }).distinct('vehicleId');
 
           const managesRider = await BoardingEvent.exists({
             studentId,
@@ -89,3 +94,7 @@ exports.getStudentAttendance = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getRiderAttendance = getRiderAttendance;
+// Compatibility for clients released before rider-neutral terminology.
+exports.getStudentAttendance = getRiderAttendance;

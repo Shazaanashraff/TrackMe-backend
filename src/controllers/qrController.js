@@ -1,6 +1,8 @@
 // Rider-facing QR endpoints — see docs/features/qr-attendance/QR_SYSTEM.md.
 const jwt = require('jsonwebtoken');
 const { signQr } = require('../utils/qrToken');
+const { findOwnedRider } = require('../utils/riders');
+const DriverEnrollment = require('../models/DriverEnrollment');
 
 function toIssuedToken(user) {
   const { token, payload } = signQr(user);
@@ -18,11 +20,24 @@ function toIssuedToken(user) {
 // @route   POST /api/qr/issue
 exports.issueQr = async (req, res, next) => {
   try {
-    const entry = toIssuedToken(req.user);
-    req.user.qrIssuedAt = new Date();
-    await req.user.save();
+    const rider = await findOwnedRider(req.user, req.body?.riderId || req.body?.studentId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
+    // Rows predating the rider-profile split still carry the rider on the
+    // deprecated `userId` (see models/DriverEnrollment.js). Until the migration
+    // has translated them, match either field — checking only `studentId` denies
+    // a pass to riders who plainly do have an active shuttle.
+    const hasActiveEnrollment = await DriverEnrollment.exists({
+      status: 'ACTIVE',
+      $or: [{ studentId: rider._id }, { userId: rider._id }]
+    });
+    if (!hasActiveEnrollment) {
+      return res.status(409).json({ success: false, message: 'This rider needs an active shuttle before a vehicle pass can be issued' });
+    }
+    const entry = toIssuedToken(rider);
+    rider.qrIssuedAt = new Date();
+    await rider.save();
 
-    return res.status(200).json({ success: true, data: entry });
+    return res.status(200).json({ success: true, data: { ...entry, riderId: rider._id, studentId: rider._id, riderCode: rider.riderCode } });
   } catch (error) {
     next(error);
   }
@@ -32,10 +47,12 @@ exports.issueQr = async (req, res, next) => {
 // @route   POST /api/qr/rotate
 exports.rotateQr = async (req, res, next) => {
   try {
-    req.user.qrTokenVersion += 1;
-    await req.user.save();
+    const rider = await findOwnedRider(req.user, req.body?.riderId || req.body?.studentId);
+    if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
+    rider.qrTokenVersion += 1;
+    await rider.save();
 
-    return res.status(200).json({ success: true, data: { tokenVersion: req.user.qrTokenVersion } });
+    return res.status(200).json({ success: true, data: { riderId: rider._id, studentId: rider._id, tokenVersion: rider.qrTokenVersion } });
   } catch (error) {
     next(error);
   }

@@ -23,6 +23,608 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-26 — Verify + merge #83's Booking/VehicleReview KPI aggregation fix
+- **Branch:** issue/83-lookup-to-indexed-match
+- **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md))
+- **What changed:** No production code changed in this entry — this closes out the verification
+  gap left by the 2026-08-14 entry below. A working `mongodb-memory-server` was available this
+  session, so: (1) merged `main` into this branch (it was 42 commits behind, including #61's
+  `superAdminController` envelope-shape change to `getOperationsOverview` — merged cleanly, no
+  semantic overlap with issue #83's aggregation restructuring, confirmed by re-reading the merged
+  function); (2) ran the full `npm run test:integration` suite on the merged branch; (3) added
+  `tests/integration/superadmin-manager-kpis.test.js` covering the one acceptance criterion
+  nothing already covered (`explain()` proving an index seek, not a collection scan).
+- **Why:** issue #83's acceptance criteria required both correct KPI numbers *and* verified index
+  usage; the original PR could only ship the latter as a code-review argument by analogy, not a
+  running test, because no Mongo was reachable in that session.
+- **Contract impact:** none.
+- **Tests:** full `npm run test:integration` on the merged branch — 13 pre-existing failing
+  suites (confirmed identical on `main` before merging in this branch's change: rate-limit/env
+  config gaps in this sandbox, `route-path`/`transit`/`places-proxy` needing external API keys,
+  `session-revocation` needing a working login path unrelated to this change), zero new
+  failures. `tests/integration/superadmin-reads.test.js` (issue #70, already on `main`) passed
+  unmodified against this change — its multi-manager seeded-dataset assertions are exactly the
+  end-to-end KPI-correctness check the 2026-08-14 entry flagged as missing, so no separate test
+  duplicates it. New `superadmin-manager-kpis.test.js` (1 case, explain()-based) is green.
+- **Docs updated:** `docs/TESTING_GUIDE.md` (revised #83 row + new index-usage row).
+- **Migration:** none.
+- **Follow-ups / known issues:** none — issue #83 fully closed.
+
+## 2026-08-23 — Audit remediation: security, offline and production-readiness findings
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`AUTH`](modules/AUTH.md), [`BOOKINGS`](modules/BOOKINGS.md),
+  [`REALTIME`](modules/REALTIME.md), [`QR_ATTENDANCE`](modules/QR_ATTENDANCE.md)
+- **What changed:**
+  - Commits the 2026-08-17 production-readiness / offline audit and the 2026-08-22 security
+    assessment work, which had been left uncommitted in the working tree. Each item was
+    re-checked against the source before committing; the full item-by-item verification lives
+    in [`AUDITDONE.md`](AUDITDONE.md).
+  - Kept as written: refresh tokens rejected as REST credentials, CSPRNG OTPs, constant-time
+    hash comparison, verify-email attempt lockout and rate limit, atomic live-location upsert,
+    `helmet`/`compression`, CORS whitelist, graceful shutdown, `/health` dbName gating, and the
+    manifest / booking-overview / review authorization checks.
+  - Corrected five defects in that work. The two that mattered: the `req.user` projection was
+    an allow-list that silently dropped `phoneNumber`, `qrTokenVersion` and `qrIssuedAt`
+    (blanking rider contact phones and 400-ing `createRider`), and `createBooking` still
+    returned the client's `totalPrice` as the payable amount while falling back to a client
+    `pricePerSeat`. Details in the commit message and `AUDITDONE.md`.
+- **Why:** findings from the three audits listed above.
+- **Contract impact:** `POST /api/bookings` no longer reads `pricePerSeat`/`totalPrice` from the
+  body and no longer requires them; `amount` in the response is now the server-computed figure.
+  Existing clients that still send those fields are unaffected, since they are simply ignored.
+- **Tests:** none added. Smoke suite unchanged at 3 passing / 0 failing. The authz cases for
+  SEC-3/SEC-4/SEC-7 and a regression test for the booking price are still owed.
+- **Docs updated:** this entry, plus [`AUDITDONE.md`](AUDITDONE.md).
+- **Migration:** none.
+- **Follow-ups / known issues:** integration coverage for the corrected pricing path and the
+  new authorization branches; `backend-run.log` is untracked and probably belongs in
+  `.gitignore`.
+
+---
+
+## 2026-08-21 — A manager can see, and remove, who is enrolled with each driver
+
+- **Branch:** feature/manager-enrolled-riders
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController,
+  managerDriversController), [`docs/modules/QR_ATTENDANCE.md`](modules/QR_ATTENDANCE.md)
+  (boardingController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` takes an optional `driverId`, so the queue
+    doubles as a per-driver roster. A driver the caller does not own is reported 404
+    rather than refused, so the portal cannot be used to probe for another manager's ids.
+  - `GET /api/manager/drivers` now carries `riders: { active, pending }` per driver, from
+    one aggregate for the whole page.
+  - New `DELETE /api/manager/enrollment-requests/:id` takes an already-enrolled rider off
+    a driver. ACTIVE only; a queued row 409s because declining it keeps the decision trail.
+    Emits the same `vehicle:access-revoked` a rider's own "leave" does, and notifies them.
+  - Fixed `GET /api/driver/boarding/roster`, which read the roster off the deprecated
+    `userId`. That field is null on every enrolment the current app writes, so each rider
+    came back named "Unknown" and keyed by an id from the wrong collection, meaning no
+    BoardingEvent ever matched and everyone read `NOT_BOARDED`. Guests had the same bug.
+- **Why:** a rider redeeming a NON-private driver's key is written straight to ACTIVE and
+  never reaches the approval queue, and the portal only ever asked for PENDING, so managers
+  had no way to see who was riding with their drivers.
+- **Contract impact:** additive on `/api/manager/drivers` (`riders`) and
+  `/api/manager/enrollment-requests` (`driverId` query); one new endpoint. The roster fix
+  changes no keys, so the driver app needs no change. web-admin docs updated in its repo.
+- **Tests:** added `tests/integration/manager-enrollment-roster.test.js` (15 cases incl. the
+  401/403/404 authz negatives and the cross-manager cases); repaired
+  `tests/integration/qr-roster.test.js`, whose fixtures still built enrolments with only
+  `userId` and could no longer be saved at all since `studentId` became required.
+- **Docs updated:** two TESTING_GUIDE rows (new manager roster row; corrected the stale
+  qr-roster row, which still said "RouteMembership" and "busId").
+- **Migration:** none.
+- **Follow-ups / known issues:** `getBoardingRoster` is still gated behind
+  `route.qrEnabled`, so a driver on a route without QR attendance cannot see their roster
+  at all. Out of scope here.
+
+---
+
+## 2026-08-20 — The approval queue names the organization and labels its answers
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [`docs/modules/ADMIN.md`](modules/ADMIN.md) (managerEnrollmentsController)
+- **What changed:**
+  - `GET /api/manager/enrollment-requests` (and the approve/reject response) now carry
+    `organization: {_id, name, serviceType}` per row, resolved from the rider's organization
+    profile and falling back to the driver's own organization for a legacy row.
+  - `passenger.organizationDetails` repeats the form answers as an ordered
+    `{key, label, value}` list, labelled through `normalizedEnrollmentConfig()`.
+    `passenger.organizationValues` is unchanged.
+- **Why:** the web-admin queue could only render `grade: 4` with no sign of which organization
+  asked, because the answers are stored keyed by field key and the payload named no organization.
+- **Contract impact:** additive only. Consumer doc updated:
+  `web-admin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` (two new cases plus
+  approve-response assertions), run against an isolated `trackme_test` database.
+- **Docs updated:** [`docs/modules/ADMIN.md`](modules/ADMIN.md), TESTING_GUIDE row.
+- **Migration:** none. Nothing is stored differently; the extra fields are derived per request.
+- **Follow-ups / known issues:** sandbox seeds no PENDING enrollment, so this queue stays empty
+  in Developer Mode.
+
+## 2026-08-20 — Enrollments are read back per rider profile, not per account
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md) (enrollment read path)
+- **What changed:**
+  - `GET /api/enrollments/mine` now honours the `riderId` query parameter the passenger app
+    has always sent, returning only that rider profile's enrollments.
+  - Omitting `riderId` keeps the previous full-merge behaviour, so older clients are unaffected.
+- **Why:** on an account with two rider profiles, `getMyEnrollments` merged every profile's
+  enrollments into one list, so both riders showed the same cards. Enrolling one rider looked
+  like it enrolled the other, and a Leave tap could delete the sibling rider's enrollment
+  because the wrong record was on screen.
+- **Contract impact:** `GET /api/enrollments/mine` gains an optional `riderId` filter; response
+  shape unchanged. Documented on the client side in the user-app's
+  `docs/modules/DRIVER_ENROLLMENT.md`. `getHouseholdEnrollments` and the shared
+  `loadEnrollmentsByProfile` loader are untouched.
+- **Tests:** `tests/integration/enrollment-rider-path.test.js` — new "multiple rider profiles on
+  one account" case covering per-rider reads, the no-`riderId` back-compat path, and that leaving
+  one rider's enrollment leaves the sibling's intact.
+- **Docs updated:** user-app `docs/modules/DRIVER_ENROLLMENT.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** an enrollment already destroyed by this bug before the fix
+  cannot be recovered in code — the affected rider has to redeem the enrollment key again.
+
+---
+
+## 2026-08-19 — A picture per rider, fetched on its own and versioned for caching
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** [profiles](modules/PROFILES.md)
+- **What changed:**
+  - `RiderProfile` gains `avatarVersion`, bumped on every write to `avatarUrl`, including a clear.
+  - `publicRider` no longer returns `avatarUrl`. It returns `hasAvatar` and `avatarVersion`, and
+    the picture comes from the new `GET /api/riders/:riderId/avatar` (mirrored on the
+    `/api/students` alias). Twenty riders at the 512 KB ceiling would otherwise have put ten
+    megabytes into every list load, the same reason a MANAGED profile's avatar is off
+    `/api/profiles`.
+  - `createRider` / `updateRider` now validate `avatarUrl` through `utils/avatar.js`
+    (`validateAvatarDataUrl`, 512 KB). The field was previously stored as
+    `String(req.body.avatarUrl || '')` with no format or size check at all.
+- **Why:** The passenger app is adding rider photos; the field existed but was unguarded, and
+  inline delivery would have made every rider-list load carry every image.
+- **Contract impact:** `GET /api/riders` **drops `avatarUrl`** and adds `hasAvatar` +
+  `avatarVersion`; new `GET /api/riders/:riderId/avatar`. No client read the rider's `avatarUrl`
+  (the only avatar in the UI is the account's), so nothing breaks today. `TrackMe-UserApp` picks
+  this up in the same feature.
+- **Tests:** `tests/integration/rider-avatar.test.js` (new).
+- **Docs updated:** `docs/modules/PROFILES.md` (§2 rider table, §8), `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `avatarVersion` defaults to 0 and existing pictures keep working; their
+  first edit moves the version to 1.
+- **Follow-ups / known issues:** none.
+
+## 2026-08-19 — The manager's approval queue knows who the request is for
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [admin](modules/ADMIN.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:** `managerEnrollmentsController` resolves the passenger from the enrolment's
+  `studentId` (a `RiderProfile`) instead of the deprecated `userId`, which `createEnrollment`
+  writes as null — so every request made through the rider path reached the manager as
+  `passenger: null`. Rows from the legacy `/redeem` path still resolve by `userId` as a fallback.
+  The payload now also carries `riderCode`, `contactPhone` and `organizationValues` (the answers
+  that organization's enrolment form collected), and `isManagedProfile` means "not the account
+  holder's own rider row".
+- **Why:** The queue showed an unnamed request with no account and none of the details the rider
+  had just entered, so a manager had nothing to decide on.
+- **Contract impact:** Same response shape, correctly populated, plus three additive
+  `passenger` fields. `passenger._id` is a rider profile id (it was an account id for legacy rows).
+  `web-admin`'s page already read `riderCode` and `organizationValues`, so it needed no change;
+  its `docs/modules/ENROLLMENT_REQUESTS.md` contract table is updated.
+- **Tests:** `tests/integration/manager-enrollments-managed-profile.test.js` rewritten around the
+  rider path (it previously built rows with a `userId` and no `studentId`, which the model has
+  required for some time, so the suite could not run at all).
+- **Docs updated:** `docs/modules/ADMIN.md`, `docs/modules/PROFILES.md`, `docs/TESTING_GUIDE.md`,
+  and `TrackMe-WebAdmin/docs/modules/ENROLLMENT_REQUESTS.md`.
+- **Migration:** none.
+- **Follow-ups / known issues:** none for this queue.
+
+## 2026-08-19 — A rider picks their category when the account is created
+
+- **Branch:** feature/signup-category
+- **Modules touched:** [auth](modules/AUTH.md), [profiles](modules/PROFILES.md), enrolment
+- **What changed:**
+  - `RiderProfile` gains `category` (`SCHOOL` / `UNIVERSITY` / `OFFICE`) and a `details` map, keyed
+    by the enrolment field catalog so a school's `grade` given at signup is the same `grade` the
+    school's enrolment form asks for.
+  - `POST /api/auth/register` optionally takes `category` + `details` and seeds them onto the
+    account holder's own rider row, which registration now creates rather than leaving to the
+    first `GET /api/riders`.
+  - `POST/PATCH /api/riders` accept the same pair, and every rider now returns `category`,
+    `details` and `isSelf`.
+  - Editing the `isSelf` rider mirrors `fullName` / contact phone onto the `User` account, so the
+    passenger app's two competing profile editors can collapse into one without the two documents
+    drifting apart.
+  - `POST /api/enrollments/resolve-key` prefills `existingValues` from the rider's signup answers,
+    overlaid by anything already saved for that organization. Every enabled field is still listed.
+- **Why:** Signup asked nothing, so nothing was known about a rider until they redeemed a key, and
+  the profile screen edited the same person through two unsynchronised documents.
+- **Contract impact:** Additive on `/api/auth/register`, `/api/riders` (and the `/api/students`
+  alias) and `resolve-key`. `PATCH /api/riders/:id` on the self record now also writes the account's
+  name and phone. `TrackMe-UserApp` docs updated alongside its own change.
+- **Tests:** `tests/integration/signup-category.test.js` (new), `tests/unit/enrollment-schema.test.js`
+  (signup details cases).
+- **Docs updated:** `docs/modules/AUTH.md`, `docs/modules/PROFILES.md` (§2 rider endpoints, §8),
+  `docs/architecture/parent-student-profiles.md`, `docs/TESTING_GUIDE.md`.
+- **Migration:** none. `category` is null on existing riders and the app collects it on first launch.
+- **Follow-ups / known issues:** `createEnrollment` still writes `userId: null` while
+  `managerEnrollmentsController` looks passengers up by `userId`, so the manager's approval queue
+  shows `passenger: null` for enrolments made through the rider path, and never shows the values a
+  rider entered. Untouched here.
+
+---
+
+## 2026-08-22 — Standardize superAdminController's list-endpoint response envelope (#61)
+- **Branch:** claude/friendly-pasteur-yvly35
+- **Modules touched:** docs/modules/ADMIN.md (stub, note added)
+- **What changed:** `getManagers` and `getOperationsOverview` now include `count` (the returned
+  page's length) alongside `data`, matching the shape `getPendingVehicleRequests`, `getAuditLogs`,
+  and `getOrganizations` already used. `pagination` behavior is unchanged (opt-in via page/limit).
+  `getManagerVehicleDetails` deliberately keeps its bare `{success, data}` shape — it returns one
+  manager's detail, not a list page — and a comment now says so explicitly instead of leaving it
+  looking like an oversight.
+- **Why:** issue #61 — the same controller file returned three different envelope shapes for its
+  list endpoints, so callers couldn't rely on a uniform shape within one file.
+- **Contract impact:** additive only (new field, nothing removed/renamed). Verified web-admin's
+  consumers (`use-managers.js`, `use-operations.js`, `OperationsPage.jsx`, `ManagersPage.jsx`) only
+  read `.data` off these responses today, so no web-admin change was required.
+- **Tests:** added `tests/unit/superadmin-envelope-shape.test.js` (mocked Manager/Vehicle/Booking/
+  VehicleReview models — **no MongoDB is reachable in this environment**, so the integration-test
+  coverage this kind of response-shape change normally gets per `docs/guides/ADDING_A_TEST.md`
+  could not be run/added here; this mocked-model unit test is a substitute, not a replacement —
+  `tests/integration/superadmin-operations-pagination.test.js` and `superadmin-reads.test.js`
+  should still be run against real Mongo before/after this change to be fully sure). `npm test`
+  and `npx jest tests/unit` are green.
+- **Docs updated:** docs/modules/ADMIN.md (envelope convention note), docs/TESTING_GUIDE.md (new
+  row).
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #61's acceptance criteria also says "ideally the whole
+  API" — left as a follow-up; this change scoped to superAdminController.js only, per the issue's
+  primary bullet. Issues #74 and #19 were investigated in the same session but not committed —
+  see the comments left on those issues instead.
+
+---
+
+## 2026-08-20 — Manager/Super-Admin role-boundary regression test (cross-repo: TrackMe-WebAdmin#25)
+- **Branch:** cross-repo/webadmin-25-role-boundary-test
+- **Modules touched:** docs/modules/AUTH.md, docs/modules/ADMIN.md (both stubs, unchanged)
+- **What changed:** added a `Manager / Super-Admin role boundary` describe block to
+  `tests/integration/authz-ownership.test.js` (5 cases): a Manager token gets
+  403 on `/api/super-admin/managers`, `/api/super-admin/dashboard`, and
+  `POST /api/super-admin/managers` (no document created); a Driver and a
+  Rider token get the same 403; a Super-Admin token succeeds on the same
+  route; a Super-Admin token gets 403 on `/api/manager/dashboard` (the
+  reverse direction).
+- **Why:** `TrackMe-WebAdmin#25` asked whether the Manager/Super-Admin role
+  boundary — described as "not cosmetic" and backend-enforced in that repo's
+  own CLAUDE.md — actually holds, since nothing had ever tested it and
+  web-admin's own e2e suite mocks the backend via `page.route()` for every
+  spec, so it can only assert the UI's reaction to a given response, never
+  prove real server-side enforcement. That proof has to live here. Verified
+  empirically (not just by reading the middleware) before writing the test:
+  both `superAdminRoutes.js` and `managerRoutes.js` gate with `requireRoles`
+  applied once via `router.use()`, an exact role-string match — no
+  route-by-route gap for a regression to reintroduce quietly, but this went
+  untested until now. **Result: the boundary holds in both directions** — no
+  fix needed, this closes a coverage gap only.
+- **Contract impact:** none — test-only, no production code changed.
+- **Tests:** `tests/integration/authz-ownership.test.js` (+5 cases, 32/32
+  passing in the file). `npm test` and `npm run test:integration` both run
+  clean — 763/821 passing, the same 58 pre-existing failures as before this
+  change (all external-API-dependent, unrelated).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** commenting on `TrackMe-WebAdmin#25` with
+  this finding and this PR link — the verification the issue asked for now
+  exists, just in this repo rather than web-admin (the only repo that can
+  actually prove it).
+
+---
+
+## 2026-08-20 — manager per-vehicle endpoint cross-manager scoping tests (issue #73)
+- **Branch:** issue/73-manager-vehicle-scoping-tests
+- **Modules touched:** buses (docs/modules/BUSES.md — unchanged, no behavior change)
+- **What changed:** added `tests/integration/manager-vehicle-scoping.test.js`,
+  proving manager B gets 404 (not the vehicle/driver data, and no side effect)
+  on `GET`/`PUT /api/manager/vehicles/:vehicleId`, `POST
+  /api/manager/vehicles/:vehicleId/delete-request`, and `PATCH
+  /api/manager/vehicle-accounts/:vehicleId/reset-password` when targeting a
+  vehicle owned by manager A — plus a happy-path check per endpoint for the
+  owning manager. All four handlers already scope through the same
+  `getManagedVehicleByVehicleId(managerId, vehicleId)` helper (which returns
+  404 for a vehicle outside the caller's fleet); this was previously
+  unverified by any test — `tests/manager-workflow.smoke.test.js` only
+  asserted `typeof managerController[key] === 'function'`.
+- **Why:** issue #73 — the largest coverage gap on the manager vehicle
+  surface, and exactly the class of authz-scoping bug this codebase's own
+  CLAUDE.md flags as mandatory to test. Scoped to the four mutating/reading
+  per-vehicle endpoints the issue names; `createManagerVehicle` (creation-only,
+  no existing-resource ownership branch) and the full smoke-test replacement
+  are out of scope for this change — the smoke test still has value as an
+  export/load sanity check and is left in place alongside this file.
+- **Contract impact:** none — test-only, no production code changed (the
+  scoping already worked correctly; this closes the coverage gap).
+- **Tests:** `tests/integration/manager-vehicle-scoping.test.js` (7 new
+  cases). `npm test` and `npm run test:integration` both run clean against an
+  in-memory MongoDB (`mongodb-memory-server`) plus the `.env.example`
+  JWT/room-key/QR env vars — 758/816 passing, the same 58 pre-existing
+  failures as before this change (all external-API-dependent: Google
+  Places/Roads proxy tests and push-notification SDK mock tests, unrelated to
+  this change).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Buses.
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #73's acceptance criteria also asked
+  to "replace/augment" the smoke test more broadly and cover
+  `createManagerVehicle` — left open as a smaller follow-up if wanted, since
+  the security-relevant scoping gap (the issue's main concern) is now closed.
+
+---
+
+## 2026-08-20 — password-reset OTP flow + revokeAllSessions coverage for Manager/SuperAdmin (issue #72)
+- **Branch:** issue/72-password-reset-otp-manager-superadmin-coverage
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** added 4 tests to `tests/integration/password-reset.test.js` — the
+  existing suite only exercised the OTP reset flow (`request-otp` → `verify-otp` →
+  `reset`) for a rider. New coverage proves the same end-to-end flow works for a
+  Manager and a SuperAdmin identity (new password logs in, old password no longer
+  does), and that `revokeAllSessions` actually invalidates a pre-reset refresh
+  token for both roles — a refresh token issued before the reset is rejected
+  (401) by `POST /api/auth/refresh-token` once the reset completes.
+- **Why:** issue #72 — `requestPasswordResetOtp`/`verifyPasswordResetOtp`/
+  `resetPasswordWithToken` and `revokeAllSessions` had no test proving they work
+  for anything but a rider, despite the reset being identity-wide across all four
+  account collections.
+- **Contract impact:** none — test-only, no production code changed (the reset
+  flow and `revokeAllSessions` already worked correctly; this closes the coverage
+  gap).
+- **Tests:** `tests/integration/password-reset.test.js` — 4 new cases (Manager
+  end-to-end reset, SuperAdmin end-to-end reset, Manager refresh-token revocation,
+  SuperAdmin refresh-token revocation). `npm test` and `npm run test:integration`
+  both run clean against an in-memory MongoDB (`mongodb-memory-server`) plus the
+  `.env.example` JWT/room-key/QR env vars — 751/809 passing, the same 58
+  pre-existing failures as before this change (all external-API-dependent:
+  Google Places/Roads proxy tests and push-notification SDK mock tests, unrelated
+  to this change).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
+## 2026-08-19 — googleSignIn super-admin isolation regression test (issue #71)
+- **Branch:** issue/71-google-signin-super-admin-isolation-test
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** added `tests/integration/google-signin-super-admin-isolation.test.js`,
+  covering `authController.googleSignIn`'s `hasSuperAdminProfile` → `403
+  SUPER_ADMIN_ISOLATED` guard (previously untested), which exists specifically to
+  stop a super-admin account from ever being reached via Google sign-in.
+  `OAuth2Client.prototype.verifyIdToken` is mocked with `jest.spyOn` so the test
+  never calls out to Google.
+- **Why:** issue #71 — a security-relevant guard with zero regression coverage.
+- **Contract impact:** none — test-only, no production code changed.
+- **Tests:** `tests/integration/google-signin-super-admin-isolation.test.js` (2 new
+  cases: rejects with the code, issues no tokens). Ran locally against an in-memory
+  MongoDB (`mongodb-memory-server`) plus the `.env.example` JWT/room-key/QR env vars.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none.
+- **Follow-ups / known issues:** while writing this test, found that a **brand-new**
+  Google sign-in (no existing `Identity` for that email) crashes with a 500 —
+  `bcrypt.hash(undefined, 12)` in `src/models/shared/passwordAuth.js`'s `pre('save')`
+  hook, because `isModified('password')` is `true` on a new document even when
+  `password` was explicitly passed as `undefined`. Out of scope for this issue (which
+  only asks for the isolation-guard test) and left as a dropped third test case here —
+  filed separately as issue #111 with repro details.
+
+---
+
+## 2026-08-19 — Fix first-time Google sign-in 500 (issue #111)
+- **Branch:** issue/111-google-signin-new-user-bcrypt-crash
+- **Modules touched:** auth (docs/modules/AUTH.md — still a stub, unchanged)
+- **What changed:** `models/shared/passwordAuth.js`'s `pre('save')` hashing hook now
+  also skips hashing when `password` is falsy, not just when the path is unmodified —
+  `bcrypt.hash(undefined, 12)` was throwing "Illegal arguments: undefined, number"
+  because `isModified('password')` is `true` on a brand-new document even when
+  `password` was explicitly passed as `undefined` (as `googleSignIn` does for a
+  first-time Google account, which has no password).
+- **Why:** found while writing the regression test for #71 — a first-time Google
+  sign-in (no existing `Identity` for that email) crashed with a 500 instead of
+  creating the account, entirely blocking new-user Google sign-up. Filed as #111,
+  fixed here.
+- **Contract impact:** none — `POST /api/auth/google` now succeeds (200) for a
+  first-time email instead of 500; no existing successful-path behavior changed.
+- **Tests:** added `tests/integration/google-signin-new-user.test.js` (2 new cases:
+  first-time sign-in succeeds and issues tokens, repeat sign-in reuses the account).
+  Ran the full `npm run test:integration` suite locally (in-memory MongoDB via
+  `mongodb-memory-server`): 745/803 passed, same 58 pre-existing failures (17 suites,
+  unrelated) as the baseline — 0 new failures.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row under Auth.
+- **Migration:** none — this only changes behavior for a `password` value that
+  previously crashed; no stored data needs backfilling.
+- **Follow-ups / known issues:** none.
+
+---
+
+## 2026-08-19 — Scope manager route-assignment to owned/public routes (issue #49)
+- **Branch:** issue/49-restrict-route-creation-to-super-admin
+- **Modules touched:** routes (docs/modules/ROUTES.md — still a stub, unchanged), admin (docs/modules/ADMIN.md — still a stub, unchanged)
+- **What changed:**
+  - `managerController.getManagerAssignableRoutes` (`GET /api/manager/routes`) now only
+    returns routes with no owning manager (super-admin/public) or owned by the calling
+    manager, instead of every active route regardless of owner.
+  - `managerController.createManagerVehicle` (`POST /api/manager/vehicle-accounts`) and
+    `updateManagerVehicle` (`PUT /api/manager/vehicles/:vehicleId`) now scope their route
+    lookup the same way, so a manager can no longer assign or reassign a vehicle to a
+    route owned by a different manager by sending its `routeId` directly (the picker was
+    already the only path in the web-admin UI, but the backend never enforced it — a
+    manager-created route was assignable by every other manager, entirely bypassing the
+    scoped private/custom-route workflow that exists for this purpose).
+  - `routeController.createRoute` (`POST /api/routes`) now writes a `ManagerAuditLog`
+    (`ROUTE_CREATED`) entry when the creator is a manager, matching every other
+    manager-scoped mutation in this controller (update/delete/toggle already did).
+- **Why:** issue #49 — `POST /api/routes` already scoped a manager-created route via
+  `managerId` (added in an earlier session) and update/delete/toggle already enforced
+  ownership, but nothing scoped route *assignment*: the manager-facing route picker and
+  both vehicle-create/update paths did an unscoped `Route.findOne`, so the actual
+  bypass described in the issue (a manager's route "assignable by every manager") was
+  still live in these three call sites.
+- **Contract impact:** `GET /api/manager/routes` now excludes another manager's owned
+  routes from the list; `POST /api/manager/vehicle-accounts` / `PUT
+  /api/manager/vehicles/:vehicleId` now return `400 Invalid route ID` for a `routeId`
+  the caller doesn't own (previously succeeded). web-admin never lets a manager reach
+  another manager's route through its own UI, so no web-admin change needed — noting
+  here per the cross-repo contract rule since the response *can* differ for a direct
+  API caller.
+- **Tests:** tests/integration/authz-ownership.test.js — new `Route assignment
+  ownership (issue #49)` describe block (6 cases: assignable-list excludes/includes,
+  create/update refuse a non-owned route, owner can assign, create writes the audit
+  log entry). Ran the full `npm run test:integration` suite locally against an
+  in-memory MongoDB (`mongodb-memory-server`, already a devDependency — see
+  Follow-ups) with the env vars from `.env.example` stubbed in: 743/801 passed, same
+  58 pre-existing failures (17 suites, all unrelated to routes/vehicles/managers — env
+  gaps like missing Google Places/Roads keys and push credentials, not caused by this
+  change) as an unmodified baseline run of the same suite.
+- **Docs updated:** docs/TESTING_GUIDE.md (new row under Routes and Buses).
+- **Migration:** none.
+- **Follow-ups / known issues:**
+  - CI (`.github/workflows/ci.yml`) only runs `npm test` (the smoke suite) —
+    `npm run test:integration` never runs in CI today. Locally it also silently no-ops
+    without a reachable Mongo (`tests/integration/db.js` defaults to
+    `mongodb://localhost:27017/trackme_test`), which this session initially hit before
+    finding `mongodb-memory-server` already installed as a devDependency. Wiring CI (or
+    at least a documented local script) to boot `mongodb-memory-server` + the JWT/room-key/QR
+    env vars from `.env.example` would let every future issue actually verify its
+    integration tests instead of relying on manual local setup like this session did —
+    worth its own issue.
+  - docs/modules/ROUTES.md is still the `PLANNED (doc)` stub; not written as part of
+    this fix to keep the change scoped to the issue's acceptance criteria.
+
+---
+
+## 2026-08-18 — Opt-in pagination on getMyRequests / getManagerAttendance (issue #64)
+- **Branch:** issue/64-manager-list-pagination
+- **Modules touched:** buses (docs/modules/BUSES.md), QR attendance (docs/modules/QR_ATTENDANCE.md)
+- **What changed:**
+  - `managerController.getMyRequests` (`GET /api/manager/requests`) and
+    `managerAttendanceController.getManagerAttendance` (`GET /api/manager/attendance`)
+    now support opt-in `page`/`limit` query params, reusing the exact convention
+    already established by `superAdminController.getOperationsOverview` /
+    `getPendingVehicleRequests`: no `page`/`limit` param keeps returning the full,
+    unbounded result with no `pagination` key, byte-for-byte unchanged from before.
+    Passing either paginates and adds a `pagination: {page, limit, total, pages}` key;
+    an oversized `limit` is clamped to 100.
+  - `getManagerAttendance`'s rollup is built in-memory (one entry per student across
+    all matched `BoardingEvent`s, not a Mongo cursor), so its pagination slices the
+    already-sorted `rollup` array rather than adding `skip`/`limit` to a query.
+  - Issue #64 also named `getManagerCustomRoutes`, `getManagerRouteChangeRequests`, and
+    the private-route join-requests/members endpoints — none of those exist any more
+    (custom routes and private routes were both removed from the backend after this
+    issue was filed; see #49/#74/#19's investigation notes). `getManagerVehicles`
+    (`getManagerBuses` pre-rename) was left unpaginated: a manager's own fleet size is
+    bounded by how many vehicles they were assigned, nowhere near the volume of a
+    request/attendance history, so it wasn't the "highest-volume" case the issue's
+    acceptance criteria asks to prioritize.
+- **Why:** a manager with a long request or attendance history got the entire result
+  set in one response every time, with no way to page through it.
+- **Contract impact:** none for existing callers — the default (no page/limit) response
+  shape is byte-for-byte unchanged. A caller that opts in by passing page/limit gets a
+  new `pagination` key, same shape as the existing super-admin pagination.
+- **Tests:** added `tests/integration/manager-list-pagination.test.js` (6 new cases:
+  unchanged default, paginated response + metadata, oversized-limit clamp — for both
+  endpoints), all passing standalone and alongside `authz-ownership.test.js` (which
+  covers these endpoints' manager-scoping) and `manager-status-audit-assign.test.js`.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
+## 2026-08-18 — Manager status/audit-log/assign-vehicles coverage (issue #69)
+- **Branch:** issue/69-manager-status-audit-assign-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/manager-status-audit-assign.test.js`. Issue #69 asked for
+    coverage of six superAdminController functions; three of them
+    (`createManager`, `updateManager`, `resetManagerPassword`) turned out to already have
+    solid behavioral coverage in `manager-organizations.test.js`,
+    `manager-provisioning.test.js`, and `manager-shared-identity-email.test.js`. The
+    actual remaining gap was `updateManagerStatus` (zero coverage), `getAuditLogs`
+    (only its malformed-id 400 was tested, never a real filtered read), and
+    `assignVehiclesToManager`'s 400/404 branches (`assign-vehicles-scope.test.js` only
+    covers the scope-mismatch 409 and the plain-success 200).
+  - New tests: `updateManagerStatus` deactivate→reactivate + 404; `getAuditLogs`
+    managerId/action/entityType filters + unfiltered read; `assignVehiclesToManager`
+    plain success, 400 on an invalid vehicle id, 404 on an unknown manager.
+- **Why:** these were the genuinely untested branches on the manager-account admin
+  surface; duplicating the already-covered createManager/updateManager/
+  resetManagerPassword branches would have added no value.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/manager-status-audit-assign.test.js` (9 new
+  cases), all passing standalone and alongside the other manager/superadmin suites.
+- **Docs updated:** docs/TESTING_GUIDE.md — new row.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+---
+
+## 2026-08-18 — Super-admin read-endpoint coverage (issue #70)
+- **Branch:** issue/70-superadmin-reads-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/superadmin-reads.test.js`, covering the five super-admin
+    read endpoints that had zero content-correctness coverage: `getSuperAdminDashboard`,
+    `getManagerById`, `getManagerVehicleDetails` (GET /operations/:managerId),
+    `getOperationsOverview` (GET /operations, per-manager content — pagination was
+    already covered separately), and `getPendingVehicleRequests` (GET
+    /vehicle-requests — status/type/managerId filtering).
+  - Seeds a known dataset (2 managers, 3 vehicles, 2 bookings, 1 review, 3 vehicle
+    requests) and asserts the KPI aggregation math against it, plus the 404 branches on
+    the two `:managerId` endpoints and the default-PENDING / ALL / type / managerId
+    filter behavior on the vehicle-requests list.
+- **Why:** `getSuperAdminDashboard` and the two `:managerId` endpoints had no test at
+  all; `getOperationsOverview` and `getPendingVehicleRequests` only had pagination
+  coverage, not proof the aggregated numbers or filters are actually correct.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/superadmin-reads.test.js` (10 new cases, all
+  passing standalone and alongside the other `superadmin-*.test.js` files).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row for the five endpoints.
+- **Migration:** none.
+- **Follow-ups / known issues:** `tests/integration/superadmin-operations-pagination.test.js`
+  fails in this sandbox when run in the same process as other suites (pre-existing on
+  `main`, unrelated to this change — see PR description).
+
+---
+
+## 2026-08-18 — reviewVehicleRequest branch coverage (issue #68)
+- **Branch:** issue/68-review-vehicle-request-coverage
+- **Modules touched:** admin — docs/modules/ADMIN.md (no behavior change, test-only)
+- **What changed:**
+  - Added `tests/integration/review-vehicle-request-branches.test.js`, covering the
+    branches of `superAdminController.reviewVehicleRequest` that had no test: successful
+    CREATE_VEHICLE_ACCOUNT approve, successful REJECT, the already-reviewed 400 guard, the
+    unknown-request 404, the duplicate-vehicle 409 (and that it releases the PENDING claim),
+    and the DELETE_VEHICLE approval path (soft-delete + driver deactivation, plus its own
+    404 when the vehicle no longer exists).
+  - Issue #68 was filed against an older "Bus"-named approval flow with separate
+    custom-route/existing-route sub-branches; both the Bus→Vehicle rename and the removal
+    of custom routes mean that split no longer exists in `reviewVehicleRequest` today (one
+    route lookup, not two) — tests were written against the current branches instead.
+- **Why:** `reviewVehicleRequest` is the highest-privilege super-admin endpoint (creates
+  Vehicle/Driver documents, deletes vehicles, mints identities); only the concurrency guard
+  and the field whitelist had coverage before this.
+- **Contract impact:** none — no production code changed, tests only.
+- **Tests:** added `tests/integration/review-vehicle-request-branches.test.js` (7 new
+  cases, all passing standalone and alongside the other `review-vehicle-request-*` files).
+- **Docs updated:** docs/TESTING_GUIDE.md — new row for the branches file.
+- **Migration:** none.
+- **Follow-ups / known issues:** local `npm run test:integration` has 18 pre-existing
+  failing suites in this environment unrelated to this change (missing external API keys
+  for places/transit, and `review-vehicle-request-concurrency.test.js` timing out under
+  this sandbox's Mongo latency) — see PR description for the full list; CI is the real gate.
+
+---
+
+## 2026-08-17 — Clear all dependency vulnerabilities (0 remaining)
 ## 2026-08-14 — Super-admin dashboard KPIs stop full-scanning Booking/VehicleReview
 - **Branch:** issue/83-lookup-to-indexed-match
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, note added)
@@ -62,6 +664,242 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ## 2026-08-13 — Vehicle creation past the first requires super-admin approval
 - **Branch:** main
+- **Modules touched:** none — dependency maintenance, not a feature
+- **What changed:**
+  - `npm audit fix` (no `--force`) closed the mongoose, lodash, qs, and ws-family advisories via
+    same-major-version patch bumps (mongoose 8.21.0 → 8.24.3).
+  - Removed `nodemailer` entirely — grepped the whole repo and confirmed it has zero remaining
+    call sites; email sending (verification, password reset, manager invites) fully migrated to
+    `resend` already. Carrying a vulnerable, unused dependency (8 CVEs, including SMTP command
+    injection) forward made no sense; removing it beats upgrading across a 6→9 major it isn't
+    even using.
+  - Added an `overrides.uuid: ^11.1.1` in `package.json` to force the transitive `uuid@9.0.1`
+    pulled in by `google-auth-library` → `gaxios` past a moderate buffer-bounds advisory that
+    `npm audit fix` couldn't reach on its own (nested transitive dep).
+- **Why:** pre-launch security audit.
+- **Contract impact:** none.
+- **Tests:** none new — re-ran the full auth/email/rate-limit/CORS suite plus all unit tests
+  against the upgraded mongoose (via an ephemeral `mongodb-memory-server`, same caveat as the
+  2026-08-17 hardening entry re: this sandbox's Windows connection-pool flakiness on DB-touching
+  suites — no non-timeout assertion failures, i.e. no regression).
+- **Docs updated:** this entry only.
+- **Follow-ups / known issues:** `npm audit` (dev dependencies included) still flags vite/esbuild/
+  vitest — dev-tooling only (the esbuild dev-server-accepts-any-origin issue never ships in the
+  built app), and the available fix is a major Vite version bump. Deliberately not forced here to
+  avoid risking the already-verified Vercel production build; revisit separately if desired.
+  `npm audit --production` is clean (0 vulnerabilities).
+
+---
+
+## 2026-08-17 — Render deploy hardening: IP rate limiting, CORS allowlist, crash-loop fix
+- **Branch:** main
+- **Modules touched:** none of `docs/modules/` — this is deploy/infra hardening, not a feature
+- **What changed:**
+  - New `src/middleware/rateLimiters.js` (`express-rate-limit`): IP-keyed `authLimiter` on
+    `/api/auth/*` and a looser `apiLimiter` on `/api/*`, complementing the existing per-identity
+    limiters in `emailRateLimiter.js` (which don't stop one client hammering many different
+    accounts). Requires `app.set('trust proxy', 1)` (added in `server.js`) — Render sits behind a
+    proxy, so without it every request looks like the same IP.
+  - `CLIENT_ORIGINS` is now parsed into an actual allowlist instead of used as a raw string.
+    Express CORS rejects a disallowed origin by omitting the header (`callback(null, false)`) so
+    non-browser callers (health checks, curl, native apps) aren't blocked server-side; Socket.IO
+    CORS rejects by erroring the handshake outright (no "no headers" equivalent for a persistent
+    connection).
+  - `src/config/db.js` no longer `process.exit(1)`s on a connection error — it now propagates to
+    `server.js`'s `bootstrap()`, which already logs and continues. A transient Atlas blip
+    shouldn't crash-loop the container.
+  - `render.yaml`: fixed the `healthCheck` block (Render's real key is `healthCheckPath`, a flat
+    string — the old nested `{path, interval, timeout}` wasn't valid schema), corrected a
+    misleading comment claiming health checks prevent idle spin-down (they only run during
+    deploys), added `region: singapore`, changed `buildCommand` to `npm ci`.
+  - Added `"engines": {"node": "20.x"}` to `package.json`.
+- **Why:** pre-deploy audit before putting the backend on Render — none of this was in place, all
+  of it was live before any traffic existed.
+- **Contract impact:** none — no endpoint/socket payload shape changed. A disallowed origin now
+  gets a response with no CORS header instead of one with a wildcard header; a client past the
+  rate-limit ceiling gets `429 { success: false, message }` instead of no limit at all.
+- **Tests:** new `tests/integration/auth-ip-rate-limit.test.js` (429 past the IP ceiling, resets
+  after the window) and `tests/integration/cors-allowlist.test.js` (allowed origin gets the
+  header, disallowed origin doesn't but the request still completes, no-Origin requests pass
+  through). Verified locally against an ephemeral `mongodb-memory-server` instance — this sandbox
+  has no local MongoDB and hit the same connection-pool teardown flakiness the pre-existing
+  `auth-rate-limit.test.js` also hits on this Windows environment; the actual assertions passed.
+- **Docs updated:** this entry only.
+- **Migration:** none.
+- **Follow-ups / known issues:** the free Render tier still sleeps after ~15 min idle (50s+ cold
+  start), noted in `render.yaml`'s comments — not addressed here, it's a plan-tier tradeoff, not
+  a code fix.
+
+---
+
+## 2026-08-17 — Boarding scan dedups a same-type repeat for the whole open trip
+
+- **Branch:** issue/59-boarding-event-dedup
+- **Modules touched:** QR attendance (docs/modules/QR_ATTENDANCE.md)
+- **What changed:** `POST /api/driver/boarding/scan` now treats a second same-type scan (BOARD
+  after BOARD, or ALIGHT after ALIGHT) for the same open trip as a duplicate regardless of how
+  much time has passed, not just within the existing short debounce window. A real re-boarding —
+  BOARD, then a genuine ALIGHT, then BOARD again — is unaffected; only two of the same type in a
+  row for one trip (which can never be legitimate, since a real state transition always
+  alternates) is caught.
+- **Why:** issue #59 — a flaky/duplicate QR scan outside the debounce window (default 30s) was
+  previously recorded as a brand-new BoardingEvent, double-counting into
+  `managerAttendanceController.getManagerAttendance`'s per-student `boardCount`/`alightCount`
+  rollup with no unique index or dedup guarding it.
+- **Contract impact:** none — `debounced: true` on the scan response already existed for the
+  time-window case; this just widens when it fires. No new field, status code, or shape.
+- **Tests:** new `tests/integration/boarding-scan-trip-dedup.test.js` (see its header comment —
+  it builds its own RiderProfile/DriverEnrollment fixture rather than reusing
+  `qr-attendance.test.js`'s `createRider`/`freshTokenForRider`, which only provision a `User`
+  account and don't work against the current `signQr`/`verifyQr`, which expect a `RiderProfile`).
+  Updated one boundary case in `qr-attendance.test.js` to match the corrected behavior; that
+  whole file's QR-scan-related tests are pre-existing broken/unrunnable in this environment for
+  an unrelated reason — see the follow-up note below and the comment on issue #59.
+- **Docs updated:** docs/TESTING_GUIDE.md rows added/updated.
+- **Migration:** none.
+- **Follow-ups / known issues:** discovered that `tests/integration/qr-attendance.test.js`'s
+  `createRider`/`freshTokenForRider` fixture signs QR tokens for a `User` document, but
+  `signQr`/`verifyQr` (and every real caller) operate on `RiderProfile` — a separate collection
+  since the rider-profile split. Every scan-related test in that file fails identically on
+  unmodified `main` with no changes at all (confirmed before starting this fix), independent of
+  this change. Likely undetected until now because `.github/workflows/ci.yml` only runs `npm
+  test` (the smoke suite) — `npm run test:integration` has apparently never run in CI. Flagged as
+  a separate concern on issue #59 rather than fixed here (out of this issue's scope); worth its
+  own issue given the whole integration suite may carry more of this kind of undetected drift.
+
+## 2026-08-17 — assignVehiclesToManager enforces manager scope
+
+- **Branch:** issue/80-assign-vehicles-scope-check
+- **Modules touched:** admin (docs/modules/ADMIN.md — still unwritten placeholder, no update needed)
+- **What changed:** `PATCH /api/super-admin/managers/:managerId/assign-vehicles` now rejects (409)
+  reassigning a vehicle outside the target manager's scope: for a PUBLIC manager, a vehicle whose
+  current route sits in a different province; for a SCHOOL/UNIVERSITY/OFFICE manager, a vehicle
+  belonging to a different organization. A vehicle with nothing to compare (no route yet, or either
+  side missing province/organization) still passes through.
+- **Why:** issue #80 — this endpoint previously mass-reassigned vehicles with `Vehicle.updateMany`
+  and no scope check at all, so a vehicle could silently land under a manager who doesn't actually
+  operate its area.
+- **Contract impact:** new 409 response on this endpoint. Checked TrackMe-WebAdmin — the hook
+  (`useAssignVehiclesToManager`) exists but has no UI caller yet, so nothing there needed updating.
+- **Tests:** `tests/integration/assign-vehicles-scope.test.js` (new) — province mismatch/match,
+  no-route-yet passthrough, organization mismatch/match.
+- **Docs updated:** docs/TESTING_GUIDE.md row added.
+- **Migration:** none.
+- **Follow-ups / known issues:** issue #49 (manager PUBLIC route creation) needs a product decision
+  before it can be fixed — commented on the issue rather than guessing; its premise (a "scoped
+  private/custom-route workflow" to route manager creation through) was removed from the codebase
+  in `6680eac`/`f4bfff0` after the issue was filed.
+
+## 2026-08-14 — Active enrolments expose driver and vehicle details
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** driver enrolment (cross-client contract)
+- **What changed:** The enrollment driver summary now includes an optional email and expands its
+  vehicle object with vehicle name, type, and service type alongside the existing ID, plate, and
+  route. Driver phone and email are both released only for ACTIVE enrolments; PENDING/key-resolution
+  summaries keep them null.
+- **Why:** The passenger live map needs one useful driver/vehicle identity panel without repeating
+  the driver's name or inventing missing contact data.
+- **Contract impact:** `POST /api/enrollments/redeem` and `GET /api/enrollments/mine` add
+  `driver.email`, `driver.vehicle.vehicleName`, `vehicleType`, and `serviceType`. Additive only.
+  Updated `TrackMe-UserApp/docs/modules/DRIVER_ENROLLMENT.md` and `LIVE_MAP.md`.
+- **Tests:** `tests/integration/driver-enrollment.test.js` covers ACTIVE email/vehicle disclosure and
+  PENDING email withholding.
+- **Docs updated:** this log and the consuming passenger-app module docs.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
+## 2026-08-14 — Live vehicle location: driver GO → enrolled riders + manager
+
+- **Branch:** feature/rider-photos
+- **Modules touched:** realtime — [`docs/modules/REALTIME.md`](modules/REALTIME.md) (rewritten;
+  the previous version documented a `bus:update`/`manager:join-bus` contract deleted in `6680eac`)
+- **What changed:**
+  - New `src/models/VehicleLiveLocation.js` — one document per vehicle, overwritten on every fix.
+    Deliberately not a trail: no history, no TTL to manage, at the cost of no breadcrumb/playback.
+  - New `src/socket/liveTracking.js`, registered from `socketHandler.js`: `driver:start-tracking`,
+    `driver:location`, `driver:stop-tracking` (driver → server); `vehicle:subscribe`,
+    `vehicle:unsubscribe` (rider/manager → server, one handler branching on role); `vehicle:update`,
+    `vehicle:status`, `vehicle:access-revoked` (server → client). Rooms are `vehicle:<vehicleId>`,
+    keyed on the business id.
+  - A rider watches the specific vehicle they are enrolled to (via the driver, not the vehicle
+    directly) — not everything on a route. Authorization: rider via
+    `RiderProfile` ownership + `DriverEnrollment.status === 'ACTIVE'`; manager via
+    `Vehicle.managerId` (the denormalised copy on `DriverEnrollment.managerId` is never trusted for
+    authorization, matching the existing `findOwnedEnrollment` pattern); driver via
+    `Vehicle.driverId`.
+  - A replayed offline-buffer fix older than the stored one ACKs `success:true, stale:true` and is
+    neither stored nor broadcast — it must not NACK, or the driver app's `isNackResponse` path
+    re-buffers it forever. A session with no cached state (a redeploy, a reconnect) is re-adopted,
+    not refused.
+  - Disconnect starts a 30s grace period rather than ending the shift immediately (background
+    tracking means frequent socket churn); a 60s sweeper independently recovers vehicles left live
+    by a process that died holding sessions.
+  - Hardened socket handshake auth in the same file: rejects `tokenType: 'refresh'` (previously a
+    refresh token authenticated a socket for its full life) and loads the account to reject
+    `isActive === false` (previously a deactivated account kept a working socket indefinitely).
+  - New REST: `GET /api/vehicle/:vehicleId/live`, `GET /api/manager/vehicles/live` — for a late
+    joiner or a caller not holding a socket.
+  - `docs/CHANGES.md` bug found and fixed en route: `POST /api/enrollments/riders/:riderId`
+    (`createEnrollment`) wrote `{ userId: null, studentId }`, but `loadEnrollmentsByProfile` (backing
+    `GET /api/enrollments/mine`) and `leaveEnrollment` both read/matched on `userId` — every
+    enrolment made through the current app was invisible in "my shuttle". Also: `redeemEnrollmentKey`
+    (the legacy `/redeem` path) upserted without `studentId`, which is `required` — a manager
+    approving that request called `enrollment.save()`, which validates the full document and 400s.
+    Both fixed; live location depends on `/mine` returning the right vehicle, so this had to go first.
+  - `scripts/seed-sandbox.js`: seeds a `RiderProfile`, an ACTIVE `DriverEnrollment`, and two
+    `VehicleLiveLocation` fixtures (one live, one recently-stopped) so Developer Mode has something
+    real to show.
+  - `scripts/start-two-vehicles-per-route.js` rewritten from scratch. It previously wrote straight
+    into the deleted `LiveLocation` collection and flipped `Vehicle.isActive` to mean "currently
+    driving" — that field is manager-edited fleet status, unrelated to duty state, and is counted on
+    the manager dashboard. It is now a real socket client: logs in as seeded drivers over HTTP,
+    connects a socket per vehicle, and emits `driver:location` along each route's stop geometry —
+    exercising the same fan-out a real driver's phone does.
+- **Why:** the feature request — manager assigns vehicle → driver gets an enrollment key → rider
+  redeems it and can see the vehicle/driver → driver presses GO → every enrolled rider and the
+  owning manager see it move live.
+- **Contract impact:** additive. New socket events and REST endpoints; nothing existing changed
+  shape. `driver:location`'s payload gained optional `timestamp`/`accuracy`/`speed`/`heading` fields.
+  Consumers: `driver-app` (broadcasts — not yet updated to use the ack-timeout fix or background
+  mode, tracked separately), `user-app` (needs to re-scope `useRouteTracking` from route rooms to
+  vehicle rooms — not yet done), `web-admin` (tracking page was deleted in `fee5555` and needs
+  rebuilding — not yet done).
+- **Tests:** `tests/unit/socket-rate-limit.test.js`, `tests/unit/live-tracking-helpers.test.js`,
+  `tests/integration/vehicle-live-endpoint.test.js`, `tests/integration/ws/live-tracking.test.js`,
+  `tests/integration/enrollment-rider-path.test.js` (the enrolment-read-bug regression). All new
+  suites pass; verified end-to-end with the rewritten simulator script and a real socket client
+  acting as an enrolled rider — subscribe → `vehicle:status live:true` on GO →
+  `vehicle:update` streaming a real position.
+- **Docs updated:** `docs/modules/REALTIME.md` (full rewrite), `docs/TESTING_GUIDE.md` (Websocket
+  section rewritten — it documented four WS test files that no longer exist — plus new Live
+  Location and enrollment-rider-path rows), `scripts/check-docs.mjs` (REALTIME.md file matcher
+  updated for the new model/util names).
+- **Migration:** none required to deploy this change — `VehicleLiveLocation` is created on first
+  write. `scripts/seed-sandbox.js` must be re-run to get the new fixtures in an existing sandbox DB.
+- **Follow-ups / known issues:**
+  - Driver/user/web-admin app changes not yet done (see Contract impact).
+  - **Found, not fixed — pre-existing, unrelated to this change:** ~17 integration suites fail
+    independently of this work (verified by running them against a tree with none of these changes
+    applied). Root causes span at least two things: (a) several tests mint accounts via
+    `User.create`/`Driver.create` with a raw password, bypassing the `Identity` model current login
+    now requires, so `POST /api/auth/login` 401s and everything downstream fails; (b) other suites
+    look like leftover damage from an earlier theirs-wins merge resolution. Out of scope here; needs
+    its own pass.
+  - `Vehicle.driverId` has no unique index, so `Vehicle.findOne({ driverId })` can silently pick one
+    of several vehicles for a driver assigned to more than one — observed live during sandbox
+    verification. The rider-watch authorization tolerates this (it checks the enrollment's driver
+    against whichever vehicle was subscribed to, not the reverse), but nothing resolves "the"
+    vehicle for a driver by that query alone. A partial unique index would close this; not added
+    here to keep this change scoped to the new feature.
+  - Single server instance only (`render.yaml` has no scaling config, verified) — `live` on the
+    document is cross-process correct, but socket.io room fan-out is not. Scaling to 2+ instances
+    needs `@socket.io/redis-adapter` first.
+
+---
+
+## 2026-08-13 — Vehicle creation past the first requires super-admin approval
+- **Branch:** feature/rider-photos
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md) — still a stub, not updated)
 - **What changed:**
   - `POST /api/manager/vehicle-accounts` now creates a manager's *first* vehicle
@@ -252,7 +1090,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   environment (no local Mongo) — run them before deploy.
 
 ## 2026-07-22 — Driver on-board roster endpoint
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** qr-attendance — [docs/modules/QR_ATTENDANCE.md](modules/QR_ATTENDANCE.md)
 - **What changed:** Added `GET /api/driver/boarding/roster?busId=&tripId=` returning the enrolled
   roster (ACTIVE `RouteMembership` on the bus's route) joined with each rider's current on-board
@@ -271,7 +1109,7 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
   the computed `guests`/boarded-this-trip count can become a fallback denominator later.
 
 ## 2026-07-22 — Documentation system (backend variant)
-- **Branch:** main
+- **Branch:** feature/rider-photos
 - **Modules touched:** docs only (no `src/` change)
 - **What changed:**
   - `CLAUDE.md` rewritten as a **router** (architecture overview, mounted API surface, the

@@ -54,10 +54,20 @@ const issueTokensForUser = async (user, role) => {
   };
 };
 
+// Constant-time comparison helper to protect against timing attacks on token hashes
+const safeCompare = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
+
 module.exports = {
   accessTokenExpiresIn,
   refreshTokenExpiresIn,
   toMillis,
   hashToken,
+  safeCompare,
   issueTokensForUser
 };

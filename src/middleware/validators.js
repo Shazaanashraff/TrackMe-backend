@@ -1,5 +1,6 @@
 const { body, param, query } = require('express-validator');
 const { looksLikeDriverCode } = require('../utils/driverCode');
+const { SIGNUP_CATEGORIES } = require('../utils/enrollmentSchema');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -203,7 +204,17 @@ exports.validateRegister = [
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number')
-    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character'),
+  // Shape only. Which details the chosen category actually requires is
+  // validateSignupDetails' business (utils/enrollmentSchema.js), so that rule lives
+  // in one place for register and the rider endpoints alike.
+  body('category')
+    .optional({ values: 'falsy' })
+    .isIn(SIGNUP_CATEGORIES).withMessage('Choose school, university or office'),
+  body('details')
+    .optional()
+    .custom((value) => value && typeof value === 'object' && !Array.isArray(value))
+    .withMessage('Details must be an object')
 ];
 
 // Sign-in accepts an email or a driver code (drivers may have no email), sent as

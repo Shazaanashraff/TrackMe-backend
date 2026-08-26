@@ -26,8 +26,12 @@ const Vehicle = require('../src/models/Vehicle');
 const Route = require('../src/models/Route');
 const Booking = require('../src/models/Booking');
 const ManagerVehicleRequest = require('../src/models/ManagerVehicleRequest');
+const RiderProfile = require('../src/models/RiderProfile');
+const DriverEnrollment = require('../src/models/DriverEnrollment');
+const VehicleLiveLocation = require('../src/models/VehicleLiveLocation');
 const { createIdentityWithProfile } = require('../src/utils/identityRegistry');
 const { generateUniqueDriverCode } = require('../src/utils/driverCode');
+const { generateUniqueRiderCode } = require('../src/utils/riderCode');
 
 const SANDBOX_PASSWORD = 'sandbox-password-change-me';
 
@@ -67,6 +71,9 @@ async function wipeCollections() {
     Route.deleteMany({}),
     Booking.deleteMany({}),
     ManagerVehicleRequest.deleteMany({}),
+    RiderProfile.deleteMany({}),
+    DriverEnrollment.deleteMany({}),
+    VehicleLiveLocation.deleteMany({}),
   ]);
 }
 
@@ -130,16 +137,23 @@ async function seedManagers() {
   return managers;
 }
 
-async function seedDrivers() {
+// A driver belongs to exactly one manager (Driver.managerId), and every
+// manager-facing query scopes by it: the driver directory, the enrolment queue
+// and the enrolled roster all resolve through the drivers a manager owns. Seeded
+// with managerId null, the whole manager portal renders empty, so the fixtures
+// alternate between the two managers. One of them is deliberately `isPrivate`,
+// which is what decides whether redeeming their key queues a request (PENDING)
+// or enrols outright (ACTIVE) — both states need to exist to be seen.
+async function seedDrivers(managers) {
   const fixtures = [
-    { name: 'Driver One' },
-    { name: 'Driver Two' },
-    { name: 'Driver Three' },
-    { name: 'Driver Four' },
+    { name: 'Driver One', isPrivate: false },
+    { name: 'Driver Two', isPrivate: true },
+    { name: 'Driver Three', isPrivate: true },
+    { name: 'Driver Four', isPrivate: false },
   ];
 
   const drivers = [];
-  for (const fixture of fixtures) {
+  for (const [index, fixture] of fixtures.entries()) {
     // No Identity: a driver's permanent, human-readable driverCode is its real sign-in
     // credential (see src/models/Driver.js), same as managerDriversController.createManagerDriver.
     const driver = await Driver.create({
@@ -148,6 +162,8 @@ async function seedDrivers() {
       password: SANDBOX_PASSWORD,
       phoneNumber: '0770000000',
       isActive: true,
+      isPrivate: fixture.isPrivate,
+      managerId: managers[index % managers.length]._id,
     });
     drivers.push(driver);
   }
@@ -224,6 +240,95 @@ async function seedManagedProfiles(rider) {
   return profiles;
 }
 
+// Gives the sandbox rider an actual RiderProfile and an ACTIVE enrolment with
+// the first seeded driver, and stamps a current position for the first two
+// vehicles — one live, one offline. Without this, Developer Mode's live-map
+// screens have nothing real to show: vehicle:subscribe requires a genuine
+// ACTIVE DriverEnrollment, which nothing else in this script creates.
+async function seedLiveTracking(rider, drivers, vehicles) {
+  const riderProfile = await RiderProfile.create({
+    _id: rider._id,
+    accountId: rider._id,
+    riderCode: await generateUniqueRiderCode(RiderProfile),
+    fullName: rider.name,
+    // What the rider would have answered while creating the account, so the
+    // profile screen and the enrolment form's prefill have something to show.
+    category: 'SCHOOL',
+    details: { grade: '7' },
+  });
+
+  const enrolledDriver = drivers[0];
+  await DriverEnrollment.create({
+    studentId: riderProfile._id,
+    driverId: enrolledDriver._id,
+    managerId: enrolledDriver.managerId || null,
+    status: 'ACTIVE',
+    requiredApproval: false,
+  });
+
+  // A second enrolment, still queued, with a PRIVATE driver of the same manager.
+  // The manager's Enrollments screen needs both states to be worth looking at:
+  // ACTIVE is someone already riding (the Enrolled tab and the Riders count on
+  // the driver directory), PENDING is someone awaiting a decision.
+  const pendingDriver = drivers.find((d) => (
+    d.isPrivate && String(d.managerId) === String(enrolledDriver.managerId)
+  ));
+  if (pendingDriver) {
+    await DriverEnrollment.create({
+      studentId: riderProfile._id,
+      driverId: pendingDriver._id,
+      managerId: pendingDriver.managerId || null,
+      status: 'PENDING',
+      requiredApproval: true,
+    });
+  }
+
+  const liveVehicle = vehicles.find((v) => String(v.driverId) === String(enrolledDriver._id));
+  if (liveVehicle) {
+    await VehicleLiveLocation.create({
+      vehicleId: liveVehicle.vehicleId,
+      vehicleRef: liveVehicle._id,
+      driverId: liveVehicle.driverId,
+      managerId: liveVehicle.managerId,
+      routeId: liveVehicle.routeId || '',
+      lat: 6.9271,
+      lng: 79.8612,
+      speed: 8.5,
+      heading: 42,
+      live: true,
+      sessionId: 'sandbox-session-1',
+      startedAt: new Date(),
+      recordedAt: new Date(),
+      receivedAt: new Date(),
+    });
+  }
+
+  // A second vehicle recorded as recently stopped, so the UI's offline state
+  // has a real fixture too, not just an absent document.
+  const offlineVehicle = vehicles.find((v) => v.vehicleId !== liveVehicle?.vehicleId);
+  if (offlineVehicle) {
+    const endedAt = new Date(Date.now() - 15 * 60 * 1000);
+    await VehicleLiveLocation.create({
+      vehicleId: offlineVehicle.vehicleId,
+      vehicleRef: offlineVehicle._id,
+      driverId: offlineVehicle.driverId,
+      managerId: offlineVehicle.managerId,
+      routeId: offlineVehicle.routeId || '',
+      lat: 7.2906,
+      lng: 80.6337,
+      live: false,
+      sessionId: 'sandbox-session-2',
+      startedAt: new Date(endedAt.getTime() - 20 * 60 * 1000),
+      endedAt,
+      endedReason: 'DRIVER_STOPPED',
+      recordedAt: endedAt,
+      receivedAt: endedAt,
+    });
+  }
+
+  return { riderProfile, enrolledDriver, liveVehicle, offlineVehicle };
+}
+
 async function seedBookings(routes, vehicles, rider) {
   const routesById = new Map(routes.map((route) => [route.routeId, route]));
 
@@ -286,8 +391,10 @@ async function main() {
   // once-required `email` index that is now sparse) — sync every model's indexes to
   // what the current code actually declares before seeding against them.
   await Promise.all(
-    [Identity, SuperAdmin, Manager, Driver, User, Vehicle, Route, Booking, ManagerVehicleRequest]
-      .map((model) => model.syncIndexes())
+    [
+      Identity, SuperAdmin, Manager, Driver, User, Vehicle, Route, Booking, ManagerVehicleRequest,
+      RiderProfile, DriverEnrollment, VehicleLiveLocation,
+    ].map((model) => model.syncIndexes())
   );
 
   console.log('Wiping sandbox collections...');
@@ -299,7 +406,7 @@ async function main() {
   const managers = await seedManagers();
   console.log(`Seeded ${managers.length} managers`);
 
-  const drivers = await seedDrivers();
+  const drivers = await seedDrivers(managers);
   console.log(`Seeded ${drivers.length} drivers`);
 
   const routes = await seedRoutes();
@@ -313,6 +420,13 @@ async function main() {
 
   const managedProfiles = await seedManagedProfiles(rider);
   console.log(`Seeded ${managedProfiles.length} managed profiles under the sandbox rider`);
+
+  const live = await seedLiveTracking(rider, drivers, vehicles);
+  console.log(
+    `Seeded live tracking: rider enrolled with ${live.enrolledDriver.name}`
+    + (live.liveVehicle ? `, ${live.liveVehicle.vehicleId} live` : '')
+    + (live.offlineVehicle ? `, ${live.offlineVehicle.vehicleId} offline` : '')
+  );
 
   const bookings = await seedBookings(routes, vehicles, rider);
   console.log(`Seeded ${bookings.length} bookings`);

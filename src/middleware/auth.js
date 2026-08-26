@@ -15,7 +15,19 @@ const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    const account = await findAccountById(decoded.id, decoded.role);
+
+    if (decoded.tokenType === 'refresh') {
+      return res.status(401).json({ message: 'Not authorized, token failed' });
+    }
+
+    const account = await findAccountById(decoded.id, decoded.role, {
+      // Only the base64 avatar is heavy enough to matter on this path (~2 MB per
+      // request when inlined). Exclude that one field rather than allow-listing
+      // the keepers: an inclusion list silently drops whatever a controller reads
+      // off req.user later. phoneNumber, qrTokenVersion and qrIssuedAt are all
+      // read downstream (utils/riders.js, controllers/studentController.js).
+      select: '-avatarUrl'
+    });
 
     if (!account) {
       return res.status(401).json({ message: 'User not found' });
@@ -51,7 +63,16 @@ const optionalAuth = async (req, res, next) => {
     if (!token) return next();
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    const account = await findAccountById(decoded.id, decoded.role);
+    if (decoded.tokenType === 'refresh') return next();
+
+    const account = await findAccountById(decoded.id, decoded.role, {
+      // Only the base64 avatar is heavy enough to matter on this path (~2 MB per
+      // request when inlined). Exclude that one field rather than allow-listing
+      // the keepers: an inclusion list silently drops whatever a controller reads
+      // off req.user later. phoneNumber, qrTokenVersion and qrIssuedAt are all
+      // read downstream (utils/riders.js, controllers/studentController.js).
+      select: '-avatarUrl'
+    });
     if (account && account.doc.isActive !== false) {
       req.user = account.doc;
       req.user.role = account.role;

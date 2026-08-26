@@ -19,24 +19,32 @@ const {
   createManagerDriver,
   updateManagerDriver,
   resetManagerDriverPassword,
+  getManagerDriverPassword,
   getDriverEnrollmentKey,
   rotateDriverEnrollmentKey,
   revertDriverEnrollmentKey,
   deleteManagerDriver
 } = require('../controllers/managerDriversController');
 const { getManagerAttendance } = require('../controllers/managerAttendanceController');
+const { getManagerFleetLive } = require('../controllers/liveLocationController');
 const {
   getManagerEnrollmentRequests,
   getManagerEnrollmentRequestCount,
   approveManagerEnrollmentRequest,
-  rejectManagerEnrollmentRequest
+  rejectManagerEnrollmentRequest,
+  removeManagerEnrollment
 } = require('../controllers/managerEnrollmentsController');
 const { protect, requireManager } = require('../middleware/auth');
+const {
+  getManagerEnrollmentSchema,
+  updateManagerEnrollmentSchema
+} = require('../controllers/organizationEnrollmentController');
 
 router.use(protect, requireManager);
 
 router.get('/dashboard', getManagerDashboard);
 router.get('/vehicles', getManagerVehicles);
+router.get('/vehicles/live', getManagerFleetLive);
 router.get('/routes', getManagerAssignableRoutes);
 router.get('/requests', getMyRequests);
 router.post('/vehicle-accounts', createManagerVehicle);
@@ -49,11 +57,16 @@ router.post('/vehicles/:vehicleId/delete-request', requestVehicleDelete);
 // Driver directory
 router.get('/organizations', getOrganizationsForManager);
 router.post('/organizations', createOrganizationForManager);
+router.get('/organization/enrollment-schema', getManagerEnrollmentSchema);
+router.put('/organization/enrollment-schema', updateManagerEnrollmentSchema);
 router.get('/drivers', getManagerDrivers);
 router.post('/drivers', createManagerDriver);
 router.put('/drivers/:driverId', updateManagerDriver);
 router.delete('/drivers/:driverId', deleteManagerDriver);
 router.put('/drivers/:driverId/password', resetManagerDriverPassword);
+// Returns the password in the clear to the owning manager, and audit-logs the
+// read. Off unless DRIVER_PASSWORD_KEY is set — see utils/recoverablePassword.js.
+router.get('/drivers/:driverId/password', getManagerDriverPassword);
 router.get('/drivers/:driverId/enrollment-key', getDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/rotate', rotateDriverEnrollmentKey);
 router.post('/drivers/:driverId/enrollment-key/revert', revertDriverEnrollmentKey);
@@ -64,6 +77,9 @@ router.get('/enrollment-requests/count', getManagerEnrollmentRequestCount);
 router.get('/enrollment-requests', getManagerEnrollmentRequests);
 router.post('/enrollment-requests/:id/approve', approveManagerEnrollmentRequest);
 router.post('/enrollment-requests/:id/reject', rejectManagerEnrollmentRequest);
+// Takes an already-enrolled rider back off the driver. `?status=ACTIVE` on the
+// list above is what surfaces them in the first place.
+router.delete('/enrollment-requests/:id', removeManagerEnrollment);
 
 // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md)
 router.get('/attendance', getManagerAttendance);

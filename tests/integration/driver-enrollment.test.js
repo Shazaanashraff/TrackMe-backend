@@ -2,6 +2,7 @@ const request = require('supertest');
 const app = require('../../src/server');
 const Driver = require('../../src/models/Driver');
 const DriverEnrollment = require('../../src/models/DriverEnrollment');
+const Vehicle = require('../../src/models/Vehicle');
 const { ensureDriverEnrollmentKey } = require('../../src/utils/enrollmentKey');
 const { resetAttempts } = require('../../src/controllers/enrollmentController');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
@@ -36,6 +37,21 @@ async function makeDriver({ isPrivate = false, manager = managerId, name = 'Driv
   });
   const key = await ensureDriverEnrollmentKey(driver._id);
   return { driver, key };
+}
+
+let vehicleSeq = 0;
+
+async function makeVehicleFor(driver, { routeId = '' } = {}) {
+  vehicleSeq += 1;
+  return Vehicle.create({
+    vehicleId: `ENR-V-${stamp}-${vehicleSeq}`,
+    vehicleName: `Shuttle ${vehicleSeq}`,
+    registrationNumber: `ENR-REG-${stamp}-${vehicleSeq}`,
+    numberPlate: `CBE-${2000 + vehicleSeq}`,
+    driverId: driver._id,
+    managerId,
+    routeId
+  });
 }
 
 const redeem = (key) => request(app).post('/api/enrollments/redeem').set(...asPassenger()).send({ key });
@@ -243,6 +259,98 @@ describe('bad keys', () => {
     await redeem('TMD-ZZZZ-ZZZZ-ZZZZ');
 
     expect((await redeem(key)).status).toBe(201);
+  });
+});
+
+describe('the driver summary a passenger receives', () => {
+  // An enrolment is keyed to a driver, so the vehicle's routeId is the only thing that
+  // ties it back to a route. The passenger app needs it to decide whether the route it
+  // is showing is one this passenger may track.
+  test('carries the route the driver runs, on redeem and in the list', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: false, name: 'Routed Driver' });
+    await makeVehicleFor(driver, { routeId: 'SCH-ROUTED' });
+
+    const redeemed = await redeem(key);
+    expect(redeemed.status).toBe(201);
+    expect(redeemed.body.data.driver.vehicle).toMatchObject({ routeId: 'SCH-ROUTED' });
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].driver.vehicle).toMatchObject({ routeId: 'SCH-ROUTED' });
+  });
+
+  test('includes vehicle details and an available driver email for an active enrolment', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: false, name: 'Contact Driver' });
+    const email = `contact-driver-${stamp}@test.com`;
+    await Driver.findByIdAndUpdate(driver._id, { $set: { email } });
+    const vehicle = await makeVehicleFor(driver);
+
+    const redeemed = await redeem(key);
+    expect(redeemed.body.data.driver.email).toBe(email);
+    expect(redeemed.body.data.driver.vehicle).toMatchObject({
+      vehicleName: vehicle.vehicleName,
+      numberPlate: vehicle.numberPlate,
+      vehicleId: vehicle.vehicleId,
+      vehicleType: vehicle.vehicleType,
+      serviceType: vehicle.serviceType
+    });
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].driver.email).toBe(email);
+    expect(mine.body.data[0].driver.vehicle.vehicleName).toBe(vehicle.vehicleName);
+  });
+
+  test('reports a null routeId when the driver has a vehicle but no route assigned', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: false, name: 'Routeless Driver' });
+    await makeVehicleFor(driver, { routeId: '' });
+
+    const redeemed = await redeem(key);
+
+    expect(redeemed.body.data.driver.vehicle.routeId).toBeNull();
+  });
+
+  test('gives an approved passenger the driver phone number', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: false, name: 'Public Driver' });
+    await Driver.findByIdAndUpdate(driver._id, { $set: { phoneNumber: '0771234567' } });
+
+    const redeemed = await redeem(key);
+    expect(redeemed.body.data.driver.phoneNumber).toBe('0771234567');
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].driver.phoneNumber).toBe('0771234567');
+  });
+
+  // Redeeming a private driver's key only raises a request. Until the manager approves
+  // it, submitting the key must not by itself hand out the driver's personal number.
+  test('withholds the phone number while the request is still pending', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: true, name: 'Private Driver' });
+    await Driver.findByIdAndUpdate(driver._id, {
+      $set: { phoneNumber: '0777654321', email: `private-driver-${stamp}@test.com` }
+    });
+
+    const redeemed = await redeem(key);
+    expect(redeemed.body.data.status).toBe('PENDING');
+    expect(redeemed.body.data.driver.phoneNumber).toBeNull();
+    expect(redeemed.body.data.driver.email).toBeNull();
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].status).toBe('PENDING');
+    expect(mine.body.data[0].driver.phoneNumber).toBeNull();
+    expect(mine.body.data[0].driver.email).toBeNull();
+  });
+
+  test('releases the phone number once the manager approves', async () => {
+    const { driver, key } = await makeDriver({ isPrivate: true, name: 'Approved Driver' });
+    await Driver.findByIdAndUpdate(driver._id, { $set: { phoneNumber: '0770000111' } });
+    const id = (await redeem(key)).body.data._id;
+
+    await request(app)
+      .post(`/api/manager/enrollment-requests/${id}/approve`)
+      .set(...asManager())
+      .expect(200);
+
+    const mine = await request(app).get('/api/enrollments/mine').set(...asPassenger()).expect(200);
+    expect(mine.body.data[0].status).toBe('ACTIVE');
+    expect(mine.body.data[0].driver.phoneNumber).toBe('0770000111');
   });
 });
 

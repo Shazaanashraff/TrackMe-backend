@@ -4,9 +4,12 @@ const http = require('http');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 const connectDB = require('./config/db');
 const setupSocket = require('./socket/socketHandler');
 const { errorHandler } = require('./middleware/errorHandler');
+const { authLimiter, apiLimiter } = require('./middleware/rateLimiters');
 const ensureSuperAdminAccount = require('./utils/ensureSuperAdminAccount');
 
 // Route imports
@@ -27,15 +30,53 @@ const qrRoutes = require('./routes/qrRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
 const driverAccountRoutes = require('./routes/driverAccountRoutes');
+const studentRoutes = require('./routes/studentRoutes');
+const riderRoutes = require('./routes/riderRoutes');
+const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 
 // Initialize Express app
 const app = express();
 const server = http.createServer(app);
 
+// '*' (dev default) allows every origin; a comma-separated list is parsed into
+// an allowlist checked against the request's actual Origin header. Both checks
+// below share this parsed list so the two layers can't drift.
+const rawClientOrigins = process.env.CLIENT_ORIGINS || '*';
+const allowAllOrigins = rawClientOrigins.trim() === '*';
+const allowedOrigins = allowAllOrigins
+  ? null
+  : rawClientOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+if (process.env.NODE_ENV === 'production' && allowAllOrigins) {
+  console.warn('⚠️  WARNING: Running in production without explicit CLIENT_ORIGINS whitelist.');
+}
+const isOriginAllowed = (origin) =>
+  allowAllOrigins || !origin || allowedOrigins.includes(origin);
+
+// No Origin header (server-to-server, curl, native apps) is let through either
+// way — only browser-sent cross-origin requests carry Origin, and this
+// allowlist exists to constrain those.
+
+// Express: reject by omitting the CORS header (callback(null, false)) rather
+// than erroring — the request still completes normally for non-browser
+// callers (health checks, curl, native apps); a browser just can't read the
+// response cross-origin, which is the actual enforcement point (SOP).
+const expressCorsOriginCheck = (origin, callback) => callback(null, isOriginAllowed(origin));
+
+// Socket.IO: reject by erroring the handshake outright — there's no
+// "let it through without headers" equivalent for a persistent connection.
+const socketCorsOriginCheck = (origin, callback) => {
+  if (isOriginAllowed(origin)) return callback(null, true);
+  return callback(new Error(`Origin not allowed: ${origin}`));
+};
+
+// Render sits behind a reverse proxy — without this every request appears to
+// come from the same IP, which breaks IP-based rate limiting below.
+app.set('trust proxy', 1);
+
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGINS || '*',
+    origin: socketCorsOriginCheck,
     methods: ['GET', 'POST']
   }
 });
@@ -70,12 +111,32 @@ const bootstrap = async () => {
 // socket events without importing the io instance directly.
 app.set('io', io);
 
-// Middleware
-app.use(cors());
+// Security & Performance Middleware
+app.use(helmet({
+  crossOriginResourcePolicy: false
+}));
+app.use(compression({
+  threshold: 1024
+}));
+// `credentials: true` is only legal alongside an explicit origin. A browser
+// rejects any credentialed response that answers with `Access-Control-Allow-Origin: *`.
+// Auth travels as a Bearer header, so the wildcard (dev) case needs no credentials.
+app.use(cors(
+  allowAllOrigins
+    ? { origin: expressCorsOriginCheck }
+    : { origin: expressCorsOriginCheck, credentials: true }
+));
+
 // 3 MB accommodates base64 profile-picture data URLs (capped to ~2 MB decoded in
 // authController.updateAvatar); every other endpoint sends small JSON well under this.
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// IP-based rate limiting (complements the per-identity limiters already inside
+// authRoutes). apiLimiter covers everything; authLimiter adds a tighter ceiling
+// specifically on the auth surface.
+app.use('/api/', apiLimiter);
+app.use('/api/auth', authLimiter);
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -85,6 +146,10 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/profiles', profileRoutes);
+app.use('/api/riders', riderRoutes);
+// Compatibility for clients released before rider-neutral terminology.
+app.use('/api/students', studentRoutes);
+app.use('/api/household/places', householdPlaceRoutes);
 app.use('/api/driver/trips', driverTripRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/manager', managerRoutes);
@@ -113,7 +178,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     isReady: startupState.bootstrapComplete,
     mode,
-    dbName
+    ...(process.env.NODE_ENV !== 'production' ? { dbName } : {})
   });
 });
 
@@ -187,6 +252,33 @@ if (require.main === module) {
     console.error('Unhandled Rejection:', err);
     process.exit(1);
   });
+
+  const gracefulShutdown = (signal) => {
+    console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
+    // Tell watchers first: once server.close() has run, the sockets carrying this
+    // notice are already going away and the clients never see it.
+    io.emit('server:shutdown', { timestamp: new Date().toISOString() });
+    server.close(async () => {
+      console.log('HTTP server closed.');
+      try {
+        await mongoose.connection.close(false);
+        console.log('MongoDB connection closed.');
+        process.exit(0);
+      } catch (err) {
+        console.error('Error during shutdown:', err);
+        process.exit(1);
+      }
+    });
+
+    // Force shutdown after 10s if hanging
+    setTimeout(() => {
+      console.error('Could not close connections in time, forcefully shutting down');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 module.exports = app;

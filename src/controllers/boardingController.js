@@ -4,10 +4,12 @@ const Route = require('../models/Route');
 const BoardingEvent = require('../models/BoardingEvent');
 const DriverEnrollment = require('../models/DriverEnrollment');
 const User = require('../models/User');
+const RiderProfile = require('../models/RiderProfile');
 const { verifyQr } = require('../utils/qrToken');
 const { sendBoardingPush } = require('../utils/pushHelper');
+const Notification = require('../models/Notification');
 
-// Debounce window: a repeat scan of the SAME type for the SAME student on the SAME
+// Debounce window: a repeat scan of the SAME type for the SAME rider on the SAME
 // vehicle within this many seconds is treated as a duplicate (idempotent replay, e.g.
 // a driver double-tapping or an offline-queue resend) rather than a new event.
 // Finalized default per todos/active/001-qr-attendance-foundation.md "Blocked" section.
@@ -63,7 +65,7 @@ exports.scanBoarding = async (req, res, next) => {
     if (!verification.valid) {
       return res.status(401).json({ success: false, message: `Invalid QR token: ${verification.reason}` });
     }
-    const { user: rider } = verification;
+    const { student } = verification;
 
     const vehicle = await Vehicle.findOne({ vehicleId, driverId: req.user._id, isDeleted: false });
     if (!vehicle) {
@@ -75,34 +77,62 @@ exports.scanBoarding = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'QR attendance is not enabled for this route' });
     }
 
+    const activeEnrollment = await DriverEnrollment.exists({
+      studentId: student._id,
+      driverId: req.user._id,
+      status: 'ACTIVE'
+    });
+    if (!activeEnrollment) {
+      return res.status(403).json({ success: false, message: 'This rider is not enrolled with your shuttle' });
+    }
+
     const tripId = req.body?.tripId ? String(req.body.tripId) : dayTripId(vehicleId);
 
     let type = typeof req.body?.type === 'string' ? req.body.type.toUpperCase() : null;
     if (type && !BoardingEvent.TYPES.includes(type)) {
       return res.status(400).json({ success: false, message: 'type must be BOARD or ALIGHT' });
     }
+
+    const lastForTrip = await BoardingEvent.findOne({ studentId: student._id, tripId })
+      .sort({ timestamp: -1 });
     if (!type) {
-      const lastForTrip = await BoardingEvent.findOne({ studentId: rider._id, tripId })
-        .sort({ timestamp: -1 });
       type = lastForTrip?.type === 'BOARD' ? 'ALIGHT' : 'BOARD';
     }
 
-    // Debounce: a duplicate same-type scan for this student+vehicle within the window
-    // is an idempotent replay, not a new attendance record.
+    // A real state transition always alternates BOARD/ALIGHT within an open trip —
+    // two of the same type in a row can only be a duplicate scan (a flaky reader, a
+    // re-tap, an offline-queue resend arriving late), however far apart in time, so
+    // this is checked independently of the short debounce window below (issue #59).
+    if (lastForTrip && lastForTrip.type === type) {
+      return res.status(200).json({
+        success: true,
+        debounced: true,
+        data: { ...eventPayload(lastForTrip), studentName: student.fullName, riderCode: student.riderCode }
+      });
+    }
+
+    // Debounce: a duplicate same-type scan for this rider+vehicle within the window
+    // is an idempotent replay, not a new attendance record. Kept as a second,
+    // vehicle-scoped check independent of tripId (e.g. a caller-supplied tripId that
+    // differs between the two scans).
     const debounceSince = new Date(Date.now() - DEBOUNCE_SECONDS * 1000);
     const recentDuplicate = await BoardingEvent.findOne({
-      studentId: rider._id,
+      studentId: student._id,
       vehicleId,
       type,
       timestamp: { $gte: debounceSince }
     }).sort({ timestamp: -1 });
 
     if (recentDuplicate) {
-      return res.status(200).json({ success: true, debounced: true, data: eventPayload(recentDuplicate) });
+      return res.status(200).json({
+        success: true,
+        debounced: true,
+        data: { ...eventPayload(recentDuplicate), studentName: student.fullName, riderCode: student.riderCode }
+      });
     }
 
     const event = await BoardingEvent.create({
-      studentId: rider._id,
+      studentId: student._id,
       vehicleId,
       routeId: vehicle.routeId,
       driverId: req.user._id,
@@ -117,16 +147,35 @@ exports.scanBoarding = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       io.to(`route:${vehicle.routeId}`).emit('attendance:event', eventPayload(event));
-      io.to(`student:${String(rider._id)}`).emit('attendance:event', eventPayload(event));
+      io.to(`student:${String(student._id)}`).emit('attendance:event', eventPayload(event));
     }
 
     try {
-      await sendBoardingPush(rider, event, vehicle.vehicleName);
+      const account = await User.findById(student.accountId).select('pushTokens');
+      await sendBoardingPush(student, account, event, vehicle.vehicleName);
+      await Notification.create({
+        userId: student.accountId,
+        studentId: student._id,
+        type: 'BOARDING_EVENT',
+        title: event.type === 'BOARD' ? 'Boarded shuttle' : 'Left shuttle',
+        message: `${student.fullName} ${event.type === 'BOARD' ? 'boarded' : 'left'} ${vehicle.vehicleName || vehicle.vehicleId}.`,
+        data: {
+          studentId: String(student._id),
+          vehicleId: vehicle.vehicleId,
+          routeId: vehicle.routeId,
+          relatedId: String(event._id)
+        },
+        priority: 'HIGH'
+      });
     } catch (err) {
       console.error('Error dispatching boarding push:', err.message);
     }
 
-    return res.status(201).json({ success: true, debounced: false, data: eventPayload(event) });
+    return res.status(201).json({
+      success: true,
+      debounced: false,
+      data: { ...eventPayload(event), studentName: student.fullName, riderCode: student.riderCode }
+    });
   } catch (error) {
     next(error);
   }
@@ -191,14 +240,27 @@ exports.getBoardingRoster = async (req, res, next) => {
       .populate('userId', 'name')
       .lean();
 
+    // The owner is `studentId`, a RiderProfile — `userId` is the deprecated
+    // account-level owner that the current enrolment path writes as null. Reading
+    // the roster off `userId` therefore named every modern rider "Unknown", and,
+    // worse, keyed them by an id from the wrong collection: BoardingEvent.studentId
+    // is a RiderProfile id, so no boarding event ever matched and everyone showed
+    // NOT_BOARDED. Legacy rows that still carry a userId keep working through the
+    // populate above.
+    const riderIds = enrollments.map((e) => e.studentId).filter(Boolean);
+    const riders = riderIds.length
+      ? await RiderProfile.find({ _id: { $in: riderIds } }).select('fullName').lean()
+      : [];
+    const riderNameById = new Map(riders.map((r) => [String(r._id), r.fullName]));
+
     const enrolledIds = new Set();
     const roster = enrollments.map((e) => {
-      const studentId = String(e.userId?._id || e.userId);
+      const studentId = String(e.studentId || e.userId?._id || e.userId);
       enrolledIds.add(studentId);
       const trip = statusByStudent.get(studentId);
       return {
         studentId,
-        studentName: e.userId?.name || 'Unknown',
+        studentName: riderNameById.get(studentId) || e.userId?.name || 'Unknown',
         status: trip?.status || 'NOT_BOARDED',
         lastEventAt: trip?.lastEventAt || null
       };
@@ -218,8 +280,13 @@ exports.getBoardingRoster = async (req, res, next) => {
       .map((e) => e._id);
     let guests = [];
     if (guestIds.length > 0) {
-      const guestUsers = await User.find({ _id: { $in: guestIds } }).select('name').lean();
-      const nameById = new Map(guestUsers.map((u) => [String(u._id), u.name]));
+      // Same collection the events point at: a guest id came off
+      // BoardingEvent.studentId, which is a RiderProfile, so looking it up in
+      // User named every guest "Unknown" too.
+      const guestRiders = await RiderProfile.find({ _id: { $in: guestIds } })
+        .select('fullName')
+        .lean();
+      const nameById = new Map(guestRiders.map((r) => [String(r._id), r.fullName]));
       guests = guestIds
         .map((id) => {
           const trip = statusByStudent.get(String(id));

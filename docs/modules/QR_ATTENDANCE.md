@@ -54,16 +54,24 @@ Returns the driver's currently-assigned bus's roster for the trip:
 }
 ```
 
-- **Enrollment (the `/Y`)** = `RouteMembership` with `status:'ACTIVE'` on the bus's `routeId`. This
-  only exists for PRIVATE / shuttle routes; a PUBLIC route with no memberships returns
-  `enrolledCount: 0` and an empty `roster`.
+- **Enrollment (the `/Y`)** = `DriverEnrollment` with `status:'ACTIVE'` for the requesting driver.
+  Enrollment is driver-scoped, not route-scoped: a passenger enrols with a specific driver by
+  redeeming their enrollment key. A driver nobody has enrolled with returns `enrolledCount: 0`
+  and an empty `roster`.
+- **Rider identity** comes from the enrolment's **`studentId`** (a `RiderProfile`), which is the
+  same id a `BoardingEvent` carries, so the roster and the events line up. `userId` is the
+  deprecated account-level owner and is null on every enrolment the current app writes; reading
+  the roster off it named every rider "Unknown" *and* keyed them by an id from the wrong
+  collection, so no event ever matched and everyone read `NOT_BOARDED`. It survives only as a
+  fallback for legacy rows. Guests are named from `RiderProfile` for the same reason.
 - **status** is derived from each rider's *latest* `BoardingEvent` in the trip: latest `BOARD` ⇒
   `ON`, latest `ALIGHT` ⇒ `OFF`, no event ⇒ `NOT_BOARDED`.
 - **onBoardCount** counts only enrolled members currently `ON`.
 - **guests** = riders currently on board (latest event `BOARD`) who are *not* enrolled members;
   surfaced separately so the `onBoardCount / enrolledCount` headline stays clean.
 - Roster is sorted `ON → NOT_BOARDED → OFF`, then by name.
-- Errors: 400 missing `busId`; 404 bus not assigned to the caller; 403 route `qrEnabled:false`.
+- Errors: 400 missing `vehicleId`; 404 vehicle not assigned to the caller; 403 route
+  `qrEnabled:false`.
 
 ## Key files
 
@@ -76,11 +84,17 @@ Returns the driver's currently-assigned bus's roster for the trip:
 
 ## Data model (BoardingEvent)
 
-One row per scan: `{ studentId(ref User), busId, routeId, driverId(ref Driver), type: BOARD|ALIGHT,
-timestamp, lat?, lng?, tripId, source:'QR' }`. No formal "trip" entity yet — `tripId` defaults to
-`${busId}#YYYY-MM-DD` so BOARD/ALIGHT toggling has a stable per-bus-per-day scope. Indexes support
-latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the roster aggregation
-(match `tripId`, sort `timestamp desc`, group by `studentId` → latest type).
+One row per scan: `{ studentId(ref RiderProfile), vehicleId, routeId, driverId(ref Driver), type:
+BOARD|ALIGHT, timestamp, lat?, lng?, tripId, source:'QR' }`. No formal "trip" entity yet — `tripId`
+defaults to `${vehicleId}#YYYY-MM-DD` so BOARD/ALIGHT toggling has a stable per-vehicle-per-day
+scope. Indexes support latest-event-per-student lookups (`{studentId,tripId,timestamp}`) and the
+roster aggregation (match `tripId`, sort `timestamp desc`, group by `studentId` → latest type).
+
+**Duplicate-scan dedup** (issue #59): two same-type events in a row for the same student+trip is
+never legitimate — a real re-boarding is always preceded by an ALIGHT — so `scanBoarding` treats a
+same-type repeat as a duplicate (`debounced: true`, no new row) regardless of elapsed time, on top
+of the separate short (`QR_SCAN_DEBOUNCE_SECONDS`, default 30s) vehicle-scoped debounce for a
+same-type resend within that window.
 
 ## Authorization & security rules
 

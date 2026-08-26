@@ -1,0 +1,182 @@
+// A field answer must contain at least one letter or digit — stops a stray
+// symbol (e.g. "%") from passing as a real answer just because it's non-empty.
+// Mirrors the frontend's own check in lib/riderCategory.ts.
+const HAS_ALNUM = /[a-zA-Z0-9]/;
+const isMeaningfulValue = (value) => HAS_ALNUM.test(value);
+
+const FIELD_CATALOG = Object.freeze({
+  SCHOOL: Object.freeze([
+    { key: 'grade', label: 'Grade', type: 'text' },
+    { key: 'className', label: 'Class', type: 'text' },
+    { key: 'admissionNumber', label: 'Admission number', type: 'text' }
+  ]),
+  UNIVERSITY: Object.freeze([
+    { key: 'studentNumber', label: 'Student ID', type: 'text' },
+    { key: 'faculty', label: 'Faculty', type: 'text' },
+    { key: 'batch', label: 'Batch', type: 'text' }
+  ]),
+  OFFICE: Object.freeze([
+    { key: 'employeeNumber', label: 'Employee ID', type: 'text' },
+    { key: 'department', label: 'Department', type: 'text' }
+  ])
+});
+
+const DEFAULT_REQUIRED = Object.freeze({
+  SCHOOL: 'grade',
+  UNIVERSITY: 'studentNumber',
+  OFFICE: 'employeeNumber'
+});
+
+// What account creation asks once the rider picks a category. Deliberately a
+// subset of the catalog above rather than a list of its own: whatever is asked
+// here prefills the organization's enrolment form later, and a key that isn't in
+// the catalog could never do that.
+const SIGNUP_FIELDS = Object.freeze({
+  SCHOOL: Object.freeze(['grade']),
+  UNIVERSITY: Object.freeze([]),
+  OFFICE: Object.freeze([])
+});
+
+const SIGNUP_CATEGORIES = Object.freeze(Object.keys(SIGNUP_FIELDS));
+
+function signupFieldsFor(category) {
+  const key = String(category || '').toUpperCase();
+  const keys = SIGNUP_FIELDS[key] || [];
+  const catalog = new Map(catalogFor(key).map((field) => [field.key, field]));
+  return keys.map((fieldKey) => catalog.get(fieldKey)).filter(Boolean);
+}
+
+// Validates the `{ category, details }` pair a client sends at registration or on
+// a rider edit. Mirrors validateEnrollmentResponses: unknown keys are refused
+// rather than silently dropped, so a typo surfaces instead of vanishing.
+function validateSignupDetails(category, details) {
+  const key = String(category || '').toUpperCase();
+  if (!key) return { valid: true, errors: {}, category: null, values: {} };
+  if (!SIGNUP_CATEGORIES.includes(key)) {
+    return { valid: false, errors: { category: 'Choose school, university or office' }, category: null, values: {} };
+  }
+
+  const supplied = details && typeof details === 'object' && !Array.isArray(details) ? details : {};
+  const fields = signupFieldsFor(key);
+  const allowed = new Set(fields.map((field) => field.key));
+  const errors = {};
+  const values = {};
+
+  for (const suppliedKey of Object.keys(supplied)) {
+    if (!allowed.has(suppliedKey)) errors[suppliedKey] = 'This field is not asked for this category';
+  }
+  for (const field of fields) {
+    const value = String(supplied[field.key] ?? '').trim();
+    if (!value) errors[field.key] = `${field.label} is required`;
+    else if (!isMeaningfulValue(value)) errors[field.key] = `${field.label} must include a letter or number`;
+    else values[field.key] = value;
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors, category: key, values };
+}
+
+function catalogFor(serviceType) {
+  return FIELD_CATALOG[String(serviceType || '').toUpperCase()] || [];
+}
+
+function defaultEnrollmentConfig(serviceType) {
+  const requiredKey = DEFAULT_REQUIRED[String(serviceType || '').toUpperCase()];
+  return {
+    schemaVersion: 1,
+    fields: catalogFor(serviceType).map((field, index) => ({
+      ...field,
+      enabled: field.key === requiredKey,
+      required: field.key === requiredKey,
+      order: index
+    }))
+  };
+}
+
+function normalizedEnrollmentConfig(organization) {
+  const defaults = defaultEnrollmentConfig(organization?.serviceType);
+  const configured = organization?.enrollmentConfig;
+  if (!configured?.fields?.length) return defaults;
+
+  const catalog = new Map(catalogFor(organization.serviceType).map((field) => [field.key, field]));
+  const configuredByKey = new Map(
+    configured.fields.map((field) => [String(field.key), field.toObject ? field.toObject() : field])
+  );
+
+  return {
+    schemaVersion: Number(configured.schemaVersion) || 1,
+    fields: [...catalog.values()].map((field, index) => {
+      const saved = configuredByKey.get(field.key) || {};
+      return {
+        ...field,
+        enabled: Boolean(saved.enabled),
+        required: Boolean(saved.enabled && saved.required),
+        order: Number.isFinite(Number(saved.order)) ? Number(saved.order) : index
+      };
+    }).sort((left, right) => left.order - right.order)
+  };
+}
+
+function validateSchemaUpdate(serviceType, fields) {
+  if (!Array.isArray(fields)) return { error: 'fields must be an array' };
+  const catalog = new Map(catalogFor(serviceType).map((field) => [field.key, field]));
+  const seen = new Set();
+  const normalized = [];
+
+  for (const [index, raw] of fields.entries()) {
+    const key = String(raw?.key || '');
+    if (!catalog.has(key) || seen.has(key)) {
+      return { error: `Unknown or duplicate enrollment field: ${key || '(blank)'}` };
+    }
+    seen.add(key);
+    normalized.push({
+      ...catalog.get(key),
+      enabled: Boolean(raw.enabled),
+      required: Boolean(raw.enabled && raw.required),
+      order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : index
+    });
+  }
+
+  for (const [key, field] of catalog) {
+    if (!seen.has(key)) normalized.push({ ...field, enabled: false, required: false, order: normalized.length });
+  }
+
+  return { fields: normalized.sort((left, right) => left.order - right.order) };
+}
+
+function validateEnrollmentResponses(config, responses) {
+  const supplied = responses && typeof responses === 'object' && !Array.isArray(responses)
+    ? responses
+    : {};
+  const enabled = config.fields.filter((field) => field.enabled);
+  const allowed = new Set(enabled.map((field) => field.key));
+  const errors = {};
+  const values = {};
+
+  for (const key of Object.keys(supplied)) {
+    if (!allowed.has(key)) errors[key] = 'This field is not accepted by the organization';
+  }
+  for (const field of enabled) {
+    const value = String(supplied[field.key] ?? '').trim();
+    if (!value) {
+      if (field.required) errors[field.key] = `${field.label} is required`;
+      continue;
+    }
+    if (!isMeaningfulValue(value)) errors[field.key] = `${field.label} must include a letter or number`;
+    else values[field.key] = value;
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors, values };
+}
+
+module.exports = {
+  FIELD_CATALOG,
+  SIGNUP_FIELDS,
+  SIGNUP_CATEGORIES,
+  signupFieldsFor,
+  validateSignupDetails,
+  catalogFor,
+  defaultEnrollmentConfig,
+  normalizedEnrollmentConfig,
+  validateSchemaUpdate,
+  validateEnrollmentResponses
+};

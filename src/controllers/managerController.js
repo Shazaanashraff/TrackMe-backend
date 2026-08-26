@@ -28,17 +28,7 @@ const MANAGER_EDITABLE_FIELDS = [
   'maintenanceStatus'
 ];
 
-const writeAuditLog = async ({ managerId, actorId, actorRole, action, entityType, entityId, metadata }) => {
-  await ManagerAuditLog.create({
-    managerId,
-    actorId,
-    actorRole,
-    action,
-    entityType,
-    entityId,
-    metadata
-  });
-};
+const { writeAuditLog } = require('../utils/managerAudit');
 
 const getManagedVehicleByVehicleId = async (managerId, vehicleId) => {
   return Vehicle.findOne({
@@ -240,7 +230,8 @@ exports.updateManagerVehicle = async (req, res, next) => {
       // PRIVATE custom routes — never another manager's private route.
       const route = await Route.findOne({
         routeId: updateData.routeId,
-        isDeleted: false
+        isDeleted: false,
+        $or: [{ managerId: null }, { managerId: req.user._id }]
       });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
@@ -438,9 +429,15 @@ exports.createManagerVehicle = async (req, res, next) => {
     }
 
     // A route can be attached later, so it is only checked when one is given.
+    // Scoped the same way as updateManagerVehicle: a manager may only assign a
+    // route with no owning manager or one they own themselves (issue #49).
     let route = null;
     if (normalizedRouteId) {
-      route = await Route.findOne({ routeId: normalizedRouteId, isDeleted: false });
+      route = await Route.findOne({
+        routeId: normalizedRouteId,
+        isDeleted: false,
+        $or: [{ managerId: null }, { managerId: req.user._id }]
+      });
       if (!route) {
         return res.status(400).json({ success: false, message: 'Invalid route ID' });
       }
@@ -683,15 +680,39 @@ exports.requestVehicleDelete = async (req, res, next) => {
 
 exports.getMyRequests = async (req, res, next) => {
   try {
-    const requests = await ManagerVehicleRequest.find({ managerId: req.user._id })
-      .sort({ createdAt: -1 })
-      .lean();
+    // Pagination is opt-in — callers that don't pass page/limit keep getting the
+    // full list, same as before (same convention as superAdminController's
+    // getOperationsOverview / getPendingVehicleRequests).
+    const MAX_LIMIT = 100;
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const pageNumber = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNumber = Math.min(parseInt(req.query.limit) || MAX_LIMIT, MAX_LIMIT);
 
-    return res.status(200).json({
+    let requestsQuery = ManagerVehicleRequest.find({ managerId: req.user._id })
+      .sort({ createdAt: -1 });
+    if (paginated) {
+      requestsQuery = requestsQuery.skip((pageNumber - 1) * limitNumber).limit(limitNumber);
+    }
+
+    const [requests, total] = await Promise.all([
+      requestsQuery.lean(),
+      ManagerVehicleRequest.countDocuments({ managerId: req.user._id })
+    ]);
+
+    const response = {
       success: true,
       count: requests.length,
       data: requests
-    });
+    };
+    if (paginated) {
+      response.pagination = {
+        page: pageNumber,
+        limit: limitNumber,
+        total,
+        pages: Math.ceil(total / limitNumber)
+      };
+    }
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -750,9 +771,13 @@ exports.resetVehicleAccountPassword = async (req, res, next) => {
 // @route   GET /api/manager/routes
 exports.getManagerAssignableRoutes = async (req, res, next) => {
   try {
+    // A manager may assign a route with no owning manager (super-admin/public)
+    // or one they own themselves — never a route another manager created via
+    // POST /api/routes (issue #49).
     const routes = await Route.find({
       isDeleted: false,
-      isActive: true
+      isActive: true,
+      $or: [{ managerId: null }, { managerId: req.user._id }]
     }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
 
     return res.status(200).json({ success: true, count: routes.length, data: routes });

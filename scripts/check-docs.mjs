@@ -57,7 +57,8 @@ const MODULES = [
     /^src\/utils\/qrToken\./, /^src\/models\/BoardingEvent\./,
   ]},
   { doc: 'docs/modules/REALTIME.md', label: 'realtime', match: [
-    /^src\/socket\//, /^src\/models\/LiveLocation\./,
+    /^src\/socket\//, /^src\/models\/VehicleLiveLocation\./, /liveLocationController/,
+    /^src\/utils\/liveVehicles\./, /^src\/utils\/socketRateLimit\./, /^src\/utils\/tripId\./,
   ]},
   { doc: 'docs/modules/NOTIFICATIONS.md', label: 'notifications', match: [
     /notificationController/, /notificationRoutes/, /^src\/utils\/(pushHelper|notificationHelper)\./,

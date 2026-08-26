@@ -62,11 +62,20 @@ const loginRateLimit = createEmailRateLimiter({
 	keyExtractor: (req) => String(req.body?.identifier ?? req.body?.email ?? '').trim().toLowerCase()
 });
 
+const VERIFY_EMAIL_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const VERIFY_EMAIL_RATE_LIMIT_MAX = 10;
+const verifyEmailRateLimit = createEmailRateLimiter({
+	windowMs: VERIFY_EMAIL_RATE_LIMIT_WINDOW_MS,
+	max: VERIFY_EMAIL_RATE_LIMIT_MAX,
+	message: 'Too many verification attempts. Please wait before trying again.',
+	keyExtractor: (req) => String(req.body?.email || '').trim().toLowerCase()
+});
+
 // POST /api/auth/register
 router.post('/register', validateRegister, handleValidationErrors, register);
 
 // POST /api/auth/verify-email
-router.post('/verify-email', validateVerifyEmail, handleValidationErrors, verifyEmail);
+router.post('/verify-email', validateVerifyEmail, handleValidationErrors, verifyEmailRateLimit, verifyEmail);
 
 // POST /api/auth/resend-verification-otp
 router.post('/resend-verification-otp', resendVerificationRateLimit, resendVerificationOtp);
