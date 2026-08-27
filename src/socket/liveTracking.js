@@ -21,6 +21,22 @@ const MAX_SUBSCRIPTIONS_PER_SOCKET = 25;
 // A device clock further out than this is not believable, so its timestamp is
 // discarded in favour of the server's.
 const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+// How far back a driver-supplied shift start may be dated. A driver who pressed
+// GO with no signal reconnects and sends the real press time so the shift's
+// duration is honest; anything older than this (or in the future) is treated as
+// a bad clock and the server stamps `now` instead.
+const MAX_BACKDATED_START_MS = 6 * 60 * 60 * 1000;
+
+// The moment the shift began: the driver-supplied `startedAt` when it is a sane
+// backdate (offline GO that has just reconnected), otherwise the server clock.
+function resolveStartedAt(requested, now = new Date()) {
+  if (requested == null) return now;
+  const value = new Date(requested);
+  if (Number.isNaN(value.getTime())) return now;
+  if (value > now) return now;
+  if (value < new Date(now.getTime() - MAX_BACKDATED_START_MS)) return now;
+  return value;
+}
 
 const roomFor = (vehicleId) => `vehicle:${vehicleId}`;
 
@@ -172,7 +188,7 @@ function registerLiveTracking(io, socket) {
       if (!vehicle) return callback?.(fail('VEHICLE_NOT_FOUND', 'Vehicle not found'));
 
       const vehicleId = vehicle.vehicleId;
-      const startedAt = new Date();
+      const startedAt = resolveStartedAt(data?.startedAt);
       const sessionId = crypto.randomUUID();
 
       // Cached so the per-fix path does no vehicle lookup at all — the previous
@@ -475,5 +491,7 @@ module.exports = {
   roomFor,
   validCoord,
   resolveRecordedAt,
+  resolveStartedAt,
+  MAX_BACKDATED_START_MS,
   MAX_SUBSCRIPTIONS_PER_SOCKET
 };
