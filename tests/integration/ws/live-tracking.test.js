@@ -175,6 +175,44 @@ describe('driver broadcasting', () => {
     expect(await VehicleLiveLocation.countDocuments({ vehicleId: vehicle.vehicleId })).toBe(1);
   });
 
+  it('honors a sane backdated startedAt from an offline GO that has reconnected', async () => {
+    const driverClient = await connect(driver.token);
+    const pressedAt = new Date(Date.now() - 20 * 60 * 1000); // 20 min ago
+
+    const started = await emit(driverClient, 'driver:start-tracking', {
+      vehicleId: vehicle.vehicleId,
+      startedAt: pressedAt.toISOString()
+    });
+
+    expect(started.success).toBe(true);
+    expect(new Date(started.data.startedAt).getTime()).toBe(pressedAt.getTime());
+    const doc = await VehicleLiveLocation.findOne({ vehicleId: vehicle.vehicleId }).lean();
+    expect(new Date(doc.startedAt).getTime()).toBe(pressedAt.getTime());
+  });
+
+  it('ignores an implausible startedAt (future or older than 6h) and stamps the server clock', async () => {
+    const driverClient = await connect(driver.token);
+
+    const before = Date.now();
+    const future = await emit(driverClient, 'driver:start-tracking', {
+      vehicleId: vehicle.vehicleId,
+      startedAt: new Date(before + 60 * 60 * 1000).toISOString()
+    });
+    expect(future.success).toBe(true);
+    const futureStamp = new Date(future.data.startedAt).getTime();
+    expect(futureStamp).toBeGreaterThanOrEqual(before - 1000);
+    expect(futureStamp).toBeLessThanOrEqual(Date.now() + 1000);
+
+    const stale = await emit(driverClient, 'driver:start-tracking', {
+      vehicleId: vehicle.vehicleId,
+      startedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString()
+    });
+    expect(stale.success).toBe(true);
+    const staleStamp = new Date(stale.data.startedAt).getTime();
+    expect(staleStamp).toBeGreaterThanOrEqual(before - 1000);
+    expect(staleStamp).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+
   it('a second fix overwrites rather than appending', async () => {
     const driverClient = await connect(driver.token);
     await emit(driverClient, 'driver:start-tracking', { vehicleId: vehicle.vehicleId });

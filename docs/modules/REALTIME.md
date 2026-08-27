@@ -39,7 +39,7 @@ rider may watch is whichever one that driver currently has.
 
 | Event | Payload | Ack | Notes |
 |---|---|---|---|
-| `driver:start-tracking` | `{ vehicleId }` | `{ success, data: { vehicleId, routeId, vehicleName, numberPlate, sessionId, startedAt } }` or `{ success:false, code, error }` | `vehicleId` must resolve to a vehicle assigned to the caller. Marks the vehicle `live: true` even before the first fix. |
+| `driver:start-tracking` | `{ vehicleId, startedAt? }` | `{ success, data: { vehicleId, routeId, vehicleName, numberPlate, sessionId, startedAt } }` or `{ success:false, code, error }` | `vehicleId` must resolve to a vehicle assigned to the caller. Marks the vehicle `live: true` even before the first fix. `startedAt` (ISO string) is **optional and additive** — the driver app sends it only when a shift that was started offline has just reconnected, so the recorded duration reflects the real GO press. It is clamped to `[now − 6h, now]`; anything in the future, older than that, or unparseable is ignored and the server stamps `now`. |
 | `driver:location` | `{ vehicleId, routeId?, lat, lng, timestamp?, accuracy?, speed?, heading? }` | `{ success, data: { acceptedAt, stale? } }` or `{ success:false, code, error }` | The hot path — upserts the vehicle's single `VehicleLiveLocation` doc and fans out `vehicle:update`. No prior `start-tracking` on this socket re-adopts the session rather than failing (see §6). |
 | `driver:stop-tracking` | `{ vehicleId }` | `{ success:true }` or failure | Immediate offline — no grace period. |
 
@@ -147,6 +147,15 @@ every socket; the driver's client reconnects and resumes emitting `driver:locati
 than answering `VEHICLE_NOT_FOUND`, the handler re-resolves the vehicle, rebuilds the session, joins
 the room, and emits `vehicle:status { live: true, reason: 'DRIVER_STARTED' }` as if this were a
 fresh start. Refusing here would silently end a shift that is plainly still running.
+
+**A shift started with no connection carries its real start time.** If the driver presses GO while
+offline, the client holds the shift locally and, on reconnect, calls `driver:start-tracking` with
+`startedAt` set to the actual press moment (see the driver app's
+`docs/LOCATION_TRACKING.md` §"Offline go-on-duty"). The handler honours it when it is inside
+`[now − 6h, now]` and stamps `now` otherwise, so `startedAt`, `tripId` (`dayTripId(vehicleId,
+startedAt)`), and any duration computed from them reflect the shift rather than the reconnect. This
+start is not idempotent — a replayed `start-tracking` still mints a fresh `sessionId` and
+re-broadcasts `DRIVER_STARTED` — but the client only sends it once per pending shift.
 
 **Rate limiting is sized to the client's known burst, not a round number.**
 `driver:location` allows 60/s per socket. `useLocationBroadcast` throttles to roughly one fix every

@@ -23,6 +23,34 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-27 — driver:start-tracking accepts an optional clamped startedAt (Offline & Caching Audit, chunk 1)
+- **Branch:** feature/audit-remediation-offline-shift-start
+- **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md))
+- **What changed:**
+  - `src/socket/liveTracking.js`: new pure helper `resolveStartedAt(requested, now)` — returns the
+    driver-supplied `startedAt` when it parses and sits inside `[now − 6h, now]`, otherwise `now`.
+  - `driver:start-tracking` reads `data.startedAt` through it in place of the bare `new Date()`.
+    `tripId` (`dayTripId(vehicleId, startedAt)`), the stored `startedAt`, and the ack all follow
+    the resolved value.
+- **Why:** the driver app buffers a shift started with no connection and, on reconnect, announces
+  it with the real GO-press time so the recorded duration isn't truncated to the reconnect moment.
+- **Contract impact:** `driver:start-tracking` payload gains an **optional, additive** `startedAt`
+  (ISO string). Omitting it is unchanged (`now`). Consuming app doc updated:
+  `driver-app/docs/LOCATION_TRACKING.md` §"Offline go-on-duty". Not idempotent — a replayed start
+  still mints a fresh `sessionId`; the client sends it once per pending shift.
+- **Tests:** `tests/integration/ws/live-tracking.test.js` (+2: a sane backdated `startedAt` is
+  honoured on the doc + ack; a future or >6h-old value is ignored and the server clock is
+  stamped).
+- **Docs updated:** `docs/modules/REALTIME.md` (event table + §6), `docs/TESTING_GUIDE.md` (ws
+  live-tracking row).
+- **Migration:** none.
+- **Follow-ups / known issues:** the ws integration suite could not run in this environment
+  (`connectTestDb()` times out — no MongoDB / `mongodb-memory-server` binary; reproduced on a
+  pristine checkout, pre-existing). `resolveStartedAt` was verified in isolation with a Node
+  script covering null / backdate / future / >6h / unparseable / exact-6h. CI is the gate.
+
+---
+
 ## 2026-08-26 — Verify + merge #83's Booking/VehicleReview KPI aggregation fix
 - **Branch:** issue/83-lookup-to-indexed-match
 - **Modules touched:** admin ([`docs/modules/ADMIN.md`](modules/ADMIN.md))
