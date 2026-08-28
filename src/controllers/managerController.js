@@ -132,10 +132,27 @@ exports.getManagerVehicles = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    // routeId is a plain string code (not a Mongoose ref), so it can't be
+    // populated — batch-resolve the distinct codes instead. This lets the
+    // vehicles table render a route name without the manager portal having to
+    // fetch the full assignable-routes list just to visit this page (issue #18).
+    const routeIds = [...new Set(vehicles.map((v) => v.routeId).filter(Boolean))];
+    const routeNameById = routeIds.length
+      ? new Map(
+          (await Route.find({ routeId: { $in: routeIds } }).select('routeId routeName'))
+            .map((r) => [r.routeId, r.routeName])
+        )
+      : new Map();
+
+    const data = vehicles.map((v) => ({
+      ...v,
+      routeName: v.routeId ? routeNameById.get(v.routeId) || null : null
+    }));
+
     return res.status(200).json({
       success: true,
-      count: vehicles.length,
-      data: vehicles
+      count: data.length,
+      data
     });
   } catch (error) {
     next(error);
