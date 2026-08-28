@@ -110,6 +110,28 @@ describe('POST /api/manager/vehicle-accounts', () => {
     expect(list.body.data.some((v) => v.vehicleId === body.vehicleId)).toBe(true);
   });
 
+  // Issue #18 (web-admin): the manager portal's vehicles table needs the assigned
+  // route's name so it isn't forced to always fetch the full assignable-routes list
+  // just to render it. Resolved here from Vehicle.routeId (a plain string code, not
+  // a Mongoose ref) rather than a populate.
+  it('resolves the assigned route\'s name inline on each listed vehicle', async () => {
+    const body = newVehicle();
+    await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+
+    const list = await request(app).get('/api/manager/vehicles').set(...auth());
+    const vehicle = list.body.data.find((v) => v.vehicleId === body.vehicleId);
+    expect(vehicle.routeName).toBe('Fleet Route');
+  });
+
+  it('reports a null routeName for a vehicle with no route assigned yet', async () => {
+    const body = newVehicle({ routeId: '' });
+    await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);
+
+    const list = await request(app).get('/api/manager/vehicles').set(...auth());
+    const vehicle = list.body.data.find((v) => v.vehicleId === body.vehicleId);
+    expect(vehicle.routeName).toBeNull();
+  });
+
   it('lets the new vehicle be used straight away as a driver vehicle number', async () => {
     const body = newVehicle({ numberPlate: 'PF-2343' });
     await request(app).post('/api/manager/vehicle-accounts').set(...auth()).send(body);

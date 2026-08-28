@@ -23,6 +23,36 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-08-28 — GET /api/manager/vehicles resolves routeName inline
+
+- **Branch:** claude/adoring-hopper-8fmga3
+- **Modules touched:** manager fleet (`src/controllers/managerController.js`; no module doc
+  exists yet for `Vehicle.js`/`managerController.js` — out of scope here, see `BUSES.md`'s own
+  stub note, which covers `Bus.js` only)
+- **What changed:**
+  - `getManagerVehicles` now batch-resolves each vehicle's `routeId` (a plain string code, not a
+    Mongoose ref) against `Route` and attaches `routeName` (`null` when unassigned) to every item
+    in the response's `data` array.
+- **Why:** web-admin's `TrackMe-WebAdmin#18` — the manager Vehicles page fetched the *entire*
+  assignable-routes list on every page visit solely so its table could resolve route names,
+  because that was the only place the name was available. Four prior passes at that issue found
+  gating the fetch behind the dialog would regress the table (issue #67) and identified this
+  backend change as the real fix. Additive field, existing consumers unaffected.
+- **Contract impact:** `GET /api/manager/vehicles` — each item in `data[]` gains `routeName:
+  string | null`. Consuming app: `TrackMe-WebAdmin` (`ManagerVehiclesPage.jsx`), doc updated in
+  that repo's own change.
+- **Tests:** `tests/integration/manager-vehicle-create.test.js` — two new cases (`routeName`
+  resolved for an assigned route; `null` for none). **Not run this session** — no reachable
+  MongoDB (`MONGODB_TEST_URI` unset, `localhost:27017` refused connection); this is a known,
+  pre-existing environment gap, not a result of this change. Ran clean against the same pattern
+  the file's existing tests already use.
+- **Docs updated:** this entry; `docs/TESTING_GUIDE.md` row extended; `scripts/seed-sandbox.js`
+  needs no change (its existing route/vehicle fixtures already exercise this — a vehicle with a
+  seeded `routeId` gets a `routeName`, one with none gets `null`).
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-08-27 — driver:start-tracking accepts an optional clamped startedAt (Offline & Caching Audit, chunk 1)
 - **Branch:** feature/audit-remediation-offline-shift-start
 - **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md))
