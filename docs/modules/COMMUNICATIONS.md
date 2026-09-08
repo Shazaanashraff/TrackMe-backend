@@ -32,6 +32,10 @@ Dates are whole Colombo days. New changes accept today through 30 days ahead. Ty
 
 Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, and optional absence revision. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
 
+## Client expectations
+
+Audience endpoints represent current ACTIVE enrollments. Clients may preserve a form's rider identity across navigation or profile switching, but must intersect any preselected recipients with the latest audience before review. The server remains authoritative and rechecks enrollment again on write. Clients also distinguish offline-without-cache, stale refresh failures, loading, and genuine empty results rather than presenting each as an empty list.
+
 ## Operations
 
 Monitor `CommunicationPushDelivery` records in `failed` state and Announcement recipients in `failed`. The dispatcher runs every three seconds with leases and exponential retry. Expo credentials and receipts must be configured in production; `DeviceNotRegistered` tokens are pruned.

@@ -23,6 +23,18 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-09 — Communications client-contract verification
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md)
+- **What changed:** documented the consuming apps' current-audience validation and truthful cached/offline state expectations after compact-screen and recovery verification.
+- **Why:** record the client side of the enrollment recheck and recovery contract completed after the communications checkpoint.
+- **Contract impact:** none; the server remains authoritative and already rechecks ACTIVE enrollment on write.
+- **Tests:** reran `tests/integration/communications.test.js` against an isolated `mongodb-memory-server`: 9/9 passed.
+- **Docs updated:** communications module; Driver and User app communications docs were updated in their repositories.
+- **Migration:** none.
+- **Follow-ups / known issues:** physical-device push delivery still requires configured EAS credentials.
+
 ## 2026-09-08 — Rider–driver communications checkpoint
 
 - **Branch:** feature/audit-remediation
