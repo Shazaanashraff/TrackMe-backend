@@ -1,5 +1,7 @@
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const Driver = require('../models/Driver');
+const Rider = require('../models/RiderProfile');
 const { findHouseholdProfiles } = require('../utils/identityRegistry');
 
 // Every rider-facing read below is household-scoped by default — a
@@ -10,6 +12,7 @@ const { findHouseholdProfiles } = require('../utils/identityRegistry');
 // than trusted outright: a client-supplied id must actually belong to the
 // caller before it can scope a query.
 async function resolveScopedUserIds(req) {
+  if (req.user.role === 'driver') return [req.user._id];
   if (!req.identityId) return [req.user._id];
 
   const household = await findHouseholdProfiles(req.identityId);
@@ -23,15 +26,23 @@ async function resolveScopedUserIds(req) {
   return householdIds;
 }
 
+async function riderFilter(req) {
+  if (!req.query?.riderId || req.query.riderId === 'all') return {};
+  const rider = await Rider.findOne({ _id: req.query.riderId, accountId: req.user._id }).select('_id');
+  return { studentId: rider?._id || null, ...(rider ? {} : { _id: null }) };
+}
+
 // @desc    Get user's notifications
 // @route   GET /api/notifications
 exports.getUserNotifications = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, unreadOnly = false } = req.query;
+    const { unreadOnly = false } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
     const skip = (page - 1) * limit;
 
     const userIds = await resolveScopedUserIds(req);
-    const filter = { userId: { $in: userIds } };
+    const filter = { userId: { $in: userIds }, ...await riderFilter(req) };
     if (unreadOnly === 'true') {
       filter.isRead = false;
     }
@@ -92,7 +103,7 @@ exports.markAllAsRead = async (req, res, next) => {
     const userIds = await resolveScopedUserIds(req);
 
     await Notification.updateMany(
-      { userId: { $in: userIds }, isRead: false },
+      { userId: { $in: userIds }, isRead: false, ...await riderFilter(req) },
       { isRead: true, readAt: new Date() }
     );
 
@@ -137,6 +148,7 @@ exports.getUnreadCount = async (req, res, next) => {
     const userIds = await resolveScopedUserIds(req);
 
     const count = await Notification.countDocuments({
+      ...await riderFilter(req),
       userId: { $in: userIds },
       isRead: false
     });
@@ -207,7 +219,9 @@ exports.registerDeviceToken = async (req, res, next) => {
 
     // Push tokens are a rider-only feature (see User.js pushTokens comment); other
     // account types don't have this field, so there's nothing to store for them.
-    if (req.user.role === 'user') {
+    if (req.user.role === 'driver') {
+      await Driver.findByIdAndUpdate(req.user._id, { $addToSet: { pushTokens: token } });
+    } else if (req.user.role === 'user') {
       // Always the account holder's document, never whichever profile is
       // currently active: a managed profile has no device of its own, and
       // pushHelper.resolvePushTokensForRider already unions tokens across
@@ -227,6 +241,16 @@ exports.registerDeviceToken = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+exports.removeDeviceToken = async (req, res, next) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    if (!token) return res.status(400).json({ success: false, message: 'token is required' });
+    const ids = await resolveScopedUserIds(req);
+    await (req.user.role === 'driver' ? Driver : User).updateMany({ _id: { $in: ids } }, { $pull: { pushTokens: token } });
+    res.json({ success: true });
+  } catch (error) { next(error); }
 };
 
 // @desc    Delete all old notifications (admin only)

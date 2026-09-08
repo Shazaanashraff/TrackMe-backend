@@ -41,6 +41,7 @@ git config core.hooksPath .githooks
 | QR passes + boarding/attendance events | [`docs/modules/QR_ATTENDANCE.md`](docs/modules/QR_ATTENDANCE.md) |
 | Socket.IO: live locations, rooms, auth | [`docs/modules/REALTIME.md`](docs/modules/REALTIME.md) |
 | Notifications + push delivery | [`docs/modules/NOTIFICATIONS.md`](docs/modules/NOTIFICATIONS.md) |
+| Rider–driver messages, broadcasts, absences | [`docs/modules/COMMUNICATIONS.md`](docs/modules/COMMUNICATIONS.md) |
 | Buses, reviews | [`docs/modules/BUSES.md`](docs/modules/BUSES.md) |
 | Bookings | [`docs/modules/BOOKINGS.md`](docs/modules/BOOKINGS.md) |
 | Manager / super-admin accounts, audit log | [`docs/modules/ADMIN.md`](docs/modules/ADMIN.md) |

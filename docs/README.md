@@ -24,7 +24,7 @@ The rest exist as **stubs** — the code ships, the doc doesn't yet. Each names 
 and must be filled in from the template as part of the next change touching it:
 [ROUTES](modules/ROUTES.md) · [CUSTOM_ROUTES](modules/CUSTOM_ROUTES.md) ·
 [QR_ATTENDANCE](modules/QR_ATTENDANCE.md) · [REALTIME](modules/REALTIME.md) ·
-[NOTIFICATIONS](modules/NOTIFICATIONS.md) · [BUSES](modules/BUSES.md) ·
+[NOTIFICATIONS](modules/NOTIFICATIONS.md) · [COMMUNICATIONS](modules/COMMUNICATIONS.md) · [BUSES](modules/BUSES.md) ·
 [BOOKINGS](modules/BOOKINGS.md) · [ADMIN](modules/ADMIN.md) · [DRIVER](modules/DRIVER.md) ·
 [ETA_TRANSIT](modules/ETA_TRANSIT.md)
 

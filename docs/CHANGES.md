@@ -23,6 +23,17 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-08 — Rider–driver communications checkpoint
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md), notifications, realtime, QR attendance
+- **What changed:** private threads, canonical quick messages, revisioned absences and acknowledgments, private announcement fan-out, recovery dispatcher, driver push lifecycle, and stable socket rooms.
+- **Contract impact:** additive APIs and socket events consumed by both mobile apps.
+- **Tests:** `tests/integration/communications.test.js` covers authorization, isolation, retries, concurrency and sockets.
+- **Docs updated:** communications module and testing guide.
+- **Migration:** none; additive collections and indexes initialize through Mongoose.
+- **Follow-ups / known issues:** verify configured EAS push credentials on development builds.
+
 ## 2026-08-23 — Audit remediation: security, offline and production-readiness findings
 
 - **Branch:** feature/audit-remediation

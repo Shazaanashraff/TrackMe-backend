@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema({
+  eventId: { type: String, unique: true, sparse: true },
+  recipientRole: { type: String, enum: ['user', 'driver'], default: 'user' },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -17,7 +19,7 @@ const notificationSchema = new mongoose.Schema({
     enum: [
       'VEHICLE_ARRIVAL', 'VEHICLE_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
       'ROUTE_ACCESS_REQUEST', 'ROUTE_ACCESS_APPROVED', 'ROUTE_ACCESS_REJECTED', 'ROUTE_ACCESS_REVOKED',
-      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT'
+      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT', 'COMMUNICATION'
     ],
     required: [true, 'Notification type is required']
   },
@@ -34,7 +36,13 @@ const notificationSchema = new mongoose.Schema({
     routeId: String,
     bookingId: String,
     relatedId: String,
-    studentId: String
+    studentId: String,
+    riderId: String,
+    conversationId: String,
+    absenceId: String,
+    revision: Number,
+    eventId: String,
+    type: { type: String }
   },
   isRead: {
     type: Boolean,

@@ -23,6 +23,7 @@ router.get('/count/unread', getUnreadCount);
 
 // POST /api/notifications/device-token - Register caller's Expo push token
 router.post('/device-token', registerDeviceToken);
+router.delete('/device-token', require('../controllers/notificationController').removeDeviceToken);
 
 // GET /api/notifications/:notificationId - Get single notification
 router.get('/:notificationId', getNotificationById);

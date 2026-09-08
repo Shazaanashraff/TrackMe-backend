@@ -325,6 +325,8 @@ exports.leaveEnrollment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Enrollment not found' });
     }
 
+    await require('../services/communications').retireAbsences({ enrollmentId: enrollment._id });
+
     // One of the two ways a rider comes off ACTIVE; the other is the manager
     // removing them (managerEnrollmentsController.removeManagerEnrollment),
     // which performs this same revoke. If they had a live-tracking socket open
