@@ -82,6 +82,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | GET /api/notifications/count/unread | integration | tests/integration/notifications.test.js | returns 0 for a caller with no notifications; scoped to the caller — only counts their own `isRead:false` notifications, ignoring another user's unread and the caller's own read ones | unread-count query or scoping changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
 | Rider–driver communications | integration + socket | tests/integration/communications.test.js | rider isolation, revisions, request retries, private broadcasts, enrollment retirement, driver rooms | communications contract or dispatcher changes |
+| Driver rider directory | integration | tests/integration/communications.test.js (`driver rider directory`) | roster carries grade/hasAvatar but never phone, address or non-signup `details`; contact-number fallback chain; avatar as its own request; 404-not-403 for a rider the driver does not carry; driver-only, authenticated, malformed id | `GET /api/driver/riders*` payloads or their enrollment scoping |
 
 ## QR Attendance
 | Item | Test type | Test file | Cases covered | Update when |

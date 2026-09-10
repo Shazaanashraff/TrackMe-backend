@@ -23,6 +23,49 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-10 — A driver-scoped rider directory
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [communications](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `GET /api/driver/riders` gains `category`, `grade` and `hasAvatar` — only what a
+    list row draws. `grade` is whitelisted through `SIGNUP_FIELDS`, so the organization's
+    own enrolment answers (admission and employee numbers, also in `details`) stay out.
+  - New `GET /api/driver/riders/:riderId` carries the contact number
+    (`guardianPhoneOverride`, else the account holder's, via the existing
+    `effectiveContactPhone`). Deliberately not on the roster: that list is polled every
+    30 s and this is read once, on a tap. **No home address** — the driver keeps seeing
+    `pickup.label` only.
+  - New `GET /api/driver/riders/:riderId/avatar` returns the picture alone, so a client
+    caches it against `avatarVersion` instead of refetching an unchanged face.
+  - Both new endpoints authorize on the caller's own ACTIVE enrollment and answer
+    **404, not 403**, so a driver cannot probe for rider ids.
+- **Why:** the driver app is replacing its Messages tab (riders have had no send path
+  since UserApp dropped its conversation screens) with a rider directory that opens a
+  rider profile.
+- **Contract impact:** additive only — three new fields on an existing driver endpoint
+  and two new driver-only GETs. Nothing removed, no status code changed. The consuming
+  app's doc is updated in the DriverApp change that follows.
+- **Tests:** `tests/integration/communications.test.js` — six new cases under
+  `driver rider directory`, including the authz matrix (foreign driver → 404, ended
+  enrollment → 404, `user` role → 403, unauthenticated → 401, malformed id → 400), the
+  `details` whitelist, and the phone fallback chain. 16/16 in that suite, stable across
+  repeated runs.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md` (new "The driver's rider directory"
+  section, including the privacy note and why `hasAvatar` is an aggregation),
+  `docs/TESTING_GUIDE.md` row.
+- **Migration:** none. `scripts/seed-sandbox.js` needed no change — its rider is already
+  SCHOOL with `grade: '7'`, has no picture, and its account already carries
+  `phoneNumber`, so the sandbox exercises the grade row, the initials avatar and the
+  contact-number fallback as seeded.
+- **Follow-ups / known issues:** integration tests could not previously run here at all
+  (see `BLOCKED.md` — the dev Mongo container publishes no host port). They now run
+  against `scripts/start-mem-mongo.js` with `MONGODB_TEST_URI`, which needs no container
+  change; `BLOCKED.md` is updated. Note that the wider integration suite is
+  non-deterministic in this environment — the same three unrelated suites produced 22
+  then 34 failures on identical code — so it has no meaningful pass baseline here yet.
+
+---
+
 ## 2026-09-10 — communication:event / push data carry the message text
 
 - **Branch:** feature/comms-preset-trim
