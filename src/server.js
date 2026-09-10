@@ -33,6 +33,7 @@ const driverAccountRoutes = require('./routes/driverAccountRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const riderRoutes = require('./routes/riderRoutes');
 const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
+const communicationRoutes = require('./routes/communicationRoutes');
 
 // Initialize Express app
 const app = express();
@@ -95,6 +96,7 @@ const bootstrap = async () => {
     console.log(`⏱️  [${new Date().toISOString()}] Starting DB connection...`);
     await connectDB();
     startupState.dbConnected = true;
+    require('./services/communications').startDispatcher(io);
     console.log(`✅ [${new Date().toISOString()}] DB connected (${Date.now() - startupState.startTime}ms)`);
 
     console.log(`⏱️  [${new Date().toISOString()}] Ensuring super admin account...`);
@@ -143,6 +145,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/vehicle', vehicleRoutes);
 app.use('/api/routes', routeRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/conversations', communicationRoutes.conversations);
+app.use('/api/absences', communicationRoutes.absences);
+app.use('/api/driver', communicationRoutes.driver);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/profiles', profileRoutes);

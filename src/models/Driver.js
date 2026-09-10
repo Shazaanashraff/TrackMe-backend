@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const applyAccountFields = require('./shared/accountFields');
 
 const driverSchema = applyAccountFields(new mongoose.Schema({
+  pushTokens: { type: [String], default: [] },
   // The driver's permanent sign-in ID (e.g. DRV-4K7P-9XQ2), generated once at
   // creation and never rotated. Drivers may have no email at all, so this is
   // the identifier that is always present. Sparse because drivers created

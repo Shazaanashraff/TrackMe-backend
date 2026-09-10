@@ -91,6 +91,8 @@ const setupSocket = (io) => {
       activeRoute: null
     };
     registerLiveTracking(io, socket);
+    // Communication rooms use account IDs, never rider IDs supplied by clients.
+    socket.join(`${socket.userRole === 'driver' ? 'driver' : 'account'}:${socket.userId}`);
 
     try {
 

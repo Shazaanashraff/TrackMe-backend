@@ -171,10 +171,11 @@ exports.scanBoarding = async (req, res, next) => {
       console.error('Error dispatching boarding push:', err.message);
     }
 
+    const plannedAbsence = await require('../models/Communication').Absence.findOne({ riderId: student._id, driverId: req.user._id, date: require('../utils/communicationTemplates').today(), status: 'ABSENT' }).select('_id revision conversationId').lean();
     return res.status(201).json({
       success: true,
       debounced: false,
-      data: { ...eventPayload(event), studentName: student.fullName, riderCode: student.riderCode }
+      data: { ...eventPayload(event), studentName: student.fullName, riderCode: student.riderCode, ...(plannedAbsence ? { plannedAbsence, discrepancy: 'Boarding recorded. This rider is also marked absent today.' } : {}) }
     });
   } catch (error) {
     next(error);

@@ -413,6 +413,7 @@ exports.removeManagerEnrollment = async (req, res, next) => {
     }
 
     await DriverEnrollment.deleteOne({ _id: enrollment._id });
+    await require('../services/communications').retireAbsences({ enrollmentId: enrollment._id });
 
     const rider = await RiderProfile.findById(enrollment.studentId);
     if (rider) await notifyRemoved(enrollment, driver, rider);

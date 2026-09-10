@@ -81,6 +81,7 @@ This guide maps backend behaviors to tests and indicates when to update tests.
 | /api/notifications/:id, /:id/read, DELETE /:id ownership | integration | tests/integration/notifications.test.js | GET/PUT(read)/DELETE on another user's notification → 404, no mutation; same operations on the caller's own notification succeed | notification ownership/authorization logic changes |
 | GET /api/notifications/count/unread | integration | tests/integration/notifications.test.js | returns 0 for a caller with no notifications; scoped to the caller — only counts their own `isRead:false` notifications, ignoring another user's unread and the caller's own read ones | unread-count query or scoping changes |
 | pushHelper.sendBoardingPush | unit | tests/integration/push-helper.test.js | no-tokens skip, invalid-token filtering, SDK-error swallowing (never throws) | expo-server-sdk version/API or push payload shape changes |
+| Rider–driver communications | integration + socket | tests/integration/communications.test.js | rider isolation, revisions, request retries, private broadcasts, enrollment retirement, driver rooms | communications contract or dispatcher changes |
 
 ## QR Attendance
 | Item | Test type | Test file | Cases covered | Update when |

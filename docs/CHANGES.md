@@ -23,6 +23,86 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-10 — communication:event / push data carry the message text
+
+- **Branch:** feature/comms-preset-trim
+- **Modules touched:** [communications](docs/modules/COMMUNICATIONS.md)
+- **What changed:** `deliverMessage` (`src/services/communications.js`) now includes `text`,
+  `sender`, and `absenceStatus` (from the `Message` being delivered) on the emitted
+  `communication:event` socket payload and on the queued push's `data`. Previously the event
+  carried only `{eventId, conversationId, riderId, absenceId, revision}` and a client had to
+  fetch the thread to know what actually happened.
+- **Why:** UserApp is retiring its Messages/conversation screens in favor of a transient in-app
+  banner for driver acknowledgments and quick-action broadcasts — see UserApp's
+  `docs/CHANGES.md` (2026-09-10, "Inline absence toggle replaces the Messages tab"). The banner
+  needs real copy ("Driver acknowledged the absence change for Amal on 2026-09-10.") without an
+  extra round trip.
+- **Contract impact:** Additive only — three new optional fields on an existing socket event and
+  push-data payload; no field removed, no endpoint/status-code change. UserApp's
+  `docs/modules/COMMUNICATIONS.md` updated to match.
+- **Tests:** None added. `npm test` (smoke, node --test) baseline 3/3 pass, unaffected (suite
+  doesn't touch this file). `npm run test:integration` could not be run locally — see
+  `BLOCKED.md` (the dev Mongo container publishes no host port); the one integration assertion
+  that touches `communication:event`'s shape (`tests/integration/communications.test.js:139-143`)
+  only checks `riderId` and array lengths, read by hand and confirmed unaffected by additive
+  fields.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md` (realtime contract section).
+- **Migration:** none.
+- **Follow-ups / known issues:** `npm run test:integration` needs a working local Mongo before it
+  can be run again in this environment — see `BLOCKED.md`.
+
+---
+
+## 2026-09-10 — Trim the driver quick-action presets and drop delay blame
+
+- **Branch:** feature/comms-preset-trim
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `PRESETS` reduced from six entries to two: `on_my_way` and a new `delay_10`. Retired
+    `traffic_5`, `traffic_10`, `traffic_15`, `service_paused`, `service_resumed`.
+  - Delay wording no longer names traffic as the cause, in the preset and in the open-ended
+    `traffic` template behind More updates. That template keeps its wire id on purpose.
+- **Why:** the driver panel showed six one-tap buttons plus two navigation rows; a driver mid-route
+  taps, they do not browse. A driver also seldom knows why they are behind, so blaming traffic is
+  wrong as often as it is right.
+- **Contract impact:** `GET /api/conversations/presets` returns two presets instead of six.
+  `POST /api/driver/announcements` and conversation sends now reject the five retired template ids
+  with 400. The driver-app grid renders whatever this endpoint returns, so no client change is
+  needed for the list itself; `TrackMe-DriverApp` only duplicated the delay sentence in its local
+  preview string, updated in the same change.
+- **Tests:** `tests/integration/communications.test.js` — new preset-contract test (exact id list,
+  no "traffic" in the delay copy, open-ended delay wording), broadcast test moved from `traffic_5`
+  to `delay_10`, plus a retired-id 400 assertion.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md`, and the cross-repo reference at
+  `llm-context/NOTIFICATIONS.md` in the stack root.
+- **Migration:** none. Stored messages and queued announcements keep their own text and are never
+  re-canonicalised, so retiring an id does not affect anything already sent or in flight.
+- **Follow-ups / known issues:** the integration suite could not be run this session — the local
+  `trackme-mongo` container publishes no host port. See `BLOCKED.md`. Templates were verified
+  directly against `communicationTemplates.js` and in the running driver app instead.
+
+## 2026-09-09 — Communications client-contract verification
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md)
+- **What changed:** documented the consuming apps' current-audience validation and truthful cached/offline state expectations after compact-screen and recovery verification.
+- **Why:** record the client side of the enrollment recheck and recovery contract completed after the communications checkpoint.
+- **Contract impact:** none; the server remains authoritative and already rechecks ACTIVE enrollment on write.
+- **Tests:** reran `tests/integration/communications.test.js` against an isolated `mongodb-memory-server`: 9/9 passed.
+- **Docs updated:** communications module; Driver and User app communications docs were updated in their repositories.
+- **Migration:** none.
+- **Follow-ups / known issues:** physical-device push delivery still requires configured EAS credentials.
+
+## 2026-09-08 — Rider–driver communications checkpoint
+
+- **Branch:** feature/audit-remediation
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md), notifications, realtime, QR attendance
+- **What changed:** private threads, canonical quick messages, revisioned absences and acknowledgments, private announcement fan-out, recovery dispatcher, driver push lifecycle, and stable socket rooms.
+- **Contract impact:** additive APIs and socket events consumed by both mobile apps.
+- **Tests:** `tests/integration/communications.test.js` covers authorization, isolation, retries, concurrency and sockets.
+- **Docs updated:** communications module and testing guide.
+- **Migration:** none; additive collections and indexes initialize through Mongoose.
+- **Follow-ups / known issues:** verify configured EAS push credentials on development builds.
 ## 2026-08-28 — GET /api/manager/vehicles resolves routeName inline
 
 - **Branch:** claude/adoring-hopper-8fmga3
