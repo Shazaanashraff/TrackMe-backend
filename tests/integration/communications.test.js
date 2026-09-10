@@ -78,9 +78,18 @@ test('plain text never changes absences; canonical templates and request reuse a
   await post(`conversations/${c._id}/messages`, { requestId: 'too-long-001', text: 'a'.repeat(1001) }).expect(400);
   expect(await Absence.countDocuments()).toBe(0); expect(await Message.countDocuments()).toBe(1);
 });
+test('the quick-action grid is exactly the two presets a driver can tap mid-route', async () => {
+  const response = await get('conversations/presets', driver).expect(200);
+  expect(response.body.data.presets.map(p => p.id)).toEqual(['on_my_way', 'delay_10']);
+  // Delay wording names no cause: a driver seldom knows why they are behind.
+  expect(response.body.data.presets.find(p => p.id === 'delay_10').text).not.toMatch(/traffic/i);
+  // The open-ended delay behind More updates stays available and stays neutral.
+  expect(canonical({ templateId: 'traffic', parameters: { minutes: 25 } }, 'driver', null, true))
+    .toBe('I’m running about 25 minutes behind. Sorry for the inconvenience, I’ll update you if this changes.');
+});
 test('broadcasts include absent riders, remain private and group sibling pushes', async () => {
   await report();
-  const body = { requestId: 'broadcast-001', templateId: 'traffic_5', audience: 'all', date: today(), recipientCount: 2, previewRiderIds: [String(amal._id), String(sibling._id)] };
+  const body = { requestId: 'broadcast-001', templateId: 'delay_10', audience: 'all', date: today(), recipientCount: 2, previewRiderIds: [String(amal._id), String(sibling._id)] };
   const results = await Promise.all([post('driver/announcements', body, driver), post('driver/announcements', body, driver)]);
   results.forEach(r => expect(r.status).toBe(200));
   await dispatch(); await dispatch();
@@ -89,6 +98,9 @@ test('broadcasts include absent riders, remain private and group sibling pushes'
   expect(await PushDelivery.countDocuments({ eventId: /^announcement:/ })).toBe(1);
   expect((await Announcement.findOne()).recipients.every(r => r.state === 'sent')).toBe(true);
   await post('driver/announcements', { ...body, requestId: 'arrived-all', templateId: 'arrived' }, driver).expect(400);
+  // A preset that was retired from the grid must stop being accepted, or a stale
+  // client keeps sending wording nobody can see or edit any more.
+  await post('driver/announcements', { ...body, requestId: 'retired-preset', templateId: 'traffic_5' }, driver).expect(400);
   await post('driver/announcements', { ...body, requestId: 'wrong-count', recipientCount: 3 }, driver).expect(409);
   await get(`driver/announcements/${results[0].body.data._id}`, secondDriver).expect(404);
 });

@@ -23,6 +23,34 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-10 — Trim the driver quick-action presets and drop delay blame
+
+- **Branch:** feature/comms-preset-trim
+- **Modules touched:** [`COMMUNICATIONS`](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `PRESETS` reduced from six entries to two: `on_my_way` and a new `delay_10`. Retired
+    `traffic_5`, `traffic_10`, `traffic_15`, `service_paused`, `service_resumed`.
+  - Delay wording no longer names traffic as the cause, in the preset and in the open-ended
+    `traffic` template behind More updates. That template keeps its wire id on purpose.
+- **Why:** the driver panel showed six one-tap buttons plus two navigation rows; a driver mid-route
+  taps, they do not browse. A driver also seldom knows why they are behind, so blaming traffic is
+  wrong as often as it is right.
+- **Contract impact:** `GET /api/conversations/presets` returns two presets instead of six.
+  `POST /api/driver/announcements` and conversation sends now reject the five retired template ids
+  with 400. The driver-app grid renders whatever this endpoint returns, so no client change is
+  needed for the list itself; `TrackMe-DriverApp` only duplicated the delay sentence in its local
+  preview string, updated in the same change.
+- **Tests:** `tests/integration/communications.test.js` — new preset-contract test (exact id list,
+  no "traffic" in the delay copy, open-ended delay wording), broadcast test moved from `traffic_5`
+  to `delay_10`, plus a retired-id 400 assertion.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md`, and the cross-repo reference at
+  `llm-context/NOTIFICATIONS.md` in the stack root.
+- **Migration:** none. Stored messages and queued announcements keep their own text and are never
+  re-canonicalised, so retiring an id does not affect anything already sent or in flight.
+- **Follow-ups / known issues:** the integration suite could not be run this session — the local
+  `trackme-mongo` container publishes no host port. See `BLOCKED.md`. Templates were verified
+  directly against `communicationTemplates.js` and in the running driver app instead.
+
 ## 2026-09-09 — Communications client-contract verification
 
 - **Branch:** feature/audit-remediation

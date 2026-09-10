@@ -28,6 +28,8 @@ Push acceptance is delivery transport state only. Reads update conversation curs
 
 Dates are whole Colombo days. New changes accept today through 30 days ahead. Typed text is plain text and limited to 1,000 characters. Presets use server-validated template IDs and parameters; the server generates canonical wording.
 
+`GET /api/conversations/presets` is the driver's one-tap grid and is deliberately short: `on_my_way` and `delay_10`. A driver mid-route taps rather than browses, so anything less common (a custom delay, an unavailable date, free text) lives a few taps further on under More updates. Delay wording names no cause, because a driver seldom knows why they are behind. The open-ended delay keeps the wire id `traffic` even though its wording no longer says traffic: that id is stored on `Message.templateId` and on queued announcements, so renaming it would strand work already in flight. Retiring a preset id makes the server reject it with 400; stored messages and queued announcements are unaffected because their text is never re-canonicalised.
+
 ## Realtime contract
 
 Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, and optional absence revision. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
