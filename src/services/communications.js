@@ -7,6 +7,8 @@ const Driver = require('../models/Driver');
 const Notification = require('../models/Notification');
 const { ApiError } = require('../middleware/errorHandler');
 const { today, validateDate, canonical } = require('../utils/communicationTemplates');
+const { SIGNUP_FIELDS } = require('../utils/enrollmentSchema');
+const { effectiveContactPhone, mapValuesToObject } = require('../utils/riders');
 const id = value => String(value?._id || value);
 function objectId(value) {
   if (typeof value !== 'string' || !/^[a-f\d]{24}$/i.test(value)) throw new ApiError(400, 'Invalid resource ID');
@@ -119,18 +121,84 @@ async function retireAbsences(filter = {}) {
     } } });
   }
 }
+// Only what account creation asks for this category is safe to hand a driver.
+// `details` also carries the organization's own enrolment answers — admission and
+// employee numbers — which are not the driver's business.
+function signupDetail(rider, key) {
+  const allowed = SIGNUP_FIELDS[String(rider?.category || '').toUpperCase()] || [];
+  if (!allowed.includes(key)) return '';
+  return String(mapValuesToObject(rider.details)[key] || '').trim();
+}
+
+// `avatarUrl` holds the picture inline as a base64 data URL — up to the 2 MB
+// account cap for riders migrated by ensureLegacyRider — so selecting it merely
+// to test emptiness would pull a driver's whole roster of images into memory.
+// This route is polled every 30 s by every focused driver, so that cost recurs
+// twice a minute per driver to produce booleans that are then discarded.
+// Deriving the flag in MongoDB keeps the blobs in the database; the $project is
+// an allowlist and never emits avatarUrl itself.
+//
+// profileController.js keeps images off list responses for the same reason, but
+// selects the field because it reasons about ~6 household members. A roster is
+// 20-60, hence the divergence.
+async function avatarFlags(riderIds) {
+  if (!riderIds.length) return new Map();
+  const rows = await Rider.aggregate([
+    { $match: { _id: { $in: riderIds } } },
+    { $project: { hasAvatar: { $gt: [{ $ifNull: ['$avatarUrl', ''] }, ''] } } }
+  ]);
+  return new Map(rows.map(row => [String(row._id), Boolean(row.hasAvatar)]));
+}
+
 async function audience(user, riderId) {
   const filter = { status: 'ACTIVE' };
   if (user.role === 'driver') filter.driverId = user._id;
   else { await ownedRider(user, objectId(riderId)); filter.studentId = riderId; }
-  const rows = await Enrollment.find(filter).populate('studentId', 'fullName riderCode accountId avatarVersion isActive')
+  const rows = await Enrollment.find(filter).populate('studentId', 'fullName riderCode accountId avatarVersion isActive category details')
     .populate({ path: 'driverId', select: 'name organization isActive', populate: { path: 'organization', select: 'name' } })
     .populate('pickupPlaceId', 'label address').lean();
-  return rows.filter(row => row.studentId?.isActive && row.driverId?.isActive !== false).map(row => ({
+  const active = rows.filter(row => row.studentId?.isActive && row.driverId?.isActive !== false);
+  const flags = await avatarFlags(active.map(row => row.studentId._id));
+  return active.map(row => ({
     enrollmentId: row._id, riderId: row.studentId._id, riderName: row.studentId.fullName,
     riderCode: row.studentId.riderCode, avatarVersion: row.studentId.avatarVersion,
+    hasAvatar: flags.get(String(row.studentId._id)) || false,
+    category: row.studentId.category || null, grade: signupDetail(row.studentId, 'grade'),
     driverId: row.driverId._id, driverName: row.driverId.name, organization: row.driverId.organization?.name || '', pickup: row.pickupPlaceId || null,
   }));
+}
+
+// One rider a driver is currently carrying. The contact number lives here rather
+// than on the roster above because that list is polled every 30 s and this is
+// looked at once — a deliberate tap, not a background refresh.
+//
+// A rider the caller has no active enrollment with is reported as missing, not
+// forbidden: 403 on a real id would let a driver probe for rider ids.
+async function riderDetail(user, riderId) {
+  objectId(riderId);
+  if (!await activeEnrollment(riderId, user._id)) throw new ApiError(404, 'Rider not found');
+  const rider = await Rider.findOne({ _id: riderId, isActive: true })
+    .select('fullName riderCode avatarVersion category details guardianPhoneOverride accountId')
+    .populate('accountId', 'phoneNumber').lean();
+  if (!rider) throw new ApiError(404, 'Rider not found');
+  const flags = await avatarFlags([rider._id]);
+  return {
+    riderId: rider._id, riderName: rider.fullName, riderCode: rider.riderCode,
+    avatarVersion: rider.avatarVersion || 0, hasAvatar: flags.get(String(rider._id)) || false,
+    category: rider.category || null, grade: signupDetail(rider, 'grade'),
+    contactNumber: effectiveContactPhone(rider, rider.accountId || {}),
+  };
+}
+
+// Deliberately its own request, and never a field on riderDetail: the picture is
+// a base64 data URL, and the client caches it against `avatarVersion` so a second
+// look at the same rider costs nothing.
+async function riderAvatar(user, riderId) {
+  objectId(riderId);
+  if (!await activeEnrollment(riderId, user._id)) throw new ApiError(404, 'Rider not found');
+  const rider = await Rider.findOne({ _id: riderId, isActive: true }).select('+avatarUrl avatarVersion').lean();
+  if (!rider) throw new ApiError(404, 'Rider not found');
+  return { avatarUrl: rider.avatarUrl || '', avatarVersion: rider.avatarVersion || 0 };
 }
 async function announce(user, body) {
   requestId(body.requestId);
@@ -227,4 +295,4 @@ function startDispatcher(io) {
   const timer = setInterval(tick, 3000); timer.unref(); void tick();
   return () => clearInterval(timer);
 }
-module.exports = { id, objectId, requestId, upsert, ownedRider, activeEnrollment, thread, accessibleThread, send, transition, retireAbsences, audience, announce, dispatch, startDispatcher };
+module.exports = { id, objectId, requestId, upsert, ownedRider, activeEnrollment, thread, accessibleThread, send, transition, retireAbsences, audience, riderDetail, riderAvatar, announce, dispatch, startDispatcher };

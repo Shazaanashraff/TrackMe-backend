@@ -4,6 +4,7 @@ const app = require('../../src/server');
 const { createRider, createDriver, authHeader } = require('./factories');
 const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 const Rider = require('../../src/models/RiderProfile');
+const User = require('../../src/models/User');
 const Enrollment = require('../../src/models/DriverEnrollment');
 const Notification = require('../../src/models/Notification');
 const { Absence, Message, Conversation, Announcement, PushDelivery } = require('../../src/models/Communication');
@@ -141,4 +142,79 @@ test('authenticated socket receives stable private events, unrelated driver rece
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(received).toHaveLength(1); expect(received[0].riderId).toBe(String(amal._id)); expect(foreign).toHaveLength(0);
   } finally { sockets.forEach(socket => socket.disconnect()); await new Promise(resolve => app.server.close(resolve)); }
+});
+
+// The driver-facing rider directory. A driver sees only riders currently enrolled
+// with them, the roster stays cheap enough to poll, and the contact number is
+// behind a second request rather than riding the list.
+describe('driver rider directory', () => {
+  const row = (body, riderId) => body.data.find(r => String(r.riderId) === String(riderId));
+
+  test('the roster carries what a row renders, and nothing sensitive', async () => {
+    await Rider.updateOne({ _id: amal._id }, { category: 'SCHOOL', details: { grade: '7', admissionNumber: 'ADM-9' }, avatarUrl: 'data:image/png;base64,AAAA', avatarVersion: 3 });
+    await Rider.updateOne({ _id: sibling._id }, { category: 'UNIVERSITY', details: { grade: '11', studentNumber: 'U-42' } });
+    await User.updateOne({ _id: account.id }, { phoneNumber: '0779999999' });
+
+    const body = (await get('driver/riders', driver)).body;
+    const amalRow = row(body, amal._id);
+    expect(amalRow).toMatchObject({ riderName: 'Amal', category: 'SCHOOL', grade: '7', hasAvatar: true, avatarVersion: 3 });
+    // The picture and the phone number are separate requests, by design.
+    expect(amalRow.avatarUrl).toBeUndefined();
+    expect(amalRow.contactNumber).toBeUndefined();
+    expect(JSON.stringify(body.data)).not.toContain('0779999999');
+    // `details` also holds the organization's enrolment answers, which are not
+    // the driver's business — only what signup asks for the category comes back.
+    expect(JSON.stringify(body.data)).not.toContain('ADM-9');
+    expect(JSON.stringify(body.data)).not.toContain('U-42');
+
+    // A university rider is never asked for a grade, so one stored against that
+    // category is not shown.
+    expect(row(body, sibling._id)).toMatchObject({ grade: '', hasAvatar: false });
+  });
+
+  test('a rider detail answers name, grade and one contact number', async () => {
+    await Rider.updateOne({ _id: amal._id }, { category: 'SCHOOL', details: { grade: '7' }, guardianPhoneOverride: '0770000001' });
+    const data = (await get(`driver/riders/${amal._id}`, driver)).body.data;
+    expect(data).toMatchObject({ riderName: 'Amal', riderCode: 'RDR-AMAL', category: 'SCHOOL', grade: '7', contactNumber: '0770000001' });
+    // The home address stays with the household; a driver sees the pickup label only.
+    expect(data.address).toBeUndefined();
+    expect(data.pickup).toBeUndefined();
+  });
+
+  test('the contact number is the rider override, else the account holder, else empty', async () => {
+    await User.updateOne({ _id: account.id }, { phoneNumber: '0779999999' });
+    expect((await get(`driver/riders/${amal._id}`, driver)).body.data.contactNumber).toBe('0779999999');
+
+    await Rider.updateOne({ _id: amal._id }, { guardianPhoneOverride: '0770000001' });
+    expect((await get(`driver/riders/${amal._id}`, driver)).body.data.contactNumber).toBe('0770000001');
+
+    await User.updateOne({ _id: account.id }, { phoneNumber: '' });
+    await Rider.updateOne({ _id: amal._id }, { guardianPhoneOverride: '' });
+    expect((await get(`driver/riders/${amal._id}`, driver)).body.data.contactNumber).toBe('');
+  });
+
+  test('the picture is its own request, and no picture reads as empty', async () => {
+    await Rider.updateOne({ _id: amal._id }, { avatarUrl: 'data:image/png;base64,AAAA', avatarVersion: 4 });
+    expect((await get(`driver/riders/${amal._id}/avatar`, driver)).body.data).toEqual({ avatarUrl: 'data:image/png;base64,AAAA', avatarVersion: 4 });
+    expect((await get(`driver/riders/${sibling._id}/avatar`, driver)).body.data.avatarUrl).toBe('');
+  });
+
+  // A rider the caller does not carry reads as missing rather than forbidden: a
+  // 403 on a real id would tell a driver which rider ids exist.
+  test('a rider a driver does not carry is missing, not forbidden', async () => {
+    await get(`driver/riders/${sibling._id}`, secondDriver).expect(404);
+    await get(`driver/riders/${sibling._id}/avatar`, secondDriver).expect(404);
+    expect(row((await get('driver/riders', secondDriver)).body, sibling._id)).toBeUndefined();
+
+    await Enrollment.updateMany({ studentId: amal._id, driverId: secondDriver.id }, { status: 'REJECTED' });
+    await get(`driver/riders/${amal._id}`, secondDriver).expect(404);
+    await get(`driver/riders/${amal._id}/avatar`, secondDriver).expect(404);
+  });
+
+  test('the directory is driver-only, authenticated, and rejects a malformed id', async () => {
+    await get(`driver/riders/${amal._id}`, account).expect(403);
+    await get(`driver/riders/${amal._id}/avatar`, account).expect(403);
+    await request(app).get(`/api/driver/riders/${amal._id}`).expect(401);
+    await get('driver/riders/not-an-id', driver).expect(400);
+  });
 });

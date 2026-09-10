@@ -19,6 +19,8 @@ absences.post('/:id/acknowledge', requireDriver, c.acknowledge);
 const driver = express.Router();
 driver.use(protect, requireDriver);
 driver.get('/riders', c.audience);
+driver.get('/riders/:riderId', c.riderDetail);
+driver.get('/riders/:riderId/avatar', c.riderAvatar);
 driver.get('/absences', c.listAbsences);
 driver.get('/announcements', c.announcements);
 driver.post('/announcements', c.announce);

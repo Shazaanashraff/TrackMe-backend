@@ -10,6 +10,8 @@ const scope = user => ({ [user.role === 'driver' ? 'driverId' : 'accountId']: us
 const pageSize = req => Math.min(100, Math.max(1, Number(req.query.limit) || 50));
 exports.presets = handle(() => ({ presets: PRESETS, today: today(), timezone: 'Asia/Colombo' }));
 exports.audience = handle(req => s.audience(req.user, req.query.riderId));
+exports.riderDetail = handle(req => s.riderDetail(req.user, req.params.riderId));
+exports.riderAvatar = handle(req => s.riderAvatar(req.user, req.params.riderId));
 exports.createThread = handle(req => s.thread(req.user, req.body.riderId, req.user.role === 'driver' ? s.id(req.user) : req.body.driverId));
 exports.listThreads = handle(async req => {
   const filter = scope(req.user);
