@@ -34,7 +34,9 @@ Dates are whole Colombo days. New changes accept today through 30 days ahead. Ty
 
 `GET /api/driver/riders` is the roster a driver browses, and it is polled every 30 s by a focused client, so it carries only what a row draws: identity, `organization`, `pickup.label`, `category`, `grade`, and the `hasAvatar`/`avatarVersion` pair. `grade` is whitelisted through `SIGNUP_FIELDS` (`utils/enrollmentSchema.js`) rather than exposing `details`, which also holds the organization's own enrolment answers — admission and employee numbers are not the driver's business. A category that is never asked for a grade returns `''`, even if one is stored.
 
-`GET /api/driver/riders/:riderId` is where the contact number lives: `guardianPhoneOverride`, else the account holder's `phoneNumber`, via `effectiveContactPhone` (`utils/riders.js`). It is a separate request precisely because the roster is polled and this is read once, on a tap. **It carries no home address** — a driver sees `pickup.label` ("Home gate") and never the street address held on `HouseholdPlace`.
+`GET /api/driver/riders/:riderId` is where the contact number lives: `guardianPhoneOverride`, else the account holder's `phoneNumber`, via `effectiveContactPhone` (`utils/riders.js`). It is a separate request precisely because the roster is polled and this is read once, on a tap. **It carries no address at all**, and the roster's `pickup` is populated label-only, so neither draws the street held on `HouseholdPlace`.
+
+Note that absence notices are a separate path and still do carry it: `listAbsences` populates `enrollmentId.pickupPlaceId` with `label address`, and the driver app's `AbsenceCard` renders both. That predates this directory and is unchanged here — worth revisiting if a driver should never see a street address anywhere.
 
 `GET /api/driver/riders/:riderId/avatar` returns the picture alone, so a client can cache it against `avatarVersion` and never refetch an unchanged face. The parent-facing avatar routes (`riderRoutes.js`, `studentRoutes.js`) cannot serve a driver: they are `requireUser` and resolve through household ownership.
 

@@ -156,7 +156,10 @@ async function audience(user, riderId) {
   else { await ownedRider(user, objectId(riderId)); filter.studentId = riderId; }
   const rows = await Enrollment.find(filter).populate('studentId', 'fullName riderCode accountId avatarVersion isActive category details')
     .populate({ path: 'driverId', select: 'name organization isActive', populate: { path: 'organization', select: 'name' } })
-    .populate('pickupPlaceId', 'label address').lean();
+    // Label only. The roster draws "Home gate", never the street, and sending an
+    // address nothing renders would put every rider's home on the wire twice a
+    // minute for no one to read.
+    .populate('pickupPlaceId', 'label').lean();
   const active = rows.filter(row => row.studentId?.isActive && row.driverId?.isActive !== false);
   const flags = await avatarFlags(active.map(row => row.studentId._id));
   return active.map(row => ({

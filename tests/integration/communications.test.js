@@ -6,6 +6,7 @@ const { connectTestDb, clearTestDb, closeTestDb } = require('./db');
 const Rider = require('../../src/models/RiderProfile');
 const User = require('../../src/models/User');
 const Enrollment = require('../../src/models/DriverEnrollment');
+const HouseholdPlace = require('../../src/models/HouseholdPlace');
 const Notification = require('../../src/models/Notification');
 const { Absence, Message, Conversation, Announcement, PushDelivery } = require('../../src/models/Communication');
 const { dispatch } = require('../../src/services/communications');
@@ -170,6 +171,18 @@ describe('driver rider directory', () => {
     // A university rider is never asked for a grade, so one stored against that
     // category is not shown.
     expect(row(body, sibling._id)).toMatchObject({ grade: '', hasAvatar: false });
+  });
+
+  // The roster draws "Home gate", never the street. Sending an address nothing
+  // renders would put every rider's home on the wire twice a minute for no one
+  // to read, so the pickup is populated label-only.
+  test('the roster names the pickup point but not the street', async () => {
+    const place = await HouseholdPlace.create({ accountId: account.id, label: 'Home gate', address: '221B Baker Street', coordinates: { lat: 6.9, lng: 79.9 } });
+    await Enrollment.updateOne({ studentId: amal._id, driverId: driver.id }, { pickupPlaceId: place._id });
+
+    const body = (await get('driver/riders', driver)).body;
+    expect(row(body, amal._id).pickup.label).toBe('Home gate');
+    expect(JSON.stringify(body.data)).not.toContain('221B Baker Street');
   });
 
   test('a rider detail answers name, grade and one contact number', async () => {
