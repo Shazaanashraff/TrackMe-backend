@@ -32,7 +32,7 @@ Dates are whole Colombo days. New changes accept today through 30 days ahead. Ty
 
 ## Realtime contract
 
-Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, and optional absence revision. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
+Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, an optional absence revision, and — since 2026-09-10 — `text`/`sender`/`absenceStatus` (mirrors `Message.text`/`sender`/`absenceStatus`, undefined on a bare read-receipt event) so a client can show the real copy (e.g. an absence-acknowledgment banner) without a round-trip fetch of the thread. `queuePush`'s `data` payload carries the same fields. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
 
 ## Client expectations
 

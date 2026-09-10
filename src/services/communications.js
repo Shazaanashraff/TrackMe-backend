@@ -163,7 +163,10 @@ async function queuePush(fields) { return upsert(PushDelivery, { eventId: fields
 async function deliverMessage(m, io) {
   const c = await Conversation.findById(m.conversationId);
   if (!c) return;
-  const event = { eventId: m.eventId, conversationId: id(c), riderId: id(c.riderId), absenceId: m.absenceId, revision: m.revision };
+  // `text`/`sender`/`absenceStatus` ride along so a client banner (or push data
+  // payload) can show the real copy — e.g. "Driver acknowledged the absence
+  // change for Amal on 2026-09-10." — without a round-trip fetch of the thread.
+  const event = { eventId: m.eventId, conversationId: id(c), riderId: id(c.riderId), absenceId: m.absenceId, revision: m.revision, text: m.text, sender: m.sender, absenceStatus: m.absenceStatus };
   const roles = m.sender === 'system' ? ['user', 'driver'] : [m.sender === 'driver' ? 'user' : 'driver'];
   for (const role of roles) {
     const recipientId = role === 'driver' ? c.driverId : c.accountId;

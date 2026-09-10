@@ -23,6 +23,36 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-10 — communication:event / push data carry the message text
+
+- **Branch:** feature/comms-preset-trim
+- **Modules touched:** [communications](docs/modules/COMMUNICATIONS.md)
+- **What changed:** `deliverMessage` (`src/services/communications.js`) now includes `text`,
+  `sender`, and `absenceStatus` (from the `Message` being delivered) on the emitted
+  `communication:event` socket payload and on the queued push's `data`. Previously the event
+  carried only `{eventId, conversationId, riderId, absenceId, revision}` and a client had to
+  fetch the thread to know what actually happened.
+- **Why:** UserApp is retiring its Messages/conversation screens in favor of a transient in-app
+  banner for driver acknowledgments and quick-action broadcasts — see UserApp's
+  `docs/CHANGES.md` (2026-09-10, "Inline absence toggle replaces the Messages tab"). The banner
+  needs real copy ("Driver acknowledged the absence change for Amal on 2026-09-10.") without an
+  extra round trip.
+- **Contract impact:** Additive only — three new optional fields on an existing socket event and
+  push-data payload; no field removed, no endpoint/status-code change. UserApp's
+  `docs/modules/COMMUNICATIONS.md` updated to match.
+- **Tests:** None added. `npm test` (smoke, node --test) baseline 3/3 pass, unaffected (suite
+  doesn't touch this file). `npm run test:integration` could not be run locally — see
+  `BLOCKED.md` (the dev Mongo container publishes no host port); the one integration assertion
+  that touches `communication:event`'s shape (`tests/integration/communications.test.js:139-143`)
+  only checks `riderId` and array lengths, read by hand and confirmed unaffected by additive
+  fields.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md` (realtime contract section).
+- **Migration:** none.
+- **Follow-ups / known issues:** `npm run test:integration` needs a working local Mongo before it
+  can be run again in this environment — see `BLOCKED.md`.
+
+---
+
 ## 2026-09-10 — Trim the driver quick-action presets and drop delay blame
 
 - **Branch:** feature/comms-preset-trim
