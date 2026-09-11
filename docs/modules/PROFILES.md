@@ -160,6 +160,15 @@ flowchart TD
   off `/api/profiles`. Writes go through `validateAvatarDataUrl` (`utils/avatar.js`) at the same
   512 KB ceiling managed profiles use, and every write bumps `avatarVersion`, including a clear —
   that bump is what invalidates a client's cached copy.
+- **`hasAvatar` is answered by aggregation, not by reading the field.** `RiderProfile.avatarUrl`
+  is `select: false` (audit, 2026-08-23), so a document from `find()` carries no `avatarUrl` and
+  `Boolean(rider.avatarUrl)` reads false for everyone. `utils/riders.js` `riderAvatarFlags` projects
+  the flag inside MongoDB (the same trick the driver roster uses, `services/communications.js`
+  `avatarFlags`); `publicRiders` applies it to a list, and `publicRider` takes the flag as an
+  argument, falling back to the in-memory field only on a document that was just written with it.
+  `GET /api/riders/:riderId/avatar` opts back in with `findOwnedRider(..., { withAvatar: true })`.
+  Between the audit and 2026-09-11 both paths were broken: every list said `hasAvatar: false` and
+  the avatar endpoint answered `""`, so the passenger app showed initials for riders with pictures.
 - **A household is capped at 20 profiles** (`HOUSEHOLD_LIMIT` in `profileController.js`) — a
   sanity ceiling against a scripted caller, comfortably above any real family or small office.
 - **`scripts/migrate-rider-profiles.js`** is a real migration, not just a schema change: every

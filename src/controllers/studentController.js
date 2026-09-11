@@ -10,7 +10,9 @@ const {
   assertOwnedPlaces,
   validContactPhone,
   isSelfRider,
-  publicRider
+  riderAvatarFlags,
+  publicRider,
+  publicRiders
 } = require('../utils/riders');
 
 // A rider's picture is capped where a managed profile's is: it is the same kind of
@@ -48,7 +50,7 @@ const listRiders = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      data: riders.map((rider) => publicRider(rider, req.user)),
+      data: await publicRiders(riders, req.user),
       account: {
         _id: req.user._id,
         name: req.user.name,
@@ -102,7 +104,7 @@ const createRider = async (req, res, next) => {
       defaultDropoffPlaceId: dropoffId
     });
 
-    return res.status(201).json({ success: true, data: publicRider(rider, req.user) });
+    return res.status(201).json({ success: true, data: publicRider(rider, req.user, Boolean(avatar?.value)) });
   } catch (error) {
     next(error);
   }
@@ -168,6 +170,10 @@ const updateRider = async (req, res, next) => {
 
     await rider.save();
 
+    // A PATCH that left the picture alone loaded the rider without `avatarUrl`
+    // (select:false), so the flag has to be looked up rather than read off the doc.
+    const hasAvatar = avatar ? Boolean(avatar.value) : (await riderAvatarFlags([rider._id])).get(String(rider._id)) || false;
+
     // One editor in the app means one write path here: editing yourself updates the
     // account too, so the account and the rider row cannot drift apart the way they
     // did when the profile screen offered two forms for the same person.
@@ -181,7 +187,7 @@ const updateRider = async (req, res, next) => {
       }
     }
 
-    return res.status(200).json({ success: true, data: publicRider(rider, req.user) });
+    return res.status(200).json({ success: true, data: publicRider(rider, req.user, hasAvatar) });
   } catch (error) {
     next(error);
   }
@@ -215,7 +221,7 @@ const archiveRider = async (req, res, next) => {
 const getRiderAvatar = async (req, res, next) => {
   try {
     const riderId = req.params.riderId || req.params.studentId;
-    const rider = await findOwnedRider(req.user, riderId);
+    const rider = await findOwnedRider(req.user, riderId, { withAvatar: true });
     if (!rider) return res.status(404).json({ success: false, message: 'Rider not found' });
 
     return res.status(200).json({

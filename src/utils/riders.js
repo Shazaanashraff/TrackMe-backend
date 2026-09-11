@@ -44,11 +44,14 @@ async function ensureLegacyRider(account, seed = {}) {
   return rider;
 }
 
-async function findOwnedRider(account, riderId, { includeInactive = false } = {}) {
+// `withAvatar` opts back into the select:false picture field; only the avatar
+// endpoint wants the image itself.
+async function findOwnedRider(account, riderId, { includeInactive = false, withAvatar = false } = {}) {
   const resolvedId = riderId || (await ensureLegacyRider(account))._id;
   const filter = { _id: resolvedId, accountId: account._id };
   if (!includeInactive) filter.isActive = { $ne: false };
-  return RiderProfile.findOne(filter);
+  const query = RiderProfile.findOne(filter);
+  return withAvatar ? query.select('+avatarUrl') : query;
 }
 
 async function assertOwnedPlaces(accountId, placeIds) {
@@ -77,7 +80,24 @@ function isSelfRider(rider, account) {
   return String(rider._id) === String(account._id);
 }
 
-function publicRider(rider, account) {
+// Whether each rider has a picture, without loading any picture. `avatarUrl` is
+// select:false on RiderProfile (it holds a base64 data URL), so a document from
+// find() carries no such field and `Boolean(rider.avatarUrl)` would read false
+// for everyone. The aggregate sees the raw field, which is the same way the
+// driver roster answers it (services/communications.js avatarFlags).
+async function riderAvatarFlags(riderIds) {
+  if (!riderIds.length) return new Map();
+  const rows = await RiderProfile.aggregate([
+    { $match: { _id: { $in: riderIds } } },
+    { $project: { hasAvatar: { $gt: [{ $ifNull: ['$avatarUrl', ''] }, ''] } } }
+  ]);
+  return new Map(rows.map((row) => [String(row._id), Boolean(row.hasAvatar)]));
+}
+
+// `hasAvatar` must come from riderAvatarFlags unless the document was just
+// written with the picture in memory (create, or a PATCH that set avatarUrl).
+function publicRider(rider, account, hasAvatar) {
+  const flag = hasAvatar !== undefined ? hasAvatar : rider.avatarUrl !== undefined ? Boolean(rider.avatarUrl) : false;
   return {
     _id: rider._id,
     riderCode: rider.riderCode,
@@ -92,7 +112,7 @@ function publicRider(rider, account) {
     // and cached by the client against `avatarVersion`. Inlining it here would put
     // every rider's image into every list response — the same reason managed
     // profiles keep theirs off their list (docs/modules/PROFILES.md).
-    hasAvatar: Boolean(rider.avatarUrl),
+    hasAvatar: flag,
     avatarVersion: rider.avatarVersion || 0,
     defaultPickupPlaceId: rider.defaultPickupPlaceId || null,
     defaultDropoffPlaceId: rider.defaultDropoffPlaceId || null,
@@ -100,6 +120,11 @@ function publicRider(rider, account) {
     createdAt: rider.createdAt,
     updatedAt: rider.updatedAt
   };
+}
+
+async function publicRiders(riders, account) {
+  const flags = await riderAvatarFlags(riders.map((rider) => rider._id));
+  return riders.map((rider) => publicRider(rider, account, flags.get(String(rider._id)) || false));
 }
 
 function mapValuesToObject(values) {
@@ -117,6 +142,8 @@ module.exports = {
   effectiveContactPhone,
   validContactPhone,
   isSelfRider,
+  riderAvatarFlags,
   publicRider,
+  publicRiders,
   mapValuesToObject
 };

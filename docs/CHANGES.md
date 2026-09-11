@@ -23,6 +23,42 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-11 — `hasAvatar` and the rider avatar endpoint read a select:false field
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)
+- **What changed:**
+  - `utils/riders.js`: new `riderAvatarFlags(ids)` (MongoDB `$project` on `avatarUrl`, the
+    same shape as `services/communications.js` `avatarFlags`) and `publicRiders(riders,
+    account)`. `publicRider(rider, account, hasAvatar)` now takes the flag; it falls back to
+    the in-memory field only when the document carries one. `findOwnedRider` gains
+    `{ withAvatar: true }`.
+  - `studentController.js`: `listRiders` uses `publicRiders`; `updateRider` looks the flag up
+    when the request did not touch the picture; `createRider` passes it explicitly;
+    `getRiderAvatar` selects `+avatarUrl`.
+  - `enrollmentController.js` `resolveEnrollmentKey`: `rider`/`student` via `publicRiders`.
+- **Why:** the 2026-08-23 audit (d44cea3) made `RiderProfile.avatarUrl` `select: false` to keep
+  the base64 picture off every authenticated request, but `publicRider` kept deriving
+  `hasAvatar` from `rider.avatarUrl` and `getRiderAvatar` kept reading it. Since then
+  `GET /api/riders` answered `hasAvatar: false` for every rider and the avatar endpoint
+  answered `""`, so the passenger app showed initials for riders who have a picture while the
+  driver app (which aggregates) showed the photo. Found while making the driver app's three
+  rider surfaces agree.
+- **Contract impact:** none in shape; `GET /api/riders`, `PATCH /api/riders/:id`,
+  `POST /api/riders`, `POST /api/enrollments/resolve-key` and `GET /api/riders/:id/avatar` now
+  answer what their docs already promised. Consumer: user-app `features/profile/riderAvatarCache.ts`
+  (no change needed).
+- **Tests:** `tests/integration/rider-avatar.test.js` — 7 cases were failing on the pristine
+  tree (verified against the test Mongo on :27018); all pass, plus one new case for a rename
+  that leaves the picture alone. Its two direct DB reads now `select('+avatarUrl')`. Full
+  integration run: 855/914 → 860/915 passing; the remaining 55 failures are in 18 unrelated
+  suites and predate this change.
+- **Docs updated:** PROFILES.md, TESTING_GUIDE.md row.
+- **Follow-ups / known issues:** the driver app no longer shows rider pictures at all; the
+  driver roster still carries `hasAvatar`/`avatarVersion` and the driver avatar endpoint
+  remains for any other consumer.
+
+---
+
 ## 2026-09-10 — A driver-scoped rider directory
 - **Branch:** feature/driver-rider-directory
 - **Modules touched:** [communications](modules/COMMUNICATIONS.md)
