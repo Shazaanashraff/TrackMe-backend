@@ -52,7 +52,7 @@ requireUser`), with `/api/students` kept as a byte-identical legacy alias.
 | `GET` | `/api/riders/:riderId/avatar` | `getRiderAvatar` | One rider's picture as a data URL, plus its version. Its own request on purpose — see §8. |
 | `POST` | `/api/riders` | `createRider` | `fullName`, `contactPhone`, optional `category` + `details`, default places. |
 | `PATCH` | `/api/riders/:riderId` | `updateRider` | Same fields, plus `avatarUrl` (a data URL, or `''` to clear). **On the `isSelf` row it also writes `name` / `phoneNumber` to the `User` account** — see §8. |
-| `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete; 409 while an ACTIVE or PENDING enrolment exists. |
+| `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete. Any rider may go, the `isSelf` row included. 409 while an ACTIVE or PENDING enrolment exists; 409 `LAST_RIDER` when it is the only active rider on the account, so an account always keeps at least one. |
 
 ## 3. Key files (one job each)
 

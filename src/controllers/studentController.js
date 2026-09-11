@@ -207,6 +207,19 @@ const archiveRider = async (req, res, next) => {
       return res.status(409).json({ success: false, message: 'Remove this rider from their shuttles before archiving the profile' });
     }
 
+    // Any rider may go, the account holder's own row included (it is just the
+    // rider that shares the account's id), but never the last one: with no
+    // active rider left, findOwnedRider without an id has nothing to fall back
+    // on and the account has no one to ride.
+    const others = await RiderProfile.countDocuments({
+      accountId: req.user._id,
+      _id: { $ne: rider._id },
+      isActive: { $ne: false }
+    });
+    if (!others) {
+      return res.status(409).json({ success: false, code: 'LAST_RIDER', message: 'Keep at least one rider profile on the account' });
+    }
+
     rider.isActive = false;
     await rider.save();
     return res.status(200).json({ success: true, message: 'Rider archived' });

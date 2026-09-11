@@ -23,6 +23,29 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-11 — Refuse to archive the last rider profile on an account
+- **Branch:** feature/rider-remove-guard
+- **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)
+- **What changed:** `archiveRider` (`DELETE /api/riders/:riderId`) counts the account's other
+  active riders and answers 409 `{ code: 'LAST_RIDER' }` when there are none. The `isSelf` row
+  is not special-cased: it is just the rider that shares the account's id, and it can be archived
+  like any other while another rider remains (`ensureLegacyRider` then falls back to the oldest
+  remaining active rider).
+- **Why:** riders on one account are siblings in one household, each with their own code, pass
+  and enrollments, so any of them should be removable; but with no active rider left
+  `findOwnedRider` without an id had nothing to fall back on.
+- **Contract impact:** new 409 `LAST_RIDER` on `DELETE /api/riders/:riderId`. user-app
+  `docs/modules/PROFILES.md` updated in the companion user-app change.
+- **Tests:** `tests/integration/rider-profiles.test.js` — setup moved to the `factories`
+  `createRider` (the direct `User.create` had no identity, so its login was a 401 and the suite
+  failed before this change); three new archive cases (added rider, self rider with another
+  present, last rider refused).
+- **Docs updated:** PROFILES.md row, TESTING_GUIDE.md row.
+- **Migration:** none.
+- **Follow-ups / known issues:** the local `trackme-mongo` container still publishes no host
+  port; the suites were run with `MONGODB_TEST_URI=mongodb://localhost:27018/trackme_test`.
+  `profiles.test.js` (3) and `qr-attendance.test.js` (16) fail before and after this change.
+
 ## 2026-09-11 — `notification:new` socket event for the unread badge
 - **Branch:** feature/driver-rider-directory
 - **Modules touched:** [docs/modules/NOTIFICATIONS.md](modules/NOTIFICATIONS.md), [docs/modules/REALTIME.md](modules/REALTIME.md)
