@@ -23,6 +23,30 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-12 — Drivers acknowledge absence requests too, and the notice says which
+- **Branch:** feature/absence-request-ack
+- **Modules touched:** [docs/modules/COMMUNICATIONS.md](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `GET /api/driver/absences` `changes` now includes unacknowledged ABSENT absences as well
+    as CANCELLED ones (`communicationController.listAbsences`). Shape unchanged.
+  - `transitionText` takes the absence's status at the moment of the ACKNOWLEDGED transition
+    and writes "Driver acknowledged that {rider} will be absent on {date}." or "Driver
+    acknowledged that {rider} is coming on {date}." instead of the one generic line.
+- **Why:** the driver's Home prompt only ever asked about cancellations, so a rider marking
+  themselves absent got no acknowledgment; and the rider-side notice could not say what had
+  been acknowledged.
+- **Contract impact:** `changes` contents widened (driver-app strip now branches on
+  `status`); ACKNOWLEDGED message/notification/push copy changed. driver-app
+  `docs/modules/COMMUNICATIONS.md` updated in the companion change.
+- **Tests:** `tests/integration/communications.test.js` — the revision case now acknowledges
+  the request before the cancellation (4 messages, 4 history entries); new case for the two
+  acknowledgment texts on `Message` and on the rider's `Notification` rows.
+- **Docs updated:** COMMUNICATIONS.md, TESTING_GUIDE.md row.
+- **Migration:** none.
+- **Follow-ups / known issues:** `Notification.data` is a typed subdocument and drops
+  `absenceStatus`/`text`/`sender` from the socket event; clients that need the status must
+  read the message text or the socket payload.
+
 ## 2026-09-11 — Refuse to archive the last rider profile on an account
 - **Branch:** feature/rider-remove-guard
 - **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)

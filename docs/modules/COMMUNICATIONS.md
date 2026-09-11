@@ -15,14 +15,14 @@ Implemented additively in September 2026. This module owns private rider–drive
 
 `Communication.js` defines Conversation, Message, Absence, Announcement, and CommunicationPushDelivery. Absence documents have a unique rider/driver/date index, a monotonic revision, acknowledged revision, full history, and embedded pending delivery events. `requestId` plus a payload hash makes a retry idempotent and rejects reuse for another operation. The retrying dispatcher materializes events into messages and notifications without requiring multi-document transactions.
 
-Push acceptance is delivery transport state only. Reads update conversation cursors; absence acknowledgment updates `acknowledgedRevision` only through the explicit acknowledge endpoint. Invalid Expo tokens are removed after ticket or receipt errors.
+Push acceptance is delivery transport state only. Reads update conversation cursors; absence acknowledgment updates `acknowledgedRevision` only through the explicit acknowledge endpoint. A driver acknowledges a fresh absence (ABSENT) the same way as a cancellation (CANCELLED): `GET /api/driver/absences` lists both in `changes` while `acknowledgedRevision < revision`. The ACKNOWLEDGED system message names what was seen: "Driver acknowledged that {rider} will be absent on {date}." or "Driver acknowledged that {rider} is coming on {date}." (`transitionText`, `services/communications.js`); it reaches the rider's account as a `COMMUNICATION` notification, a push and the `communication:event` socket payload. Invalid Expo tokens are removed after ticket or receipt errors.
 
 ## API
 
 - `GET|POST /api/conversations`, `GET|POST /api/conversations/:id/messages`, `PUT /api/conversations/:id/read`
 - `GET /api/conversations/audience`, `GET /api/conversations/presets`
 - `GET|POST /api/absences`, `POST /api/absences/:id/cancel`, `POST /api/absences/:id/acknowledge`
-- `GET /api/driver/riders`, `GET /api/driver/riders/:riderId`, `GET /api/driver/riders/:riderId/avatar`, `GET /api/driver/absences?date=YYYY-MM-DD`
+- `GET /api/driver/riders`, `GET /api/driver/riders/:riderId`, `GET /api/driver/riders/:riderId/avatar`, `GET /api/driver/absences?date=YYYY-MM-DD` (`rows` for the date, `changes` = unacknowledged ABSENT and CANCELLED absences from today on, `absentCount`)
 - `GET|POST /api/driver/announcements`, `GET /api/driver/announcements/:id`, `POST /api/driver/announcements/:id/retry`
 - `POST|DELETE /api/notifications/device-token`
 

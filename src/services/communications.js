@@ -65,10 +65,15 @@ async function send(user, conversationId, body) {
   await accessibleThread(user, conversationId, true);
   return createMessage({ conversationId, eventId, requestHash, text, templateId: body.templateId || 'custom', sender: user.role });
 }
-function transitionText(name, date, action) {
+// `status` is what the absence said when the driver acknowledged it, so the
+// rider's notice repeats the thing that was seen rather than a generic "change".
+function transitionText(name, date, action, status) {
   return action === 'ABSENT' ? `${name} will be absent on ${date}.`
     : action === 'CANCELLED' ? `${name} is coming on ${date}—absence cancelled.`
-      : action === 'ACKNOWLEDGED' ? `Driver acknowledged the absence change for ${name} on ${date}.`
+      : action === 'ACKNOWLEDGED' ? (
+        status === 'ABSENT' ? `Driver acknowledged that ${name} will be absent on ${date}.`
+          : status === 'CANCELLED' ? `Driver acknowledged that ${name} is coming on ${date}.`
+            : `Driver acknowledged the absence change for ${name} on ${date}.`)
         : `Absence notice for ${name} on ${date} retired because enrollment ended.`;
 }
 async function transition(user, body, action, absenceId) {
@@ -96,7 +101,7 @@ async function transition(user, body, action, absenceId) {
   const c = await thread(user, riderId, driverId);
   const revision = action === 'ACKNOWLEDGED' ? existing.revision : (existing?.revision || 0) + 1;
   const eventId = `absence:${id(c)}:${date}:${revision}:${action}`;
-  const event = { eventId, requestId: body.requestId, requestHash, revision, action, text: transitionText(c.riderName, date, action), at: new Date(), pending: true };
+  const event = { eventId, requestId: body.requestId, requestHash, revision, action, text: transitionText(c.riderName, date, action, existing?.status), at: new Date(), pending: true };
   if (action === 'ACKNOWLEDGED' && existing.acknowledgedRevision === revision) return existing;
   const fields = action === 'ACKNOWLEDGED' ? { acknowledgedRevision: revision } : { status: action, revision, enrollmentId: enrollment._id };
   if (!existing) {

@@ -32,27 +32,49 @@ beforeEach(async () => {
   ]);
 });
 afterAll(closeTestDb);
-test('report → read → cancel → acknowledge is revisioned and sibling isolated', async () => {
+test('report → acknowledge → read → cancel → acknowledge is revisioned and sibling isolated', async () => {
   const response = await report(); expect(response.status).toBe(200);
   const a = response.body.data.results[0].absence;
   expect(a.status).toBe('ABSENT');
   await dispatch(); await dispatch();
   expect(await Message.countDocuments()).toBe(1);
+  // A fresh absence is something the driver has to answer, the same as a cancellation.
+  let list = (await get(`driver/absences?date=${today()}`, driver)).body.data;
+  expect(list.absentCount).toBe(1); expect(list.changes).toHaveLength(1); expect(list.changes[0].status).toBe('ABSENT');
   const message = await Message.findOne();
   await request(app).put(`/api/conversations/${a.conversationId}/read`).set(...authHeader(driver.token)).send({ throughMessageId: String(message._id) }).expect(200);
   expect((await Absence.findById(a._id)).acknowledgedRevision).toBe(0);
+  await post(`absences/${a._id}/acknowledge`, { requestId: 'ack-request-0001', expectedRevision: 1 }, driver).expect(200);
+  expect((await Absence.findById(a._id)).acknowledgedRevision).toBe(1);
+  list = (await get(`driver/absences?date=${today()}`, driver)).body.data;
+  expect(list.absentCount).toBe(1); expect(list.changes).toHaveLength(0);
   const cancelled = await post(`absences/${a._id}/cancel`, { requestId: 'cancel-0001', expectedRevision: 1 });
   expect(cancelled.body.data.revision).toBe(2);
-  let list = (await get(`driver/absences?date=${today()}`, driver)).body.data;
-  expect(list.absentCount).toBe(0); expect(list.changes).toHaveLength(1);
+  list = (await get(`driver/absences?date=${today()}`, driver)).body.data;
+  expect(list.absentCount).toBe(0); expect(list.changes).toHaveLength(1); expect(list.changes[0].status).toBe('CANCELLED');
   await post(`absences/${a._id}/acknowledge`, { requestId: 'ack-old-0001', expectedRevision: 1 }, driver).expect(409);
   await post(`absences/${a._id}/acknowledge`, { requestId: 'ack-new-0001', expectedRevision: 2 }, driver).expect(200);
   await dispatch();
   list = (await get('driver/absences', driver)).body.data;
   expect(list.changes).toHaveLength(0);
   expect(await Absence.countDocuments({ riderId: sibling._id })).toBe(0);
-  expect(await Message.countDocuments()).toBe(3);
-  expect((await Absence.findById(a._id)).history).toHaveLength(3);
+  expect(await Message.countDocuments()).toBe(4);
+  expect((await Absence.findById(a._id)).history).toHaveLength(4);
+});
+test('the acknowledgment notice says what the driver saw: the absence, or the cancellation', async () => {
+  const a = (await report()).body.data.results[0].absence;
+  await post(`absences/${a._id}/acknowledge`, { requestId: 'ack-request-0002', expectedRevision: 1 }, driver).expect(200);
+  await post(`absences/${a._id}/cancel`, { requestId: 'cancel-0002', expectedRevision: 1 });
+  await post(`absences/${a._id}/acknowledge`, { requestId: 'ack-cancel-0002', expectedRevision: 2 }, driver).expect(200);
+  await dispatch();
+  const acks = await Message.find({ absenceId: a._id, absenceStatus: 'ACKNOWLEDGED' }).sort({ revision: 1 });
+  expect(acks.map(m => m.text)).toEqual([
+    `Driver acknowledged that Amal will be absent on ${today()}.`,
+    `Driver acknowledged that Amal is coming on ${today()}.`,
+  ]);
+  // The rider's account gets each one as a notification, the same text.
+  const notices = await Notification.find({ userId: account.id, recipientRole: 'user', 'data.absenceId': String(a._id) }).sort({ 'data.revision': 1, createdAt: 1 });
+  expect(notices.map(n => n.message).filter(text => text.startsWith('Driver acknowledged'))).toEqual(acks.map(m => m.text));
 });
 test('concurrent requests and uncertain-response retries cannot duplicate a change', async () => {
   const results = await Promise.all([report(), report(), report()]);
