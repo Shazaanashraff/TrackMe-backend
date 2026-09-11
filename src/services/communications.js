@@ -7,6 +7,7 @@ const Driver = require('../models/Driver');
 const Notification = require('../models/Notification');
 const { ApiError } = require('../middleware/errorHandler');
 const { today, validateDate, canonical } = require('../utils/communicationTemplates');
+const { notificationCreated } = require('../utils/notificationEvents');
 const { SIGNUP_FIELDS } = require('../utils/enrollmentSchema');
 const { effectiveContactPhone, mapValuesToObject } = require('../utils/riders');
 const id = value => String(value?._id || value);
@@ -244,7 +245,8 @@ async function deliverMessage(m, io) {
     const fields = { eventId: `${m.eventId}:${role}`, userId: recipientId, recipientRole: role,
       studentId: c.riderId, type: 'COMMUNICATION', title: role === 'driver' ? c.riderName : c.driverName,
       message: m.text, data: { ...event, type: 'COMMUNICATION', studentId: id(c.riderId) }, expiresAt: null };
-    await upsert(Notification, { eventId: fields.eventId }, fields);
+    // upsert is a findOneAndUpdate, so the model's save hook does not fire here.
+    notificationCreated(await upsert(Notification, { eventId: fields.eventId }, fields));
     if (!m.announcementId) await queuePush({ eventId: fields.eventId, recipientId, role, title: fields.title, body: m.text, data: fields.data });
   }
   await Conversation.updateOne({ _id: c._id }, { $max: { updatedAt: m.createdAt } }, { timestamps: false });

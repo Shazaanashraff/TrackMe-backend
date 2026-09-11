@@ -240,3 +240,46 @@ describe('GET /api/notifications/count/unread', () => {
     expect(resY.body.unreadCount).toBe(1);
   });
 });
+
+// A client's unread badge moves on this event, so every new row must announce
+// itself to the recipient's room, and nothing else on the row may.
+describe('notification:new over the socket', () => {
+  let emit;
+  let to;
+  beforeEach(() => {
+    emit = jest.fn();
+    to = jest.spyOn(app.get('io'), 'to').mockReturnValue({ emit });
+  });
+  afterEach(() => to.mockRestore());
+
+  it('is emitted to the rider\'s room when a notification is created', async () => {
+    const created = await Notification.create({
+      userId: riderId, type: 'SYSTEM_ALERT', title: 'Hello', message: 'm', studentId: riderId
+    });
+
+    expect(to).toHaveBeenCalledWith(`student:${riderId}`);
+    expect(emit).toHaveBeenCalledWith('notification:new', expect.objectContaining({
+      notificationId: String(created._id), type: 'SYSTEM_ALERT', title: 'Hello', studentId: String(riderId)
+    }));
+  });
+
+  it('goes to the driver room for a driver recipient', async () => {
+    const created = await Notification.create({
+      userId: riderId, recipientRole: 'driver', type: 'SYSTEM_ALERT', title: 'Driver', message: 'm'
+    });
+    expect(to).toHaveBeenCalledWith(`driver:${riderId}`);
+    expect(emit).toHaveBeenCalledWith('notification:new', expect.objectContaining({ notificationId: String(created._id) }));
+  });
+
+  it('is not emitted again when the notification is read', async () => {
+    const created = await Notification.create({ userId: riderId, type: 'SYSTEM_ALERT', title: 'Once', message: 'm' });
+    emit.mockClear();
+    to.mockClear();
+
+    const res = await request(app)
+      .put(`/api/notifications/${created._id}/read`)
+      .set('Authorization', `Bearer ${riderToken}`);
+    expect(res.status).toBe(200);
+    expect(emit).not.toHaveBeenCalled();
+  });
+});

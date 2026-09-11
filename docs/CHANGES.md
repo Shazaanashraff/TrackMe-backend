@@ -23,6 +23,30 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-11 — `notification:new` socket event for the unread badge
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [docs/modules/NOTIFICATIONS.md](modules/NOTIFICATIONS.md), [docs/modules/REALTIME.md](modules/REALTIME.md)
+- **What changed:**
+  - New `src/utils/notificationEvents.js`: `bindIo(io)` (called from `server.js`) and
+    `notificationCreated(doc)`, which emits `notification:new` to `student:<userId>` or
+    `driver:<userId>` with `{ notificationId, type, title, studentId, createdAt }`.
+  - `models/Notification.js`: `pre('save')` stashes `isNew`, `post('save')` announces a new
+    row. Covers every `create()`/`save()` site.
+  - `services/communications.js` `deliverMessage`: announces explicitly, since its row is an
+    upsert that save hooks do not see.
+- **Why:** the passenger bell badge had no way to learn a notification arrived while the app
+  was open; on web there is no push at all. The badge now moves on this event.
+- **Contract impact:** additive socket event, documented in NOTIFICATIONS.md §2 and REALTIME.md.
+  Consumer: user-app `features/communications/provider.js` (invalidates its notification
+  queries on receipt).
+- **Tests:** `tests/integration/notifications.test.js` (3 new cases), `communications.test.js`
+  socket case extended. Run against the test Mongo on :27018: 43/43 across the two suites
+  plus `notifications-household`.
+- **Docs updated:** NOTIFICATIONS.md, REALTIME.md, TESTING_GUIDE.md row.
+- **Follow-ups / known issues:** none.
+
+---
+
 ## 2026-09-11 — `hasAvatar` and the rider avatar endpoint read a select:false field
 - **Branch:** feature/driver-rider-directory
 - **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)

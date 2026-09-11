@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const connectDB = require('./config/db');
 const setupSocket = require('./socket/socketHandler');
+const { bindIo } = require('./utils/notificationEvents');
 const { errorHandler } = require('./middleware/errorHandler');
 const { authLimiter, apiLimiter } = require('./middleware/rateLimiters');
 const ensureSuperAdminAccount = require('./utils/ensureSuperAdminAccount');
@@ -112,6 +113,7 @@ const bootstrap = async () => {
 // Exposed so route handlers (e.g. revoking a private-route member) can emit
 // socket events without importing the io instance directly.
 app.set('io', io);
+bindIo(io);
 
 // Security & Performance Middleware
 app.use(helmet({

@@ -137,11 +137,15 @@ test('authenticated socket receives stable private events, unrelated driver rece
   const sockets = [driver, secondDriver].map(actor => client(url, { auth: { token: actor.token }, transports: ['websocket'], forceNew: true }));
   try {
     await Promise.all(sockets.map(socket => new Promise((resolve, reject) => { socket.once('connection-success', resolve); socket.once('connect_error', reject); })));
-    const received = []; const foreign = [];
+    const received = []; const foreign = []; const notified = [];
     sockets[0].on('communication:event', e => received.push(e)); sockets[1].on('communication:event', e => foreign.push(e));
+    // The same delivery writes the driver a Notification row, and a client's
+    // unread badge moves on this announcement rather than on the message event.
+    sockets[0].on('notification:new', e => notified.push(e)); sockets[1].on('notification:new', e => foreign.push(e));
     await report(); await dispatch(app.get('io'));
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(received).toHaveLength(1); expect(received[0].riderId).toBe(String(amal._id)); expect(foreign).toHaveLength(0);
+    expect(notified).toHaveLength(1); expect(notified[0]).toMatchObject({ type: 'COMMUNICATION', studentId: String(amal._id) });
   } finally { sockets.forEach(socket => socket.disconnect()); await new Promise(resolve => app.server.close(resolve)); }
 });
 

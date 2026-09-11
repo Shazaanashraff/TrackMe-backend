@@ -46,6 +46,23 @@ All under `/api/notifications` (`src/routes/notificationRoutes.js`), all authent
 > `/read-all` is declared **after** `/:notificationId/read` but is a distinct literal path; keep
 > literal routes ordered so `:notificationId` can't swallow them.
 
+### Socket: `notification:new` (2026-09-11)
+
+Every newly stored `Notification` row is announced to its recipient's room so an open client can
+move its unread badge at once, without a push (web has none) or a foreground refetch:
+
+| Event | Emitted to | Payload |
+|---|---|---|
+| `notification:new` | `student:<userId>` for a rider (the same profile-id room every household socket joins), `driver:<userId>` for a driver | `{ notificationId, type, title, studentId, createdAt }` |
+
+The emit lives in `src/utils/notificationEvents.js` (`bindIo(io)` from `server.js`,
+`notificationCreated(doc)`). A `pre/post('save')` pair on the model calls it for every
+`create()`/`save()` — so none of the five creation sites had to change and a sixth cannot forget —
+and `services/communications.js` `deliverMessage` calls it explicitly, because its row goes in
+through `findOneAndUpdate` upsert, which save hooks never see. Reads (`markAsRead`,
+`markAllAsRead`) use `findOneAndUpdate`/`updateMany` and emit nothing; a client decrements its own
+badge optimistically and the count endpoint remains the truth.
+
 ## 3. Key files
 
 | File | Responsibility |
