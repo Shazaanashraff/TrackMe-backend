@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { notificationCreated } = require('../utils/notificationEvents');
 
 const notificationSchema = new mongoose.Schema({
   eventId: { type: String, unique: true, sparse: true },
@@ -67,5 +68,16 @@ notificationSchema.index({ userId: 1, isRead: 1 });
 notificationSchema.index({ userId: 1, createdAt: -1 });
 notificationSchema.index({ userId: 1, studentId: 1, createdAt: -1 });
 notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index
+
+// Every create()/save() announces the new row over the socket. Reads go
+// through findOneAndUpdate/updateMany and never come this way. `isNew` is
+// already false by post('save'), hence the pre() stash.
+notificationSchema.pre('save', function stashIsNew(next) {
+  this.$locals.wasNew = this.isNew;
+  next();
+});
+notificationSchema.post('save', function announce(doc) {
+  if (doc.$locals.wasNew) notificationCreated(doc);
+});
 
 module.exports = mongoose.model('Notification', notificationSchema);

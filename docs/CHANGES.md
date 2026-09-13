@@ -23,6 +23,156 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-09-12 — Drivers acknowledge absence requests too, and the notice says which
+- **Branch:** feature/absence-request-ack
+- **Modules touched:** [docs/modules/COMMUNICATIONS.md](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `GET /api/driver/absences` `changes` now includes unacknowledged ABSENT absences as well
+    as CANCELLED ones (`communicationController.listAbsences`). Shape unchanged.
+  - `transitionText` takes the absence's status at the moment of the ACKNOWLEDGED transition
+    and writes "Driver acknowledged that {rider} will be absent on {date}." or "Driver
+    acknowledged that {rider} is coming on {date}." instead of the one generic line.
+- **Why:** the driver's Home prompt only ever asked about cancellations, so a rider marking
+  themselves absent got no acknowledgment; and the rider-side notice could not say what had
+  been acknowledged.
+- **Contract impact:** `changes` contents widened (driver-app strip now branches on
+  `status`); ACKNOWLEDGED message/notification/push copy changed. driver-app
+  `docs/modules/COMMUNICATIONS.md` updated in the companion change.
+- **Tests:** `tests/integration/communications.test.js` — the revision case now acknowledges
+  the request before the cancellation (4 messages, 4 history entries); new case for the two
+  acknowledgment texts on `Message` and on the rider's `Notification` rows.
+- **Docs updated:** COMMUNICATIONS.md, TESTING_GUIDE.md row.
+- **Migration:** none.
+- **Follow-ups / known issues:** `Notification.data` is a typed subdocument and drops
+  `absenceStatus`/`text`/`sender` from the socket event; clients that need the status must
+  read the message text or the socket payload.
+
+## 2026-09-11 — Refuse to archive the last rider profile on an account
+- **Branch:** feature/rider-remove-guard
+- **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)
+- **What changed:** `archiveRider` (`DELETE /api/riders/:riderId`) counts the account's other
+  active riders and answers 409 `{ code: 'LAST_RIDER' }` when there are none. The `isSelf` row
+  is not special-cased: it is just the rider that shares the account's id, and it can be archived
+  like any other while another rider remains (`ensureLegacyRider` then falls back to the oldest
+  remaining active rider).
+- **Why:** riders on one account are siblings in one household, each with their own code, pass
+  and enrollments, so any of them should be removable; but with no active rider left
+  `findOwnedRider` without an id had nothing to fall back on.
+- **Contract impact:** new 409 `LAST_RIDER` on `DELETE /api/riders/:riderId`. user-app
+  `docs/modules/PROFILES.md` updated in the companion user-app change.
+- **Tests:** `tests/integration/rider-profiles.test.js` — setup moved to the `factories`
+  `createRider` (the direct `User.create` had no identity, so its login was a 401 and the suite
+  failed before this change); three new archive cases (added rider, self rider with another
+  present, last rider refused).
+- **Docs updated:** PROFILES.md row, TESTING_GUIDE.md row.
+- **Migration:** none.
+- **Follow-ups / known issues:** the local `trackme-mongo` container still publishes no host
+  port; the suites were run with `MONGODB_TEST_URI=mongodb://localhost:27018/trackme_test`.
+  `profiles.test.js` (3) and `qr-attendance.test.js` (16) fail before and after this change.
+
+## 2026-09-11 — `notification:new` socket event for the unread badge
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [docs/modules/NOTIFICATIONS.md](modules/NOTIFICATIONS.md), [docs/modules/REALTIME.md](modules/REALTIME.md)
+- **What changed:**
+  - New `src/utils/notificationEvents.js`: `bindIo(io)` (called from `server.js`) and
+    `notificationCreated(doc)`, which emits `notification:new` to `student:<userId>` or
+    `driver:<userId>` with `{ notificationId, type, title, studentId, createdAt }`.
+  - `models/Notification.js`: `pre('save')` stashes `isNew`, `post('save')` announces a new
+    row. Covers every `create()`/`save()` site.
+  - `services/communications.js` `deliverMessage`: announces explicitly, since its row is an
+    upsert that save hooks do not see.
+- **Why:** the passenger bell badge had no way to learn a notification arrived while the app
+  was open; on web there is no push at all. The badge now moves on this event.
+- **Contract impact:** additive socket event, documented in NOTIFICATIONS.md §2 and REALTIME.md.
+  Consumer: user-app `features/communications/provider.js` (invalidates its notification
+  queries on receipt).
+- **Tests:** `tests/integration/notifications.test.js` (3 new cases), `communications.test.js`
+  socket case extended. Run against the test Mongo on :27018: 43/43 across the two suites
+  plus `notifications-household`.
+- **Docs updated:** NOTIFICATIONS.md, REALTIME.md, TESTING_GUIDE.md row.
+- **Follow-ups / known issues:** none.
+
+---
+
+## 2026-09-11 — `hasAvatar` and the rider avatar endpoint read a select:false field
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [docs/modules/PROFILES.md](modules/PROFILES.md)
+- **What changed:**
+  - `utils/riders.js`: new `riderAvatarFlags(ids)` (MongoDB `$project` on `avatarUrl`, the
+    same shape as `services/communications.js` `avatarFlags`) and `publicRiders(riders,
+    account)`. `publicRider(rider, account, hasAvatar)` now takes the flag; it falls back to
+    the in-memory field only when the document carries one. `findOwnedRider` gains
+    `{ withAvatar: true }`.
+  - `studentController.js`: `listRiders` uses `publicRiders`; `updateRider` looks the flag up
+    when the request did not touch the picture; `createRider` passes it explicitly;
+    `getRiderAvatar` selects `+avatarUrl`.
+  - `enrollmentController.js` `resolveEnrollmentKey`: `rider`/`student` via `publicRiders`.
+- **Why:** the 2026-08-23 audit (d44cea3) made `RiderProfile.avatarUrl` `select: false` to keep
+  the base64 picture off every authenticated request, but `publicRider` kept deriving
+  `hasAvatar` from `rider.avatarUrl` and `getRiderAvatar` kept reading it. Since then
+  `GET /api/riders` answered `hasAvatar: false` for every rider and the avatar endpoint
+  answered `""`, so the passenger app showed initials for riders who have a picture while the
+  driver app (which aggregates) showed the photo. Found while making the driver app's three
+  rider surfaces agree.
+- **Contract impact:** none in shape; `GET /api/riders`, `PATCH /api/riders/:id`,
+  `POST /api/riders`, `POST /api/enrollments/resolve-key` and `GET /api/riders/:id/avatar` now
+  answer what their docs already promised. Consumer: user-app `features/profile/riderAvatarCache.ts`
+  (no change needed).
+- **Tests:** `tests/integration/rider-avatar.test.js` — 7 cases were failing on the pristine
+  tree (verified against the test Mongo on :27018); all pass, plus one new case for a rename
+  that leaves the picture alone. Its two direct DB reads now `select('+avatarUrl')`. Full
+  integration run: 855/914 → 860/915 passing; the remaining 55 failures are in 18 unrelated
+  suites and predate this change.
+- **Docs updated:** PROFILES.md, TESTING_GUIDE.md row.
+- **Follow-ups / known issues:** the driver app no longer shows rider pictures at all; the
+  driver roster still carries `hasAvatar`/`avatarVersion` and the driver avatar endpoint
+  remains for any other consumer.
+
+---
+
+## 2026-09-10 — A driver-scoped rider directory
+- **Branch:** feature/driver-rider-directory
+- **Modules touched:** [communications](modules/COMMUNICATIONS.md)
+- **What changed:**
+  - `GET /api/driver/riders` gains `category`, `grade` and `hasAvatar` — only what a
+    list row draws. `grade` is whitelisted through `SIGNUP_FIELDS`, so the organization's
+    own enrolment answers (admission and employee numbers, also in `details`) stay out.
+  - New `GET /api/driver/riders/:riderId` carries the contact number
+    (`guardianPhoneOverride`, else the account holder's, via the existing
+    `effectiveContactPhone`). Deliberately not on the roster: that list is polled every
+    30 s and this is read once, on a tap. **No home address** — the driver keeps seeing
+    `pickup.label` only.
+  - New `GET /api/driver/riders/:riderId/avatar` returns the picture alone, so a client
+    caches it against `avatarVersion` instead of refetching an unchanged face.
+  - Both new endpoints authorize on the caller's own ACTIVE enrollment and answer
+    **404, not 403**, so a driver cannot probe for rider ids.
+- **Why:** the driver app is replacing its Messages tab (riders have had no send path
+  since UserApp dropped its conversation screens) with a rider directory that opens a
+  rider profile.
+- **Contract impact:** additive only — three new fields on an existing driver endpoint
+  and two new driver-only GETs. Nothing removed, no status code changed. The consuming
+  app's doc is updated in the DriverApp change that follows.
+- **Tests:** `tests/integration/communications.test.js` — six new cases under
+  `driver rider directory`, including the authz matrix (foreign driver → 404, ended
+  enrollment → 404, `user` role → 403, unauthenticated → 401, malformed id → 400), the
+  `details` whitelist, and the phone fallback chain. 16/16 in that suite, stable across
+  repeated runs.
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md` (new "The driver's rider directory"
+  section, including the privacy note and why `hasAvatar` is an aggregation),
+  `docs/TESTING_GUIDE.md` row.
+- **Migration:** none. `scripts/seed-sandbox.js` needed no change — its rider is already
+  SCHOOL with `grade: '7'`, has no picture, and its account already carries
+  `phoneNumber`, so the sandbox exercises the grade row, the initials avatar and the
+  contact-number fallback as seeded.
+- **Follow-ups / known issues:** integration tests could not previously run here at all
+  (see `BLOCKED.md` — the dev Mongo container publishes no host port). They now run
+  against `scripts/start-mem-mongo.js` with `MONGODB_TEST_URI`, which needs no container
+  change; `BLOCKED.md` is updated. Note that the wider integration suite is
+  non-deterministic in this environment — the same three unrelated suites produced 22
+  then 34 failures on identical code — so it has no meaningful pass baseline here yet.
+
+---
+
 ## 2026-09-10 — communication:event / push data carry the message text
 
 - **Branch:** feature/comms-preset-trim

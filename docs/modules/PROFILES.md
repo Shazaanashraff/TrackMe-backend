@@ -52,7 +52,7 @@ requireUser`), with `/api/students` kept as a byte-identical legacy alias.
 | `GET` | `/api/riders/:riderId/avatar` | `getRiderAvatar` | One rider's picture as a data URL, plus its version. Its own request on purpose — see §8. |
 | `POST` | `/api/riders` | `createRider` | `fullName`, `contactPhone`, optional `category` + `details`, default places. |
 | `PATCH` | `/api/riders/:riderId` | `updateRider` | Same fields, plus `avatarUrl` (a data URL, or `''` to clear). **On the `isSelf` row it also writes `name` / `phoneNumber` to the `User` account** — see §8. |
-| `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete; 409 while an ACTIVE or PENDING enrolment exists. |
+| `DELETE` | `/api/riders/:riderId` | `archiveRider` | Soft delete. Any rider may go, the `isSelf` row included. 409 while an ACTIVE or PENDING enrolment exists; 409 `LAST_RIDER` when it is the only active rider on the account, so an account always keeps at least one. |
 
 ## 3. Key files (one job each)
 
@@ -160,6 +160,15 @@ flowchart TD
   off `/api/profiles`. Writes go through `validateAvatarDataUrl` (`utils/avatar.js`) at the same
   512 KB ceiling managed profiles use, and every write bumps `avatarVersion`, including a clear —
   that bump is what invalidates a client's cached copy.
+- **`hasAvatar` is answered by aggregation, not by reading the field.** `RiderProfile.avatarUrl`
+  is `select: false` (audit, 2026-08-23), so a document from `find()` carries no `avatarUrl` and
+  `Boolean(rider.avatarUrl)` reads false for everyone. `utils/riders.js` `riderAvatarFlags` projects
+  the flag inside MongoDB (the same trick the driver roster uses, `services/communications.js`
+  `avatarFlags`); `publicRiders` applies it to a list, and `publicRider` takes the flag as an
+  argument, falling back to the in-memory field only on a document that was just written with it.
+  `GET /api/riders/:riderId/avatar` opts back in with `findOwnedRider(..., { withAvatar: true })`.
+  Between the audit and 2026-09-11 both paths were broken: every list said `hasAvatar: false` and
+  the avatar endpoint answered `""`, so the passenger app showed initials for riders with pictures.
 - **A household is capped at 20 profiles** (`HOUSEHOLD_LIMIT` in `profileController.js`) — a
   sanity ceiling against a scripted caller, comfortably above any real family or small office.
 - **`scripts/migrate-rider-profiles.js`** is a real migration, not just a schema change: every

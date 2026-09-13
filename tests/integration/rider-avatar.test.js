@@ -75,7 +75,7 @@ describe('a rider picture', () => {
     expect(cleared.body.data).toMatchObject({ hasAvatar: false, avatarVersion: 3 });
     expect((await readAvatar()).body.data.avatarUrl).toBe('');
 
-    const stored = await RiderProfile.findById(riderId);
+    const stored = await RiderProfile.findById(riderId).select('+avatarUrl');
     expect(stored.avatarUrl).toBe('');
   });
 
@@ -87,9 +87,20 @@ describe('a rider picture', () => {
     expect(tooBig.status).toBe(413);
 
     // Neither attempt touched the rider.
-    const stored = await RiderProfile.findById(riderId);
+    const stored = await RiderProfile.findById(riderId).select('+avatarUrl');
     expect(stored.avatarUrl).toBe('');
     expect(stored.avatarVersion).toBe(3);
+  });
+
+  // The regression this guards: `avatarUrl` is select:false, so a PATCH that
+  // loads the rider for a rename never sees the picture and must not report it gone.
+  test('a change that leaves the picture alone still reports it', async () => {
+    await setAvatar(PNG);
+    const renamed = await request(app).patch(`/api/riders/${riderId}`).set(...auth).send({ fullName: 'Account Holder II' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.data).toMatchObject({ fullName: 'Account Holder II', hasAvatar: true });
+    expect((await listRiders()).body.data[0].hasAvatar).toBe(true);
+    await setAvatar('');
   });
 
   test('a rider can be created with a picture, and it is validated the same way', async () => {

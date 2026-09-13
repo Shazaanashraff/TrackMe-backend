@@ -10,6 +10,8 @@ const scope = user => ({ [user.role === 'driver' ? 'driverId' : 'accountId']: us
 const pageSize = req => Math.min(100, Math.max(1, Number(req.query.limit) || 50));
 exports.presets = handle(() => ({ presets: PRESETS, today: today(), timezone: 'Asia/Colombo' }));
 exports.audience = handle(req => s.audience(req.user, req.query.riderId));
+exports.riderDetail = handle(req => s.riderDetail(req.user, req.params.riderId));
+exports.riderAvatar = handle(req => s.riderAvatar(req.user, req.params.riderId));
 exports.createThread = handle(req => s.thread(req.user, req.body.riderId, req.user.role === 'driver' ? s.id(req.user) : req.body.driverId));
 exports.listThreads = handle(async req => {
   const filter = scope(req.user);
@@ -73,7 +75,8 @@ exports.listAbsences = handle(async req => {
   const rows = await Absence.find(filter).sort({ date: 1, updatedAt: -1 })
     .populate('riderId', 'fullName riderCode avatarVersion').populate('driverId', 'name')
     .populate({ path: 'enrollmentId', populate: [{ path: 'pickupPlaceId', select: 'label address' }, { path: 'driverId', select: 'organization', populate: { path: 'organization', select: 'name' } }] }).lean();
-  const changes = req.user.role === 'driver' ? await Absence.find({ driverId: req.user._id, date: { $gte: today() }, status: 'CANCELLED', $expr: { $lt: ['$acknowledgedRevision', '$revision'] } }).populate('riderId', 'fullName riderCode').sort({ date: 1, updatedAt: 1 }).lean() : [];
+  // What the driver still has to answer: a fresh absence as much as a cancellation.
+  const changes = req.user.role === 'driver' ? await Absence.find({ driverId: req.user._id, date: { $gte: today() }, status: { $in: ['ABSENT', 'CANCELLED'] }, $expr: { $lt: ['$acknowledgedRevision', '$revision'] } }).populate('riderId', 'fullName riderCode').sort({ date: 1, updatedAt: 1 }).lean() : [];
   return { rows, changes, absentCount: rows.filter(r => r.status === 'ABSENT').length, refreshedAt: new Date(), today: today() };
 });
 exports.announce = handle(req => s.announce(req.user, req.body));

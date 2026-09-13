@@ -62,6 +62,7 @@ Unchanged from before: `join-route`, `leave-route` — QR attendance only, untou
 | `connection-success` | the socket | after successful auth |
 | `route-joined` | the socket | ack of `join-route` |
 | `attendance:event` | `route:<routeId>` and `student:<id>` | see [`QR_ATTENDANCE.md`](QR_ATTENDANCE.md) |
+| `notification:new` | `student:<userId>` (rider) or `driver:<userId>` | `{ notificationId, type, title, studentId, createdAt }` on every stored `Notification` row — see [`NOTIFICATIONS.md`](NOTIFICATIONS.md) §2 |
 | `vehicle:update` | `vehicle:<vehicleId>` | every **accepted** `driver:location` — see payload below |
 | `vehicle:status` | `vehicle:<vehicleId>` | `{ vehicleId, live, reason, at }` — `reason` is one of `DRIVER_STARTED` \| `DRIVER_STOPPED` \| `DRIVER_DISCONNECTED` \| `STALE_TIMEOUT` |
 | `vehicle:access-revoked` | `vehicle:<vehicleId>` | `{ vehicleId, riderId }` — emitted when a rider's ACTIVE enrolment is removed (`DELETE /api/enrollments/:id`); tells a watching socket to leave, since there is no other trigger that would make it stop |

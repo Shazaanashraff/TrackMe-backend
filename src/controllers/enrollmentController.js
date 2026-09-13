@@ -15,7 +15,7 @@ const {
   assertOwnedPlaces,
   effectiveContactPhone,
   validContactPhone,
-  publicRider,
+  publicRiders,
   mapValuesToObject
 } = require('../utils/riders');
 const { riderRoleForResolvedService } = require('../utils/riderRole');
@@ -407,12 +407,13 @@ exports.resolveEnrollmentKey = async (req, res, next) => {
     if (context.error) return res.status(context.error.status).json({ success: false, message: context.error.message });
     const config = context.organization ? normalizedEnrollmentConfig(context.organization) : { schemaVersion: 1, fields: [] };
     const enabledFields = config.fields.filter((field) => field.enabled);
+    const [rider] = await publicRiders([context.rider], req.user);
     return res.status(200).json({
       success: true,
       data: {
-        rider: publicRider(context.rider, req.user),
+        rider,
         // Compatibility for clients released before rider-neutral terminology.
-        student: publicRider(context.rider, req.user),
+        student: rider,
         driver: driverSummary(context.driver, context.organization, context.vehicle, false),
         schemaVersion: config.schemaVersion,
         fields: enabledFields,
