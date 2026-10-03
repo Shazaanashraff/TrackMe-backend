@@ -20,7 +20,8 @@ const notificationSchema = new mongoose.Schema({
     enum: [
       'VEHICLE_ARRIVAL', 'VEHICLE_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
       'ROUTE_ACCESS_REQUEST', 'ROUTE_ACCESS_APPROVED', 'ROUTE_ACCESS_REJECTED', 'ROUTE_ACCESS_REVOKED',
-      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT', 'COMMUNICATION'
+      'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT', 'COMMUNICATION',
+      'APP_UPDATE_AVAILABLE'
     ],
     required: [true, 'Notification type is required']
   },
@@ -43,7 +44,9 @@ const notificationSchema = new mongoose.Schema({
     absenceId: String,
     revision: Number,
     eventId: String,
-    type: { type: String }
+    type: { type: String },
+    version: String,
+    downloadUrl: String
   },
   isRead: {
     type: Boolean,

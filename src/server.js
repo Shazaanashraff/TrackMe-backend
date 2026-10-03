@@ -35,6 +35,7 @@ const studentRoutes = require('./routes/studentRoutes');
 const riderRoutes = require('./routes/riderRoutes');
 const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
 const communicationRoutes = require('./routes/communicationRoutes');
+const appReleaseRoutes = require('./routes/appReleaseRoutes');
 
 // Initialize Express app
 const app = express();
@@ -170,6 +171,7 @@ app.use('/api/driver/boarding', driverBoardingRoutes);
 // Mounted after the more specific driver routers above; this one owns what is
 // left under /api/driver, so a new sub-router must be added before it.
 app.use('/api/driver', driverAccountRoutes);
+app.use('/api/app-releases', appReleaseRoutes);
 
 // Health check endpoint (services receiving requests = keep-alive friendly).
 // mode/dbName let the Developer page's sandbox badge reflect what the server actually

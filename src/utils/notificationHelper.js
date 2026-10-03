@@ -1,6 +1,11 @@
 // Utility functions for notifications
 
+const { Expo } = require('expo-server-sdk');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
+const Driver = require('../models/Driver');
+
+const expo = new Expo();
 
 /**
  * Create a notification for a user
@@ -93,10 +98,11 @@ exports.notifySystemAlert = async (userId, title, message) => {
 /**
  * Batch create notifications for multiple users
  */
-exports.batchCreateNotifications = async (userIds, type, title, message, data = {}) => {
+exports.batchCreateNotifications = async (userIds, type, title, message, data = {}, recipientRole = 'user') => {
   try {
     const notifications = userIds.map(userId => ({
       userId,
+      recipientRole,
       type,
       title,
       message,
@@ -109,6 +115,63 @@ exports.batchCreateNotifications = async (userIds, type, title, message, data = 
   } catch (error) {
     console.error('Error batch creating notifications:', error);
     return [];
+  }
+};
+
+/**
+ * Notify every account of the given app ('driver' or 'rider') that a new
+ * build is available. Used for iOS releases only — iOS has no in-app update
+ * check, so this notification + push is the sole way those users learn a new
+ * build exists (Android gets the in-app automatic-update flow instead).
+ *
+ * Fires for every account regardless of which platform the account actually
+ * runs — there is no platform field on stored push tokens today, so an
+ * Android user with no iOS device also gets this. Harmless: they already have
+ * the in-app update flow, so the push is simply redundant for them.
+ */
+exports.notifyAppUpdateAvailable = async ({ app, version, downloadUrl }) => {
+  const Model = app === 'driver' ? Driver : User;
+  const recipientRole = app === 'driver' ? 'driver' : 'user';
+
+  const accounts = await Model.find({}).select('_id pushTokens').lean();
+  if (accounts.length === 0) {
+    return { notified: 0, sent: 0 };
+  }
+
+  const title = 'New version available';
+  const message = `A new TrackMe ${app} app build (v${version}) is available. Visit the website to download it.`;
+  const data = { version, downloadUrl, priority: 'LOW' };
+
+  const userIds = accounts.map((account) => account._id);
+  await exports.batchCreateNotifications(userIds, 'APP_UPDATE_AVAILABLE', title, message, data, recipientRole);
+
+  try {
+    const tokens = [...new Set(accounts.flatMap((account) => (Array.isArray(account.pushTokens) ? account.pushTokens : [])))]
+      .filter((token) => Expo.isExpoPushToken(token));
+
+    if (tokens.length === 0) {
+      return { notified: userIds.length, sent: 0, skipped: 'NO_TOKENS' };
+    }
+
+    const messages = tokens.map((to) => ({
+      to,
+      sound: 'default',
+      title,
+      body: message,
+      data: { type: 'APP_UPDATE_AVAILABLE', version, downloadUrl }
+    }));
+
+    const chunks = expo.chunkPushNotifications(messages);
+    const tickets = [];
+    for (const chunk of chunks) {
+      // eslint-disable-next-line no-await-in-loop
+      const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+      tickets.push(...ticketChunk);
+    }
+    return { notified: userIds.length, sent: tickets.length, tickets };
+  } catch (error) {
+    console.error('Error sending Expo push for app update notification:', error.message);
+    return { notified: userIds.length, sent: 0, error: error.message };
   }
 };
 

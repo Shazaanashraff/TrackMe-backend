@@ -47,6 +47,7 @@ git config core.hooksPath .githooks
 | Manager / super-admin accounts, audit log | [`docs/modules/ADMIN.md`](docs/modules/ADMIN.md) |
 | Driver accounts + earnings | [`docs/modules/DRIVER.md`](docs/modules/DRIVER.md) |
 | ETA, transit planning, places, walking paths | [`docs/modules/ETA_TRANSIT.md`](docs/modules/ETA_TRANSIT.md) |
+| Mobile app update check + super-admin release publishing | [`docs/modules/APP_RELEASES.md`](docs/modules/APP_RELEASES.md) |
 | Test coverage + traceability | [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md) |
 | What triggers a doc/test update | [`docs/QA_UPDATE_TRIGGERS.md`](docs/QA_UPDATE_TRIGGERS.md) |
 
@@ -77,7 +78,7 @@ src/
 `/api/auth` · `/api/bus` · `/api/routes` · `/api/notifications` · `/api/eta` · `/api/bookings`
 · `/api/driver-earnings` · `/api/super-admin` · `/api/manager` · `/api/bus-reviews`
 · `/api/places` · `/api/transit` · `/api/custom-routes` · `/api/qr` · `/api/attendance`
-· driver boarding routes. Health: `GET /health`.
+· `/api/app-releases` · driver boarding routes. Health: `GET /health`.
 
 ### Accounts are four collections, not one
 

@@ -23,6 +23,54 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-02 — App release / version control (new module)
+- **Branch:** claude/trackme-audit-continuation-mhff9p
+- **Modules touched:** app-releases (new) — [`docs/modules/APP_RELEASES.md`](modules/APP_RELEASES.md);
+  touches `Notification` (new enum value + two new `data` fields).
+- **What changed:**
+  - New `AppRelease` model (`app`: driver/rider, `platform`: android/ios, `version`, `versionCode`,
+    `downloadUrl`, `releaseNotes`, `mandatory`, `fileSizeBytes`, `isActive`).
+  - New `appReleaseController.js`: `listLatest` (public, one row per app+platform via aggregation),
+    `getLatestForTarget` (public, `?app=&platform=`), `listHistory` (super-admin), `createRelease`
+    (super-admin; deactivates the prior active row for the same app+platform; fires a notification
+    hook for iOS publishes), `updateReleaseStatus` (super-admin; PATCH isActive toggle).
+  - New `appReleaseRoutes.js`, mounted at `/api/app-releases` in `server.js`.
+  - `notificationHelper.js`: added `notifyAppUpdateAvailable({ app, version, downloadUrl })` —
+    writes an `APP_UPDATE_AVAILABLE` notification to every account of the target app
+    (`User` for rider, `Driver` for driver) and sends a matching Expo push to every valid token
+    across those accounts, copying `pushHelper.sendBoardingPush`'s chunking/ticket style.
+    `batchCreateNotifications` gained an optional `recipientRole` param (defaults to `'user'`,
+    backward compatible) so this could set `'driver'` correctly.
+  - `Notification` model: added `APP_UPDATE_AVAILABLE` to the `type` enum, and `version`/
+    `downloadUrl` to the `data` sub-schema (previously a fixed field list that would have silently
+    dropped these).
+- **Why:** mobile apps (driver-app, user-app) need an update-check contract; web-admin needs a way
+  for super-admins to publish releases. iOS gets no in-app check (Apple review constraints), so an
+  iOS publish instead notifies+pushes iOS users to find the update themselves. Built as one of four
+  parallel workstreams (backend/web-admin/driver-app/user-app) against a shared contract.
+- **Contract impact:** net-new endpoints, no existing shape changed. Final routes:
+  `GET /api/app-releases` (public), `GET /api/app-releases/latest?app=&platform=` (public),
+  `GET /api/app-releases/history?app=` (super-admin), `POST /api/app-releases` (super-admin),
+  `PATCH /api/app-releases/:id` (super-admin). The three consuming apps build against this exact
+  shape — see `docs/modules/APP_RELEASES.md` §2.
+- **Tests:** added `tests/integration/app-releases.test.js` (model validation, both public read
+  endpoints, super-admin authz on history/create/patch, create validation, deactivate-prior-active,
+  iOS-triggers/android-doesn't-trigger the notification hook, notification-failure doesn't fail the
+  request, patch toggles isActive — 28 cases) and `tests/integration/app-release-notify.test.js`
+  (notifyAppUpdateAvailable against the real DB + a mocked Expo SDK — 4 cases). All green against
+  `scripts/start-mem-mongo.js`.
+- **Docs updated:** new `docs/modules/APP_RELEASES.md`; this `CHANGES.md` entry;
+  `docs/TESTING_GUIDE.md` new "App Releases" section; `docs/README.md` module index.
+- **Migration:** none — new collection, nothing to backfill.
+- **Follow-ups / known issues:** no platform field on stored push tokens, so the iOS-publish
+  notification/push fans out to every account of the app regardless of actual device platform
+  (documented as a known simplification in §7 of the module doc — harmless since Android users
+  already have the in-app update flow). The "exactly one isActive per app+platform" invariant is
+  enforced by the controller, not a unique index — a script bypassing `createRelease` could violate
+  it.
+
+---
+
 ## 2026-09-12 — Drivers acknowledge absence requests too, and the notice says which
 - **Branch:** feature/absence-request-ack
 - **Modules touched:** [docs/modules/COMMUNICATIONS.md](modules/COMMUNICATIONS.md)
