@@ -19,6 +19,8 @@ cross-cutting reference.
   join approval, membership, socket enforcement.
 - **[modules/SANDBOX.md](modules/SANDBOX.md)** — Developer Mode's second backend process +
   disposable database, seed script, `/health` mode reporting.
+- **[modules/APP_RELEASES.md](modules/APP_RELEASES.md)** — mobile app update check (driver-app,
+  user-app) + super-admin publish/history from web-admin; iOS notification-only fallback.
 
 The rest exist as **stubs** — the code ships, the doc doesn't yet. Each names its source files
 and must be filled in from the template as part of the next change touching it:
