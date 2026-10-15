@@ -13,6 +13,22 @@ describe('CORS allowlist', () => {
     expect(res.headers['access-control-allow-origin']).toBe('https://allowed.example.com');
   });
 
+  it.each(['https://pingo.lk', 'https://www.pingo.lk', 'https://admin.pingo.lk'])(
+    'always allows the pingo.lk production origin %s',
+    async (origin) => {
+      const res = await request(app).get('/health').set('Origin', origin);
+      expect(res.headers['access-control-allow-origin']).toBe(origin);
+    }
+  );
+
+  it.each(['http://pingo.lk', 'https://pingo.lk.evil.com', 'https://evilpingo.lk'])(
+    'rejects look-alike origin %s',
+    async (origin) => {
+      const res = await request(app).get('/health').set('Origin', origin);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    }
+  );
+
   it('omits Access-Control-Allow-Origin for a disallowed origin, without failing the request', async () => {
     const res = await request(app).get('/health').set('Origin', 'https://evil.example.com');
     // The server still answers normally (non-browser callers aren't blocked

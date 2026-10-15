@@ -52,8 +52,11 @@ const allowedOrigins = allowAllOrigins
 if (process.env.NODE_ENV === 'production' && allowAllOrigins) {
   console.warn('⚠️  WARNING: Running in production without explicit CLIENT_ORIGINS whitelist.');
 }
+// The production web domain is always allowed (apex + any subdomain, https only) so a
+// CLIENT_ORIGINS that forgets it can't lock the deployed web-admin out.
+const PINGO_ORIGIN_PATTERN = /^https:\/\/([a-z0-9-]+\.)*pingo\.lk$/i;
 const isOriginAllowed = (origin) =>
-  allowAllOrigins || !origin || allowedOrigins.includes(origin);
+  allowAllOrigins || !origin || PINGO_ORIGIN_PATTERN.test(origin) || allowedOrigins.includes(origin);
 
 // No Origin header (server-to-server, curl, native apps) is let through either
 // way — only browser-sent cross-origin requests carry Origin, and this
