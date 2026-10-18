@@ -43,3 +43,59 @@ describe('CORS allowlist', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('Socket.IO handshake origin', () => {
+  const { io: ioClient } = require('socket.io-client');
+  const { server } = require('../../src/server');
+  let port;
+
+  beforeAll(async () => {
+    await new Promise((resolve) => server.listen(0, resolve));
+    port = server.address().port;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  // Resolves with the handshake's connect_error message. A dummy token gets as
+  // far as auth ("Invalid token: jwt malformed"); an origin the CORS check
+  // refuses never reaches auth and fails the WebSocket upgrade instead.
+  const handshake = (origin) =>
+    new Promise((resolve) => {
+      const client = ioClient(`http://localhost:${port}`, {
+        transports: ['websocket'],
+        auth: { token: 'not-a-real-token' },
+        reconnection: false,
+        forceNew: true,
+        ...(origin ? { extraHeaders: { origin } } : {}),
+      });
+      client.on('connect_error', (error) => {
+        client.close();
+        resolve(error.message);
+      });
+    });
+
+  it('lets a same-origin handshake reach auth, which is what the React Native apps send', async () => {
+    expect(await handshake(`http://localhost:${port}`)).toBe('Invalid token: jwt malformed');
+  });
+
+  it.each([
+    ['an allowlisted origin', 'https://allowed.example.com'],
+    ['the pingo.lk production origin', 'https://admin.pingo.lk'],
+  ])('lets %s reach auth', async (_label, origin) => {
+    expect(await handshake(origin)).toBe('Invalid token: jwt malformed');
+  });
+
+  it('lets a handshake with no Origin reach auth', async () => {
+    expect(await handshake()).toBe('Invalid token: jwt malformed');
+  });
+
+  it('refuses a foreign origin before auth', async () => {
+    expect(await handshake('https://evil.example.com')).toBe('websocket error');
+  });
+
+  it('refuses an origin that only borrows the host name inside a longer one', async () => {
+    expect(await handshake(`http://localhost.evil.example.com:${port}`)).toBe('websocket error');
+  });
+});
