@@ -23,6 +23,25 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-18: Let the phone apps' live connection through the origin check
+- **Branch:** feature/socket-same-origin
+- **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md)), `src/server.js`
+- **What changed:** the Socket.IO CORS check is now a per-request options delegate
+  (`socketCorsOptions`) that also allows a same-origin handshake, where the Origin's host equals
+  the request's `Host`. Express CORS is unchanged.
+- **Why:** on real phones GO stayed on "Offline, will sync later" and the passenger map on
+  "Connecting...". React Native's Android WebSocket sends `Origin: <the URL it connects to>`, and
+  Render's `CLIENT_ORIGINS` lists only the web origins, so engine.io refused the upgrade with a 400
+  before auth. A probe with the phone's Origin reproduced it; without an Origin it reached auth.
+- **Contract impact:** none. The apps send what they always sent; the server now accepts it.
+- **Tests:** tests/integration/cors-allowlist.test.js gains 6 real handshake cases, including the
+  foreign and look-alike refusals. The same-origin case fails on the old code with
+  `websocket error`.
+- **Docs updated:** REALTIME.md §5 (handshake origin) and §11, TESTING_GUIDE row.
+- **Migration:** none. Render picks it up on deploy; the backend's URL does not need adding to
+  `CLIENT_ORIGINS`.
+- **Follow-ups / known issues:** none.
+
 ## 2026-10-02 — App release / version control (new module)
 - **Branch:** claude/trackme-audit-continuation-mhff9p
 - **Modules touched:** app-releases (new) — [`docs/modules/APP_RELEASES.md`](modules/APP_RELEASES.md);

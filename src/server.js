@@ -70,8 +70,29 @@ const expressCorsOriginCheck = (origin, callback) => callback(null, isOriginAllo
 
 // Socket.IO: reject by erroring the handshake outright — there's no
 // "let it through without headers" equivalent for a persistent connection.
-const socketCorsOriginCheck = (origin, callback) => {
-  if (isOriginAllowed(origin)) return callback(null, true);
+//
+// A same-origin handshake is always allowed. React Native's Android WebSocket
+// adds `Origin: <the URL it connects to>` by itself (WebSocketModule.kt), so the
+// passenger and driver apps arrive carrying this server's own origin. That is
+// not a cross-origin request and no page on another site can send it, so it
+// passes whatever CLIENT_ORIGINS lists. Without this, Render refused both apps
+// with a 400 before auth while allowlisted browsers connected fine.
+const isSameOrigin = (origin, host) => {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host.toLowerCase() === String(host).toLowerCase();
+  } catch {
+    return false;
+  }
+};
+
+// The cors package accepts a per-request options delegate, which is what lets
+// this check see the Host header; engine.io runs it on the WebSocket upgrade.
+const socketCorsOptions = (req, callback) => {
+  const { origin, host } = req.headers;
+  if (isOriginAllowed(origin) || isSameOrigin(origin, host)) {
+    return callback(null, { origin: true, methods: ['GET', 'POST'] });
+  }
   return callback(new Error(`Origin not allowed: ${origin}`));
 };
 
@@ -81,10 +102,7 @@ app.set('trust proxy', 1);
 
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
-  cors: {
-    origin: socketCorsOriginCheck,
-    methods: ['GET', 'POST']
-  }
+  cors: socketCorsOptions
 });
 
 // Startup state tracking for non-blocking initialization
