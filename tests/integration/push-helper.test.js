@@ -16,7 +16,7 @@ jest.mock('expo-server-sdk', () => {
 
 describe('pushHelper.sendBoardingPush', () => {
   it('skips delivery when the user has no Expo push tokens', async () => {
-    const result = await sendBoardingPush({ pushTokens: [] }, { type: 'BOARD', timestamp: Date.now(), _id: 'e1' }, 'Vehicle 1');
+    const result = await sendBoardingPush({ pushTokens: [] }, null, { type: 'BOARD', timestamp: Date.now(), _id: 'e1' }, 'Vehicle 1');
     expect(result).toEqual({ sent: 0, skipped: 'NO_TOKENS' });
   });
 
@@ -27,12 +27,14 @@ describe('pushHelper.sendBoardingPush', () => {
     const user = { name: 'Rider', pushTokens: ['not-a-token', 'ExponentPushToken[abc123]'] };
     const event = { type: 'BOARD', timestamp: Date.now(), _id: 'e2', routeId: 'r1', vehicleId: 'b1' };
 
-    const result = await sendBoardingPush(user, event, 'Vehicle 1');
+    const result = await sendBoardingPush(user, user, event, 'Vehicle 1');
 
     expect(__mockSendPushNotificationsAsync).toHaveBeenCalledTimes(1);
     const [sentMessages] = __mockSendPushNotificationsAsync.mock.calls[0];
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0].to).toBe('ExponentPushToken[abc123]');
+    // Android shows a heads-up popup only on the app's high-importance channel.
+    expect(sentMessages[0].channelId).toBe('communications');
     expect(result.sent).toBe(1);
   });
 
@@ -43,7 +45,7 @@ describe('pushHelper.sendBoardingPush', () => {
     const user = { name: 'Rider', pushTokens: ['ExponentPushToken[abc123]'] };
     const event = { type: 'ALIGHT', timestamp: Date.now(), _id: 'e3', routeId: 'r1', vehicleId: 'b1' };
 
-    const result = await sendBoardingPush(user, event, 'Vehicle 1');
+    const result = await sendBoardingPush(user, user, event, 'Vehicle 1');
     expect(result).toEqual({ sent: 0, error: 'network down' });
   });
 });

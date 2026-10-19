@@ -44,7 +44,7 @@ describe('sendBoardingPush across a household', () => {
       name: 'Child', identityId: identity._id, profileKind: 'MANAGED', pushTokens: []
     });
 
-    const result = await sendBoardingPush(child, event, 'Shuttle 1');
+    const result = await sendBoardingPush(child, child, event, 'Shuttle 1');
 
     const { __mockSendPushNotificationsAsync } = require('expo-server-sdk');
     expect(result.sent).toBe(1);
@@ -65,7 +65,7 @@ describe('sendBoardingPush across a household', () => {
       pushTokens: ['ExponentPushToken[device-a]'] // duplicate of the parent's — should collapse
     });
 
-    await sendBoardingPush(parent, event, 'Shuttle 1');
+    await sendBoardingPush(parent, parent, event, 'Shuttle 1');
 
     const { __mockSendPushNotificationsAsync } = require('expo-server-sdk');
     const [sentMessages] = __mockSendPushNotificationsAsync.mock.calls[0];
@@ -82,7 +82,7 @@ describe('sendBoardingPush across a household', () => {
     await User.create({ name: 'Parent', identityId: identity._id, email: identity.email, profileKind: 'PRIMARY' });
     const child = await User.create({ name: 'Child', identityId: identity._id, profileKind: 'MANAGED' });
 
-    const result = await sendBoardingPush(child, event, 'Shuttle 1');
+    const result = await sendBoardingPush(child, child, event, 'Shuttle 1');
     expect(result).toEqual({ sent: 0, skipped: 'NO_TOKENS' });
   });
 });
