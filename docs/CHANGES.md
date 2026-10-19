@@ -23,6 +23,24 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-19: Label socket handshake failures honestly
+- **Branch:** feature/socket-auth-errors
+- **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md)), `src/socket/socketHandler.js`
+- **What changed:** the handshake middleware answers `Invalid token: ...` only for `jwt.verify`
+  failures and the existing account checks. Any other error (the account lookup failing) is
+  logged and answers `Server unavailable`.
+- **Why:** every failure, database errors included, said "Invalid token", so both apps refreshed
+  tokens on a server problem instead of retrying the connection.
+- **Contract impact:** the `connect_error` message for a non-token failure changes from
+  `Invalid token: <message>` to `Server unavailable`. Both apps already treat it as a retry, not a
+  refresh: user-app `LIVE_MAP.md`, driver-app `LOCATION_TRACKING.md`.
+- **Tests:** tests/unit/socket-auth-errors.test.js (new, 5, no database). The database-error case
+  fails on the old code.
+- **Docs updated:** REALTIME.md §5 and §11, TESTING_GUIDE row.
+- **Migration:** none.
+- **Follow-ups / known issues:** the Mongo-backed ws suites were not run this session (Docker
+  Desktop was not running); none of them assert on the handshake message.
+
 ## 2026-10-18: Let the phone apps' live connection through the origin check
 - **Branch:** feature/socket-same-origin
 - **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md)), `src/server.js`

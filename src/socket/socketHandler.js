@@ -19,6 +19,9 @@ const liveVehicles = require('../utils/liveVehicles');
 // module because it owns session state and a rate limiter, and mixing that in
 // here is what made the previous version 595 lines.
 
+// What jwt.verify throws for a bad, expired or not-yet-valid token.
+const JWT_ERRORS = new Set(['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError']);
+
 const SOCKET_DEBUG = process.env.SOCKET_DEBUG === '1';
 const debugLog = (...args) => {
   if (SOCKET_DEBUG) console.log(...args);
@@ -62,8 +65,16 @@ const setupSocket = (io) => {
       socket.userRole = decoded.role;
       next();
     } catch (error) {
-      console.error('❌ Token verification failed:', error.message);
-      next(new Error(`Invalid token: ${error.message}`));
+      // Only a token problem is a token problem. A database error used to be
+      // labelled "Invalid token" too, so the apps spent token refreshes on a
+      // server hiccup; "Server unavailable" makes them retry the connection
+      // with the token they have.
+      if (JWT_ERRORS.has(error?.name)) {
+        console.error('❌ Token verification failed:', error.message);
+        return next(new Error(`Invalid token: ${error.message}`));
+      }
+      console.error('❌ Socket auth lookup failed:', error?.message || error);
+      next(new Error('Server unavailable'));
     }
   });
 
