@@ -23,6 +23,37 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-19: Deliver messages the moment they are written, in a fixed number of queries
+- **Branch:** feature/fast-delivery
+- **Modules touched:** communications ([`docs/modules/COMMUNICATIONS.md`](modules/COMMUNICATIONS.md) "Delivery speed"), notifications ([`docs/modules/NOTIFICATIONS.md`](modules/NOTIFICATIONS.md) §1, §2, §3), `src/services/communications.js`, `src/controllers/communicationController.js`, `src/utils/pushHelper.js`
+- **What changed:**
+  - A write that leaves something to deliver kicks the dispatcher (`kickDispatcher`), so it goes
+    out at once instead of on the next 3 s poll. The interval stays as the safety net.
+  - A dispatcher pass is batched (bulk reads and `bulkWrite`s): 18 queries for a 3-rider or a
+    9-rider broadcast, down from 46 and 118. Sockets are served before grouped pushes are queued,
+    and push runs in its own loop.
+  - The all-absences retire sweep runs once a minute, batched, instead of two queries per upcoming
+    absence on every pass. Absence report, cancel, acknowledge and broadcast requests read each
+    document once and send independent reads together (report: about 11 to 6 round trips).
+  - The boarding push sets `channelId: 'communications'` so Android shows it as a heads-up popup.
+- **Why:** users reported slow notifications and messages. Production costs about 230 ms per
+  database round trip (measured: one-query endpoint 0.52 s against 0.29 s for a no-query one),
+  and delivery waited for a 3 s poll and then made about 12 sequential queries per rider, so a
+  20-rider broadcast reached its last rider about a minute late and an absence took 8 to 13 s to
+  reach the driver.
+- **Contract impact:** `communication:event` is now emitted before the delivery's `Notification`
+  row is written; `notification:new` still follows once the row exists, and both apps already
+  refetch on both. Payloads unchanged. App docs updated in their own branches.
+- **Tests:** new `tests/integration/communications-delivery.test.js` (4; 3 fail on the old code).
+  `push-helper.test.js` and `push-helper-household.test.js` called `sendBoardingPush` with its old
+  three-argument signature and failed on main (4 failures); updated to the current signature, plus
+  a `channelId` assertion. Targeted run: 31 suites, 318 passed (baseline 310 passed, 4 failed).
+- **Docs updated:** `docs/modules/COMMUNICATIONS.md`, `docs/modules/NOTIFICATIONS.md`, `docs/TESTING_GUIDE.md`
+- **Migration:** none
+- **Follow-ups / known issues:** OS push still cannot reach Android devices until both app builds
+  carry Firebase (`google-services.json`) and both Expo projects hold an FCM V1 key. Moving the
+  database next to the server (Singapore) would cut the 230 ms per round trip itself.
+
 ## 2026-10-19: Rate-limit per account and per real client address
 - **Branch:** feature/rate-limit-client-key
 - **Modules touched:** auth ([`docs/modules/AUTH.md`](modules/AUTH.md) §6), `src/middleware/rateLimiters.js`

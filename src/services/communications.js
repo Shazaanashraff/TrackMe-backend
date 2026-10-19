@@ -44,10 +44,14 @@ async function thread(user, riderId, driverId) {
   if (!driver) throw new ApiError(403, 'Driver unavailable');
   return upsert(Conversation, { riderId, driverId }, { riderId, driverId, accountId: rider.accountId, riderName: rider.fullName, driverName: driver.name });
 }
+async function assertWritable(conversation) {
+  const [enrollment, rider] = await Promise.all([activeEnrollment(conversation.riderId, conversation.driverId), Rider.exists({ _id: conversation.riderId, isActive: true })]);
+  if (!enrollment || !rider) throw new ApiError(403, 'Enrollment ended. History is read-only.');
+}
 async function accessibleThread(user, conversationId, writable = false) {
   const conversation = await Conversation.findOne({ _id: objectId(conversationId), [user.role === 'driver' ? 'driverId' : 'accountId']: user._id });
   if (!conversation) throw new ApiError(404, 'Conversation not found');
-  if (writable && (!await activeEnrollment(conversation.riderId, conversation.driverId) || !await Rider.exists({ _id: conversation.riderId, isActive: true }))) throw new ApiError(403, 'Enrollment ended. History is read-only.');
+  if (writable) await assertWritable(conversation);
   return conversation;
 }
 async function createMessage(fields) {
@@ -62,8 +66,10 @@ async function send(user, conversationId, body) {
   const requestHash = hash([text, body.templateId || 'custom']);
   const existing = await Message.findOne({ eventId });
   if (existing) { sameRequest(existing, requestHash); return existing; }
-  await accessibleThread(user, conversationId, true);
-  return createMessage({ conversationId, eventId, requestHash, text, templateId: body.templateId || 'custom', sender: user.role });
+  await assertWritable(c);
+  const message = await createMessage({ conversationId, eventId, requestHash, text, templateId: body.templateId || 'custom', sender: user.role });
+  kickDispatcher();
+  return message;
 }
 // `status` is what the absence said when the driver acknowledged it, so the
 // rider's notice repeats the thing that was seen rather than a generic "change".
@@ -84,48 +90,73 @@ async function transition(user, body, action, absenceId) {
   const riderId = existing ? id(existing.riderId) : objectId(body.riderId);
   const driverId = existing ? id(existing.driverId) : objectId(body.driverId);
   const date = existing?.date || body.date;
-  if (action === 'ACKNOWLEDGED') {
-    if (user.role !== 'driver' || driverId !== id(user)) throw new ApiError(404, 'Absence not found');
-  } else await ownedRider(user, riderId, false);
-  if (!existing) existing = await Absence.findOne({ riderId, driverId, date });
+  if (action === 'ACKNOWLEDGED' && (user.role !== 'driver' || driverId !== id(user))) throw new ApiError(404, 'Absence not found');
+  // The rider is read once and reused for ownership, the active check and the
+  // thread below (it used to be three lookups), and independent reads go out
+  // together: each one is a round trip to the database.
+  const [rider, found] = await Promise.all([
+    Rider.findOne({ _id: riderId, ...(action === 'ACKNOWLEDGED' ? {} : { accountId: user._id }) }).select('fullName accountId isActive'),
+    existing || Absence.findOne({ riderId, driverId, date }),
+  ]);
+  if (action !== 'ACKNOWLEDGED' && (user.role !== 'user' || !rider)) throw new ApiError(404, 'Rider not found');
+  existing = found;
   const requestHash = hash([riderId, driverId, date, action, body.expectedRevision]);
   const replay = existing?.history.find(h => h.requestId === body.requestId);
   if (replay) { sameRequest(replay, requestHash); return existing; }
   validateDate(date);
-  const enrollment = await activeEnrollment(riderId, driverId);
-  if (!enrollment || !await Rider.exists({ _id: riderId, isActive: true })) throw new ApiError(403, 'Active enrollment is required');
+  const [enrollment, driver] = await Promise.all([
+    activeEnrollment(riderId, driverId),
+    Driver.findOne({ _id: driverId, isActive: { $ne: false } }).select('name'),
+  ]);
+  if (!enrollment || rider?.isActive !== true) throw new ApiError(403, 'Active enrollment is required');
   if ((existing?.revision || 0) !== body.expectedRevision) throw new ApiError(409, 'Absence changed. Refresh and review the latest revision.');
   if (action === 'ACKNOWLEDGED' && (existing?.status === 'RETIRED' || id(existing.enrollmentId) !== id(enrollment))) throw new ApiError(409, 'This notice is retired');
   if (action === 'CANCELLED' && existing?.status !== 'ABSENT') throw new ApiError(409, 'Only a current absence can be cancelled');
   if (action === 'ABSENT' && existing?.status === 'ABSENT' && id(existing.enrollmentId) === id(enrollment)) throw new ApiError(409, 'Rider is already absent on this date');
-  const c = await thread(user, riderId, driverId);
+  if (!driver) throw new ApiError(403, 'Driver unavailable');
+  const c = await upsert(Conversation, { riderId, driverId }, { riderId, driverId, accountId: rider.accountId, riderName: rider.fullName, driverName: driver.name });
   const revision = action === 'ACKNOWLEDGED' ? existing.revision : (existing?.revision || 0) + 1;
   const eventId = `absence:${id(c)}:${date}:${revision}:${action}`;
   const event = { eventId, requestId: body.requestId, requestHash, revision, action, text: transitionText(c.riderName, date, action, existing?.status), at: new Date(), pending: true };
   if (action === 'ACKNOWLEDGED' && existing.acknowledgedRevision === revision) return existing;
   const fields = action === 'ACKNOWLEDGED' ? { acknowledgedRevision: revision } : { status: action, revision, enrollmentId: enrollment._id };
   if (!existing) {
-    try { return await Absence.create({ riderId, driverId, accountId: c.accountId, conversationId: c._id, date, ...fields, history: [event] }); }
+    try { const created = await Absence.create({ riderId, driverId, accountId: c.accountId, conversationId: c._id, date, ...fields, history: [event] }); kickDispatcher(); return created; }
     catch (error) { if (error.code !== 11000) throw error; }
   } else {
     const result = await Absence.findOneAndUpdate({ _id: existing._id, revision: body.expectedRevision, ...(action === 'ACKNOWLEDGED' ? { acknowledgedRevision: { $lt: revision } } : {}) }, { $set: fields, $push: { history: event } }, { new: true });
-    if (result) return result;
+    if (result) { kickDispatcher(); return result; }
   }
   const latest = await Absence.findOne({ riderId, driverId, date });
   const repeated = latest?.history.find(h => h.requestId === body.requestId);
   if (repeated) { sameRequest(repeated, requestHash); return latest; }
   throw new ApiError(409, 'Absence changed. Refresh and review the latest revision.');
 }
+// Every query here costs a round trip to the database (~230 ms in production),
+// and this used to make two per upcoming absence on every dispatcher pass. The
+// checks are batched: one enrollment and one rider query for all of them.
 async function retireAbsences(filter = {}) {
-  const notices = await Absence.find({ ...filter, date: { $gte: today() }, status: { $ne: 'RETIRED' } });
-  for (const a of notices) {
-    if (await activeEnrollment(a.riderId, a.driverId, a.enrollmentId) && await Rider.exists({ _id: a.riderId, isActive: true })) continue;
-    const c = await Conversation.findById(a.conversationId);
+  const notices = await Absence.find({ ...filter, date: { $gte: today() }, status: { $ne: 'RETIRED' } }).lean();
+  if (!notices.length) return 0;
+  const riderIds = [...new Set(notices.map(a => id(a.riderId)))];
+  const [enrollments, riders] = await Promise.all([
+    Enrollment.find({ status: 'ACTIVE', studentId: { $in: riderIds }, driverId: { $in: [...new Set(notices.map(a => id(a.driverId)))] } }).select('_id studentId driverId').lean(),
+    Rider.find({ _id: { $in: riderIds }, isActive: true }).select('_id').lean(),
+  ]);
+  const active = new Set(riders.map(r => id(r)));
+  const live = a => enrollments.some(e => id(e.studentId) === id(a.riderId) && id(e.driverId) === id(a.driverId) && (!a.enrollmentId || id(e) === id(a.enrollmentId)));
+  const ended = notices.filter(a => !live(a) || !active.has(id(a.riderId)));
+  if (!ended.length) return 0;
+  const conversations = await Conversation.find({ _id: { $in: ended.map(a => a.conversationId) } }).select('riderName').lean();
+  const names = new Map(conversations.map(c => [id(c), c.riderName]));
+  await Absence.bulkWrite(ended.map(a => {
     const revision = a.revision + 1;
-    await Absence.updateOne({ _id: a._id, revision: a.revision }, { $set: { status: 'RETIRED', revision }, $push: { history: {
-      eventId: `absence:${id(a)}:${revision}:RETIRED`, revision, action: 'RETIRED', at: new Date(), pending: true, text: transitionText(c?.riderName || 'Rider', a.date, 'RETIRED'),
-    } } });
-  }
+    return { updateOne: { filter: { _id: a._id, revision: a.revision }, update: { $set: { status: 'RETIRED', revision }, $push: { history: {
+      eventId: `absence:${id(a)}:${revision}:RETIRED`, revision, action: 'RETIRED', at: new Date(), pending: true, text: transitionText(names.get(id(a.conversationId)) || 'Rider', a.date, 'RETIRED'),
+    } } } } };
+  }), { ordered: false });
+  kickDispatcher();
+  return ended.length;
 }
 // Only what account creation asks for this category is safe to hand a driver.
 // `details` also carries the organization's own enrolment answers — admission and
@@ -220,10 +251,14 @@ async function announce(user, body) {
   if (body.audience === 'selected' && !selected.length) throw new ApiError(400, 'Select at least one rider');
   const correctionOf = body.correctionOf ? objectId(body.correctionOf) : null;
   const requestHash = hash([text, date, body.audience, selected, correctionOf]);
-  const existing = await Announcement.findOne({ driverId: user._id, requestId: body.requestId });
+  // Read together, checked in the original order: each read is a round trip.
+  const [existing, original, enrollments] = await Promise.all([
+    Announcement.findOne({ driverId: user._id, requestId: body.requestId }),
+    correctionOf ? Announcement.exists({ _id: correctionOf, driverId: user._id }) : null,
+    Enrollment.find({ driverId: user._id, status: 'ACTIVE', ...(selected.length ? { studentId: { $in: selected } } : {}) }).populate('studentId', 'accountId isActive'),
+  ]);
   if (existing) { sameRequest(existing, requestHash); return existing; }
-  if (correctionOf && !await Announcement.exists({ _id: correctionOf, driverId: user._id })) throw new ApiError(404, 'Original announcement not found');
-  const enrollments = await Enrollment.find({ driverId: user._id, status: 'ACTIVE', ...(selected.length ? { studentId: { $in: selected } } : {}) }).populate('studentId', 'accountId isActive');
+  if (correctionOf && !original) throw new ApiError(404, 'Original announcement not found');
   const active = enrollments.filter(e => e.studentId?.isActive);
   if (!active.length || (selected.length && selected.length !== active.length)) throw new ApiError(409, 'Audience changed. Refresh riders and review again.');
   // The preview freezes the audience. Never silently add new enrollments at send time.
@@ -234,75 +269,185 @@ async function announce(user, body) {
     text, date, audience: body.audience, correctionOf,
     recipients: active.map(e => ({ riderId: e.studentId._id, accountId: e.studentId.accountId, enrollmentId: e._id, state: 'pending' })),
   });
-  sameRequest(result, requestHash); return result;
+  sameRequest(result, requestHash);
+  kickDispatcher();
+  return result;
 }
-async function queuePush(fields) { return upsert(PushDelivery, { eventId: fields.eventId }, fields); }
-async function deliverMessage(m, io) {
-  const c = await Conversation.findById(m.conversationId);
-  if (!c) return;
-  // `text`/`sender`/`absenceStatus` ride along so a client banner (or push data
-  // payload) can show the real copy — e.g. "Driver acknowledged the absence
-  // change for Amal on 2026-09-10." — without a round-trip fetch of the thread.
-  const event = { eventId: m.eventId, conversationId: id(c), riderId: id(c.riderId), absenceId: m.absenceId, revision: m.revision, text: m.text, sender: m.sender, absenceStatus: m.absenceStatus };
-  const roles = m.sender === 'system' ? ['user', 'driver'] : [m.sender === 'driver' ? 'user' : 'driver'];
-  for (const role of roles) {
-    const recipientId = role === 'driver' ? c.driverId : c.accountId;
-    const fields = { eventId: `${m.eventId}:${role}`, userId: recipientId, recipientRole: role,
-      studentId: c.riderId, type: 'COMMUNICATION', title: role === 'driver' ? c.riderName : c.driverName,
-      message: m.text, data: { ...event, type: 'COMMUNICATION', studentId: id(c.riderId) }, expiresAt: null };
-    // upsert is a findOneAndUpdate, so the model's save hook does not fire here.
-    notificationCreated(await upsert(Notification, { eventId: fields.eventId }, fields));
-    if (!m.announcementId) await queuePush({ eventId: fields.eventId, recipientId, role, title: fields.title, body: m.text, data: fields.data });
+// Each read or write below is a round trip to the database (~230 ms in
+// production). A pass used to make them one after another, about 8 per rider
+// for a broadcast and 4 to 6 per message, so a 20-rider broadcast reached its
+// last rider about a minute after it was sent. Each phase now costs a fixed
+// handful of bulk reads and writes, whatever the number of riders.
+const upsertOp = (filter, fields) => ({ updateOne: { filter, update: { $setOnInsert: fields }, upsert: true } });
+// bulkWrite twin of upsert(): a duplicate key means another writer inserted the
+// row first, which is what an upsert wants anyway. bulkWrite skips update
+// validators; every field here comes from documents validated when written.
+async function bulkUpsert(Model, ops) {
+  if (!ops.length) return null;
+  try { return await Model.bulkWrite(ops, { ordered: false }); } catch (error) {
+    const failures = [].concat(error.writeErrors || []);
+    if (!failures.length || failures.some(e => e.code !== 11000)) throw error;
+    return error.result;
   }
-  await Conversation.updateOne({ _id: c._id }, { $max: { updatedAt: m.createdAt } }, { timestamps: false });
-  io?.to(`account:${c.accountId}`).to(`driver:${c.driverId}`).emit('communication:event', event);
-  await Message.updateOne({ _id: m._id }, { $set: { deliveryPending: false } });
 }
-async function dispatch(io) {
-  await retireAbsences();
-  for (const a of await Absence.find({ 'history.pending': true }).limit(100)) {
-    for (const h of a.history.filter(h => h.pending)) {
-      await createMessage({ eventId: h.eventId, conversationId: a.conversationId, sender: 'system', text: h.text,
-        absenceId: a._id, revision: h.revision, absenceStatus: h.action, createdAt: h.at });
-      await Absence.updateOne({ _id: a._id, 'history.eventId': h.eventId }, { $set: { 'history.$.pending': false } });
+async function deliverMessages(messages, io) {
+  if (!messages.length) return;
+  const threads = await Conversation.find({ _id: { $in: [...new Set(messages.map(m => id(m.conversationId)))] } }).lean();
+  const threadById = new Map(threads.map(c => [id(c), c]));
+  const notes = []; const pushes = []; const touched = new Map(); const delivered = [];
+  for (const m of messages) {
+    const c = threadById.get(id(m.conversationId));
+    if (!c) continue;
+    // `text`, `sender` and `absenceStatus` ride along so a client popup (or push
+    // data) can show the real copy, e.g. "Driver acknowledged the absence change
+    // for Amal on 2026-09-10.", without fetching the thread.
+    const event = { eventId: m.eventId, conversationId: id(c), riderId: id(c.riderId), absenceId: m.absenceId, revision: m.revision, text: m.text, sender: m.sender, absenceStatus: m.absenceStatus };
+    // Nothing written below changes the event, so it goes out first. Clients
+    // dedupe on eventId, so a pass that fails after this and repeats it next
+    // time costs nothing; notification:new follows once the rows exist.
+    io?.to(`account:${c.accountId}`).to(`driver:${c.driverId}`).emit('communication:event', event);
+    const roles = m.sender === 'system' ? ['user', 'driver'] : [m.sender === 'driver' ? 'user' : 'driver'];
+    for (const role of roles) {
+      const recipientId = role === 'driver' ? c.driverId : c.accountId;
+      const fields = { eventId: `${m.eventId}:${role}`, userId: recipientId, recipientRole: role,
+        studentId: c.riderId, type: 'COMMUNICATION', title: role === 'driver' ? c.riderName : c.driverName,
+        message: m.text, data: { ...event, type: 'COMMUNICATION', studentId: id(c.riderId) }, expiresAt: null };
+      notes.push(fields);
+      if (!m.announcementId) pushes.push({ eventId: fields.eventId, recipientId, role, title: fields.title, body: m.text, data: fields.data });
     }
+    const at = touched.get(id(c));
+    if (!at || m.createdAt > at) touched.set(id(c), m.createdAt);
+    delivered.push(m._id);
   }
-  for (const a of await Announcement.find({ $or: [{ 'recipients.state': 'pending' }, { pushQueued: false }] }).limit(50)) {
-    for (const r of a.recipients.filter(r => r.state === 'pending')) {
-      let state = 'sent'; let error;
-      try {
-        if (!await activeEnrollment(r.riderId, a.driverId, r.enrollmentId) || !await Rider.exists({ _id: r.riderId, isActive: true })) state = 'skipped';
-        else {
-          const c = await thread({ _id: a.driverId, role: 'driver' }, id(r.riderId), id(a.driverId));
-          await createMessage({ conversationId: c._id, eventId: `announcement:${id(a)}:${id(r.riderId)}`, sender: 'driver', text: a.text, templateId: a.templateId, announcementId: a._id, correctionOf: a.correctionOf });
-        }
-      } catch (e) { state = 'failed'; error = 'Delivery failed. Retry this recipient.'; }
-      await Announcement.updateOne({ _id: a._id, recipients: { $elemMatch: { _id: r._id, state: 'pending' } } }, { $set: { 'recipients.$.state': state, 'recipients.$.error': error || '' } });
-    }
-    const latest = await Announcement.findById(a._id);
-    if (!latest.pushQueued && !latest.recipients.some(r => r.state === 'pending')) {
-      for (const accountId of [...new Set(latest.recipients.filter(r => r.state === 'sent').map(r => id(r.accountId)))]) {
-        const recipients = latest.recipients.filter(r => id(r.accountId) === accountId && r.state === 'sent');
-        const c = await Conversation.findOne({ riderId: recipients[0].riderId, driverId: a.driverId });
-        await queuePush({ eventId: `announcement:${id(a)}:account:${accountId}`, recipientId: accountId, role: 'user',
-          title: `Driver update${recipients.length > 1 ? ` · ${recipients.length} riders` : ''}`, body: a.text,
-          data: { type: 'COMMUNICATION', eventId: `announcement:${id(a)}:account:${accountId}`, conversationId: id(c), riderId: id(c.riderId), riderIds: recipients.map(r => id(r.riderId)) } });
-      }
-      await Announcement.updateOne({ _id: a._id }, { $set: { pushQueued: true } });
-    }
-  }
-  for (const m of await Message.find({ deliveryPending: true }).sort({ _id: 1 }).limit(200)) await deliverMessage(m, io);
+  const [stored] = await Promise.all([
+    bulkUpsert(Notification, notes.map(fields => upsertOp({ eventId: fields.eventId }, fields))),
+    bulkUpsert(PushDelivery, pushes.map(fields => upsertOp({ eventId: fields.eventId }, fields))),
+    touched.size ? Conversation.bulkWrite([...touched].map(([_id, at]) => ({ updateOne: { filter: { _id }, update: { $max: { updatedAt: at } }, timestamps: false } }))) : null,
+  ]);
+  // bulkWrite fires no save hook, so new rows are announced here.
+  for (const [index, _id] of Object.entries(stored?.upsertedIds || {})) notificationCreated({ ...notes[index], _id, createdAt: new Date() });
+  if (delivered.length) await Message.updateMany({ _id: { $in: delivered } }, { $set: { deliveryPending: false } });
 }
-function startDispatcher(io) {
-  let busy = false;
-  const tick = async () => {
-    if (busy || mongoose.connection.readyState !== 1) return;
-    busy = true;
-    try { await dispatch(io); await require('./communicationPush').dispatchPush(); }
-    catch (error) { console.error('Communication dispatcher failed:', error.message); }
-    finally { busy = false; }
+// One announcement's pending recipients, checked and written in bulk. Same
+// outcome per recipient as before: skipped once no longer enrolled or active,
+// failed when the driver is unavailable or the write fails.
+async function fanOut(a) {
+  const pending = a.recipients.filter(r => r.state === 'pending');
+  if (!pending.length) return;
+  const riderIds = pending.map(r => r.riderId);
+  const [enrollments, riders, driver] = await Promise.all([
+    Enrollment.find({ driverId: a.driverId, studentId: { $in: riderIds }, status: 'ACTIVE' }).select('_id studentId').lean(),
+    Rider.find({ _id: { $in: riderIds }, isActive: true }).select('fullName accountId').lean(),
+    Driver.findOne({ _id: a.driverId, isActive: { $ne: false } }).select('name').lean(),
+  ]);
+  const riderById = new Map(riders.map(r => [id(r), r]));
+  const outcome = { sent: [], skipped: [], failed: [] };
+  const deliverable = [];
+  for (const r of pending) {
+    const rider = riderById.get(id(r.riderId));
+    const enrolled = enrollments.some(e => id(e.studentId) === id(r.riderId) && (!r.enrollmentId || id(e) === id(r.enrollmentId)));
+    if (!enrolled || !rider) outcome.skipped.push(r._id);
+    else if (!driver) outcome.failed.push(r._id);
+    else deliverable.push({ r, rider });
+  }
+  if (deliverable.length) {
+    try {
+      await bulkUpsert(Conversation, deliverable.map(({ r, rider }) => upsertOp({ riderId: r.riderId, driverId: a.driverId },
+        { riderId: r.riderId, driverId: a.driverId, accountId: rider.accountId, riderName: rider.fullName, driverName: driver.name })));
+      const threads = await Conversation.find({ driverId: a.driverId, riderId: { $in: deliverable.map(d => d.r.riderId) } }).select('_id riderId').lean();
+      const threadOf = new Map(threads.map(c => [id(c.riderId), c._id]));
+      await bulkUpsert(Message, deliverable.filter(d => threadOf.has(id(d.r.riderId))).map(({ r }) => {
+        const eventId = `announcement:${id(a)}:${id(r.riderId)}`;
+        return upsertOp({ eventId }, { conversationId: threadOf.get(id(r.riderId)), eventId, sender: 'driver', text: a.text, templateId: a.templateId, announcementId: a._id, correctionOf: a.correctionOf });
+      }));
+      for (const { r } of deliverable) (threadOf.has(id(r.riderId)) ? outcome.sent : outcome.failed).push(r._id);
+    } catch (e) { for (const { r } of deliverable) outcome.failed.push(r._id); }
+  }
+  const groups = Object.entries(outcome).filter(([, ids]) => ids.length);
+  await Announcement.updateOne({ _id: a._id }, {
+    $set: Object.fromEntries(groups.flatMap(([state]) => [[`recipients.$[${state}].state`, state], [`recipients.$[${state}].error`, state === 'failed' ? 'Delivery failed. Retry this recipient.' : '']])),
+  }, { arrayFilters: groups.map(([state, ids]) => ({ [`${state}._id`]: { $in: ids }, [`${state}.state`]: 'pending' })) });
+}
+// One grouped push per account once no recipient is pending.
+async function queueAnnouncementPush(a) {
+  const latest = await Announcement.findById(a._id).lean();
+  if (!latest || latest.pushQueued || latest.recipients.some(r => r.state === 'pending')) return;
+  const accounts = new Map();
+  for (const r of latest.recipients.filter(r => r.state === 'sent')) accounts.set(id(r.accountId), [...(accounts.get(id(r.accountId)) || []), r]);
+  if (accounts.size) {
+    const threads = await Conversation.find({ driverId: a.driverId, riderId: { $in: [...accounts.values()].map(list => list[0].riderId) } }).select('_id riderId').lean();
+    const threadOf = new Map(threads.map(c => [id(c.riderId), c]));
+    await bulkUpsert(PushDelivery, [...accounts].filter(([, list]) => threadOf.has(id(list[0].riderId))).map(([accountId, list]) => {
+      const c = threadOf.get(id(list[0].riderId));
+      const eventId = `announcement:${id(a)}:account:${accountId}`;
+      return upsertOp({ eventId }, { eventId, recipientId: accountId, role: 'user',
+        title: `Driver update${list.length > 1 ? ` · ${list.length} riders` : ''}`, body: a.text,
+        data: { type: 'COMMUNICATION', eventId, conversationId: id(c), riderId: id(c.riderId), riderIds: list.map(r => id(r.riderId)) } });
+    }));
+  }
+  await Announcement.updateOne({ _id: a._id }, { $set: { pushQueued: true } });
+}
+// Each absence change becomes a system message in the rider's thread.
+async function writeTransitions() {
+  const absences = await Absence.find({ 'history.pending': true }).limit(100).lean();
+  const transitions = absences.flatMap(a => a.history.filter(h => h.pending).map(h => ({ a, h })));
+  if (!transitions.length) return;
+  // An _id minted here keeps two changes to one absence in order: an
+  // unordered bulk write may apply them in any order, and threads sort by _id.
+  await bulkUpsert(Message, transitions.map(({ a, h }) => upsertOp({ eventId: h.eventId }, { _id: new mongoose.Types.ObjectId(), eventId: h.eventId, conversationId: a.conversationId,
+    sender: 'system', text: h.text, absenceId: a._id, revision: h.revision, absenceStatus: h.action, createdAt: h.at })));
+  await Absence.bulkWrite(transitions.map(({ a, h }) => ({ updateOne: { filter: { _id: a._id, 'history.eventId': h.eventId }, update: { $set: { 'history.$.pending': false } } } })), { ordered: false });
+}
+// `retire` is false on most dispatcher passes: the sweep is a safety net, since
+// ending an enrollment retires its absences directly. Sockets are served before
+// the grouped pushes are queued, so a popup never waits on push bookkeeping.
+async function dispatch(io, { retire = true } = {}) {
+  if (retire) await retireAbsences();
+  const [, announcements] = await Promise.all([
+    writeTransitions(),
+    Announcement.find({ $or: [{ 'recipients.state': 'pending' }, { pushQueued: false }] }).limit(50).lean(),
+  ]);
+  for (const a of announcements) await fanOut(a);
+  await deliverMessages(await Message.find({ deliveryPending: true }).sort({ _id: 1 }).limit(200).lean(), io);
+  for (const a of announcements) await queueAnnouncementPush(a);
+}
+const DISPATCH_INTERVAL_MS = 3000;
+const RETIRE_SWEEP_MS = 60000;
+let kick = null;
+// Called right after a write that leaves something to deliver, so it goes out
+// now instead of on the next interval. A no-op until startDispatcher runs
+// (tests and scripts call dispatch() themselves).
+function kickDispatcher() { kick?.(); }
+// Delivery runs when kicked, and every interval as the safety net for anything
+// a kick missed (a crash mid-pass, a write from another process). Push has its
+// own loop, so a slow Expo call never holds up the socket.
+function startDispatcher(io, { intervalMs = DISPATCH_INTERVAL_MS } = {}) {
+  let busy = false; let again = false; let lastSweep = 0; let pushing = false;
+  const push = async () => {
+    if (pushing || mongoose.connection.readyState !== 1) return;
+    pushing = true;
+    try { await require('./communicationPush').dispatchPush(); }
+    catch (error) { console.error('Communication push failed:', error.message); }
+    finally { pushing = false; }
   };
-  const timer = setInterval(tick, 3000); timer.unref(); void tick();
-  return () => clearInterval(timer);
+  const tick = async (kicked = false) => {
+    if (busy) { again = again || kicked; return; }
+    if (mongoose.connection.readyState !== 1) return;
+    busy = true;
+    try {
+      do {
+        again = false;
+        const retire = Date.now() - lastSweep >= RETIRE_SWEEP_MS;
+        if (retire) lastSweep = Date.now();
+        await dispatch(io, { retire });
+      } while (again);
+    } catch (error) { console.error('Communication dispatcher failed:', error.message); }
+    finally { busy = false; void push(); }
+  };
+  kick = () => { void tick(true); };
+  const timer = setInterval(tick, intervalMs); timer.unref();
+  const pushTimer = setInterval(push, intervalMs); pushTimer.unref();
+  void tick();
+  return () => { clearInterval(timer); clearInterval(pushTimer); kick = null; };
 }
-module.exports = { id, objectId, requestId, upsert, ownedRider, activeEnrollment, thread, accessibleThread, send, transition, retireAbsences, audience, riderDetail, riderAvatar, announce, dispatch, startDispatcher };
+module.exports = { id, objectId, requestId, upsert, ownedRider, activeEnrollment, thread, accessibleThread, send, transition, retireAbsences, audience, riderDetail, riderAvatar, announce, dispatch, startDispatcher, kickDispatcher };

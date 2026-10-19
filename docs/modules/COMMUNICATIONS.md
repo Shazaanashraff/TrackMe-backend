@@ -15,6 +15,16 @@ Implemented additively in September 2026. This module owns private rider–drive
 
 `Communication.js` defines Conversation, Message, Absence, Announcement, and CommunicationPushDelivery. Absence documents have a unique rider/driver/date index, a monotonic revision, acknowledged revision, full history, and embedded pending delivery events. `requestId` plus a payload hash makes a retry idempotent and rejects reuse for another operation. The retrying dispatcher materializes events into messages and notifications without requiring multi-document transactions.
 
+### Delivery speed (2026-10-19)
+
+A write is delivered the moment it happens. `send`, `transition` (report, cancel, acknowledge), `announce`, `retryAnnouncement` and a `retireAbsences` that retired something call `kickDispatcher()`, which runs a dispatcher pass now, or once more right after the pass already running. The 3 s interval stays as the safety net for anything a kick missed (a crash mid-pass, a write from another process). Before this, every message waited for the next 3 s poll.
+
+A pass costs a fixed number of database round trips, whatever the number of riders: each phase is batched into bulk reads and `bulkWrite`s (`fanOut`, `deliverMessages`, `queueAnnouncementPush` in `services/communications.js`). Every round trip costs about 230 ms in production (Render Singapore to the Atlas cluster), and a pass used to make about 12 per rider for a broadcast, so a 20-rider broadcast reached its last rider about a minute after it was sent. Measured on the test database: a pass for a 3-rider broadcast went from 46 queries to 18, and a 9-rider one from 118 to 18. Inside a pass, sockets are served before the grouped pushes are queued.
+
+The all-absences retire sweep runs at most once a minute, not on every pass: ending an enrollment already retires its absences directly (`enrollmentController.js`, `managerEnrollmentsController.js`), so the sweep is a safety net. Its checks are batched too (one enrollment and one rider query for every upcoming absence, instead of two per absence). `GET /api/absences` and `GET /api/driver/absences` still run it for the caller's own absences.
+
+Push has its own loop and busy flag (`startDispatcher`), so a slow Expo call never holds up socket delivery. Request paths read each document once and send independent reads together: an absence report went from about 11 sequential round trips to about 6.
+
 Push acceptance is delivery transport state only. Reads update conversation cursors; absence acknowledgment updates `acknowledgedRevision` only through the explicit acknowledge endpoint. A driver acknowledges a fresh absence (ABSENT) the same way as a cancellation (CANCELLED): `GET /api/driver/absences` lists both in `changes` while `acknowledgedRevision < revision`. The ACKNOWLEDGED system message names what was seen: "Driver acknowledged that {rider} will be absent on {date}." or "Driver acknowledged that {rider} is coming on {date}." (`transitionText`, `services/communications.js`); it reaches the rider's account as a `COMMUNICATION` notification, a push and the `communication:event` socket payload. Invalid Expo tokens are removed after ticket or receipt errors.
 
 ## API
@@ -46,7 +56,9 @@ All three authorize on the caller's own ACTIVE enrollment (`activeEnrollment`). 
 
 ## Realtime contract
 
-Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, an optional absence revision, and — since 2026-09-10 — `text`/`sender`/`absenceStatus` (mirrors `Message.text`/`sender`/`absenceStatus`, undefined on a bare read-receipt event) so a client can show the real copy (e.g. an absence-acknowledgment banner) without a round-trip fetch of the thread. `queuePush`'s `data` payload carries the same fields. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
+Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, an optional absence revision, and (since 2026-09-10) `text`/`sender`/`absenceStatus` (mirrors `Message.text`/`sender`/`absenceStatus`, undefined on a bare read-receipt event) so a client can show the real copy (e.g. an absence-acknowledgment banner) without a round-trip fetch of the thread. The push job's `data` payload carries the same fields. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
+
+Since 2026-10-19 the event is emitted before the delivery's `Notification` and push rows are written, because nothing in them changes the event. A client that refetches its notification list on `communication:event` can therefore miss the newest row; `notification:new` is emitted once that row exists, so a client refetching on both is always right. A pass that fails after the emit repeats it on the next pass with the same `eventId`.
 
 ## Client expectations
 
@@ -54,4 +66,4 @@ Audience endpoints represent current ACTIVE enrollments. Clients may preserve a 
 
 ## Operations
 
-Monitor `CommunicationPushDelivery` records in `failed` state and Announcement recipients in `failed`. The dispatcher runs every three seconds with leases and exponential retry. Expo credentials and receipts must be configured in production; `DeviceNotRegistered` tokens are pruned.
+Monitor `CommunicationPushDelivery` records in `failed` state and Announcement recipients in `failed`. The dispatcher runs on every kick and every three seconds; the push loop runs every three seconds and after each pass, with leases and exponential retry. Expo credentials and receipts must be configured in production; `DeviceNotRegistered` tokens are pruned.

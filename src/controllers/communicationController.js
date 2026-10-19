@@ -72,11 +72,14 @@ exports.listAbsences = handle(async req => {
   if (req.query.date) filter.date = validateDate(req.query.date, false);
   else if (req.user.role === 'driver') filter.date = today();
   else filter.date = req.query.view === 'history' ? { $lt: today() } : { $gte: today() };
-  const rows = await Absence.find(filter).sort({ date: 1, updatedAt: -1 })
-    .populate('riderId', 'fullName riderCode avatarVersion').populate('driverId', 'name')
-    .populate({ path: 'enrollmentId', populate: [{ path: 'pickupPlaceId', select: 'label address' }, { path: 'driverId', select: 'organization', populate: { path: 'organization', select: 'name' } }] }).lean();
-  // What the driver still has to answer: a fresh absence as much as a cancellation.
-  const changes = req.user.role === 'driver' ? await Absence.find({ driverId: req.user._id, date: { $gte: today() }, status: { $in: ['ABSENT', 'CANCELLED'] }, $expr: { $lt: ['$acknowledgedRevision', '$revision'] } }).populate('riderId', 'fullName riderCode').sort({ date: 1, updatedAt: 1 }).lean() : [];
+  // Loaded together: each is a round trip to the database.
+  const [rows, changes] = await Promise.all([
+    Absence.find(filter).sort({ date: 1, updatedAt: -1 })
+      .populate('riderId', 'fullName riderCode avatarVersion').populate('driverId', 'name')
+      .populate({ path: 'enrollmentId', populate: [{ path: 'pickupPlaceId', select: 'label address' }, { path: 'driverId', select: 'organization', populate: { path: 'organization', select: 'name' } }] }).lean(),
+    // What the driver still has to answer: a fresh absence as much as a cancellation.
+    req.user.role === 'driver' ? Absence.find({ driverId: req.user._id, date: { $gte: today() }, status: { $in: ['ABSENT', 'CANCELLED'] }, $expr: { $lt: ['$acknowledgedRevision', '$revision'] } }).populate('riderId', 'fullName riderCode').sort({ date: 1, updatedAt: 1 }).lean() : [],
+  ]);
   return { rows, changes, absentCount: rows.filter(r => r.status === 'ABSENT').length, refreshedAt: new Date(), today: today() };
 });
 exports.announce = handle(req => s.announce(req.user, req.body));
@@ -91,5 +94,6 @@ exports.retryAnnouncement = handle(async req => {
     $set: { 'recipients.$[failed].state': 'pending', 'recipients.$[failed].error': '', pushQueued: false },
   }, { arrayFilters: [{ 'failed.state': 'failed' }], new: true });
   if (!row) throw new ApiError(404, 'Announcement not found');
+  s.kickDispatcher();
   return row;
 });

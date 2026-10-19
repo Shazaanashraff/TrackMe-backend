@@ -50,6 +50,10 @@ async function sendBoardingPush(student, account, event, vehicleName) {
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
+      // The high-importance channel the passenger app creates for driver
+      // updates. Without it Android files the push under its default channel,
+      // which shows no heads-up popup.
+      channelId: 'communications',
       title: `${student.fullName || student.name || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
       body: `at ${formatTime(event.timestamp)}`,
       data: {

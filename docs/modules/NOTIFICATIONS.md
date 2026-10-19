@@ -21,12 +21,15 @@ Two things are called "notifications" here and they are **not the same pipeline*
 | Channel | What it is | Types | Reaches the device? |
 |---|---|---|---|
 | **Stored notifications** | `Notification` documents, read over REST, shown in the app's notification list + unread badge | **10** (see §4) | Only when the app fetches. No push. |
-| **Expo push** | `utils/pushHelper.js` → Expo push service | **1** — `BOARDING_EVENT` | Yes, OS-level |
+| **Expo push** | `utils/pushHelper.js` (boarding) and `services/communicationPush.js` (messages, absences, broadcasts) → Expo push service | `BOARDING_EVENT`, `COMMUNICATION` | Yes, OS-level |
 
-**`pushHelper.js` exports exactly one function, `sendBoardingPush`.** Nothing else in the codebase
-sends a push. So a `ROUTE_ACCESS_APPROVED` notification is written to the database and appears in
-the list next time the rider opens the app — it does **not** buzz their phone. If you are asked
-"why didn't the user get notified", this asymmetry is almost always the answer.
+Two senders push, and nothing else does (corrected 2026-10-19: this section used to say
+`pushHelper.js` was the only one). So a `ROUTE_ACCESS_APPROVED` notification is written to the
+database and appears in the list next time the rider opens the app; it does **not** buzz their
+phone. If you are asked "why didn't the user get notified", this asymmetry is almost always the
+answer. Both senders set `channelId: 'communications'`, the high-importance Android channel the
+apps create; without it Android shows no heads-up popup. On Android, no push reaches a device until
+the app build carries Firebase (`google-services.json`) and the Expo project holds an FCM V1 key.
 
 ## 2. API surface
 
@@ -58,8 +61,8 @@ move its unread badge at once, without a push (web has none) or a foreground ref
 The emit lives in `src/utils/notificationEvents.js` (`bindIo(io)` from `server.js`,
 `notificationCreated(doc)`). A `pre/post('save')` pair on the model calls it for every
 `create()`/`save()` — so none of the five creation sites had to change and a sixth cannot forget —
-and `services/communications.js` `deliverMessage` calls it explicitly, because its row goes in
-through `findOneAndUpdate` upsert, which save hooks never see. Reads (`markAsRead`,
+and `services/communications.js` `deliverMessages` calls it explicitly for each row its
+`bulkWrite` upsert inserted, because save hooks never see a bulk write. Reads (`markAsRead`,
 `markAllAsRead`) use `findOneAndUpdate`/`updateMany` and emit nothing; a client decrements its own
 badge optimistically and the count endpoint remains the truth.
 
@@ -71,7 +74,8 @@ badge optimistically and the count endpoint remains the truth.
 | `src/controllers/notificationController.js` | List, unread count, read/read-all, delete, device-token, cleanup. |
 | `src/models/Notification.js` | Schema + the type enum + priority. |
 | `src/utils/notificationHelper.js` | Creates `Notification` documents from other controllers. |
-| `src/utils/pushHelper.js` | **Only** `sendBoardingPush` — Expo token filtering, chunking, ticket collection. |
+| `src/utils/pushHelper.js` | `sendBoardingPush`: Expo token filtering, chunking, ticket collection, `channelId: 'communications'`. |
+| `src/services/communicationPush.js` | Communication push jobs: leases, retries, receipts, token pruning. |
 | `src/controllers/boardingController.js` | The one caller of `sendBoardingPush`. |
 
 ## 4. Data model
