@@ -158,9 +158,10 @@ app.use(cors(
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// IP-based rate limiting (complements the per-identity limiters already inside
-// authRoutes). apiLimiter covers everything; authLimiter adds a tighter ceiling
-// specifically on the auth surface.
+// Rate limiting (complements the per-identity limiters already inside
+// authRoutes). apiLimiter covers everything, per signed-in account or else per
+// client address; authLimiter adds a tighter per-address ceiling specifically
+// on the auth surface. See middleware/rateLimiters.js.
 app.use('/api/', apiLimiter);
 app.use('/api/auth', authLimiter);
 

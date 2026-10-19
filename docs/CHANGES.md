@@ -23,6 +23,26 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-19: Rate-limit per account and per real client address
+- **Branch:** feature/rate-limit-client-key
+- **Modules touched:** auth ([`docs/modules/AUTH.md`](modules/AUTH.md) §6), `src/middleware/rateLimiters.js`
+- **What changed:** `apiLimiter` counts a request with a verified access token against its account,
+  and anything else against the client address. `authLimiter` counts against the client address.
+  The client address is `CF-Connecting-IP`, falling back to `req.ip`. Limits are unchanged
+  (600 and 100 per 15 minutes).
+- **Why:** both limiters keyed on `req.ip`, which on Render is a proxy address. Probes against
+  production showed one client alternating between separate `ratelimit-remaining` counters, all
+  behind the Colombo Cloudflare edge, so riders shared a few buckets and two phones on one Wi-Fi
+  shared one. That, together with the driver app's permission loop, produced the 429s on "On my
+  way" and on absence requests. Render's own guidance and a probe (a caller-sent
+  `CF-Connecting-IP` is refused with 403, error 1000) show the header cannot be forged through
+  the edge.
+- **Contract impact:** none. Same limits, same 429 body; only who shares a bucket changes.
+- **Tests:** tests/unit/rate-limiters.test.js (new, 6, no database; 4 fail on the old code).
+- **Docs updated:** AUTH.md §6 and §10, TESTING_GUIDE row.
+- **Migration:** none.
+- **Follow-ups / known issues:** none.
+
 ## 2026-10-19: Label socket handshake failures honestly
 - **Branch:** feature/socket-auth-errors
 - **Modules touched:** realtime ([`docs/modules/REALTIME.md`](modules/REALTIME.md)), `src/socket/socketHandler.js`

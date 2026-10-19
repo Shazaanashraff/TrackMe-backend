@@ -103,6 +103,17 @@ flowchart TD
 - Login on an unverified account returns **403 `requiresVerification`**, deliberately distinct from
   bad credentials, so clients can route to the OTP screen.
 - The JSON body limit is **3 MB** app-wide (`server.js`), which is what makes base64 avatars viable.
+- **HTTP rate limits** (`middleware/rateLimiters.js`, mounted in `server.js`). `apiLimiter` on
+  `/api/*`: 600 per 15 minutes, counted per account for a request with a verified access token
+  (`account:<role>:<id>`), otherwise per client address. `authLimiter` on `/api/auth/*`: 100 per 15
+  minutes per client address only. The client address is `CF-Connecting-IP`, falling back to
+  `req.ip` (local, tests). Since 2026-10-19: before that both keyed on `req.ip`, which on Render is
+  a Cloudflare/Render proxy address even with `trust proxy` 1. One phone was counted in several
+  rotating buckets, every rider on the same Cloudflare edge (Colombo) shared them, and two phones
+  on one Wi-Fi shared one allowance. Cloudflare writes `CF-Connecting-IP` on every request to a
+  Render web service and refuses a caller's own copy (403, error 1000), so it cannot be forged
+  through the edge. A forged or refresh token never picks the account bucket: it is verified, and
+  counts against the address. The per-identity limiters (`emailRateLimiter.js`) are unchanged.
 
 ## 7. Side effects
 
@@ -167,6 +178,8 @@ flowchart TD
 
 | Layer | File | What it locks |
 |---|---|---|
+| Unit | `tests/unit/rate-limiters.test.js` | `apiLimiter` per account (two accounts on one address apart, one account across addresses together), per `CF-Connecting-IP` without a token, forged/refresh tokens on the address, `req.ip` fallback; `authLimiter` per address only. |
+| Integration | `tests/integration/auth-ip-rate-limit.test.js` | `authLimiter` throttles `/api/auth/*` after its max and resets after the window. |
 | Unit | `tests/unit/account-login-filter.test.js` | `loginFilterForRole` — the account/profile precedence multiple rider profiles depend on. |
 | Unit | `tests/unit/recoverable-password.test.js` | AES-GCM round trip, the feature gate, a fresh IV per record, and refusal (not garbage, not a throw) on a wrong key, a tampered tag, an unknown version, or malformed input. |
 | Integration | `tests/integration/manager-driver-password.test.js` | Viewing a driver password: the cross-manager refusal, unauthenticated refusal, the audit entry (and that it never contains the password), 404 for a pre-feature driver, 503 with the feature off, ciphertext absent from ordinary reads, and that storage is encrypted while `password` stays bcrypt. |
