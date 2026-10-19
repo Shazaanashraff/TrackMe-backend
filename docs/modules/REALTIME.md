@@ -129,6 +129,15 @@ its full life, same as an access token; (b) loads the account via `findAccountBy
 `isActive === false` — previously a deactivated account kept a working socket until its token
 expired on its own. Both are one query at connect time, not per message.
 
+**Handshake error labels (2026-10-19).** Only a token problem says so: a `jwt.verify` failure
+(`JsonWebTokenError`, `TokenExpiredError`, `NotBeforeError`) answers `Invalid token: <jwt
+message>`, and the account checks answer `Invalid token: account not found` / `account is
+deactivated` / `refresh tokens cannot open a socket`. Any other error, such as the account lookup
+failing on a database hiccup, is logged and answers `Server unavailable`. It used to answer
+`Invalid token: <message>` too, so the apps spent token refreshes on a server problem. Both apps
+refresh only on `jwt expired` / `Invalid token` and retry `Server unavailable` on a 2 s to 30 s
+backoff (user-app `LIVE_MAP.md`, driver-app `LOCATION_TRACKING.md`).
+
 **Handshake origin.** The Socket.IO CORS check (`socketCorsOptions` in `src/server.js`) runs on the
 WebSocket upgrade, before auth, and refuses an unlisted Origin with a 400. It allows `CLIENT_ORIGINS`,
 any `https://*.pingo.lk`, no Origin at all, and **a same-origin handshake**: an Origin whose host is
@@ -255,6 +264,7 @@ Both are pure reads; neither emits.
 |---|---|---|
 | Unit | `tests/unit/socket-rate-limit.test.js` | per-socket/per-event windows, the 50-entry buffer burst, disconnect cleanup |
 | Unit | `tests/unit/live-tracking-helpers.test.js` | `validCoord`, `resolveRecordedAt` clock-skew clamping |
+| Unit | `tests/unit/socket-auth-errors.test.js` | handshake labels with no database: a lookup error gives `Server unavailable`, a malformed or expired token and a deactivated account give `Invalid token: ...`, an active account passes |
 | Integration | `tests/integration/vehicle-live-endpoint.test.js` | REST authz for every caller type, every status code |
 | WS | `tests/integration/ws/live-tracking.test.js` | start/location/stop, overwrite-not-append, replay staleness, authorization for rider/manager/driver, disconnect grace, reconnect re-adoption, buffer-burst rate limiting, hardened socket auth, revocation on leaving an enrolment |
 | Integration | `tests/integration/cors-allowlist.test.js` | handshake origin: same-origin (what the React Native apps send), allowlisted, pingo.lk and no-Origin handshakes reach auth; a foreign or look-alike origin is refused before auth |
