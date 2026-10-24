@@ -40,11 +40,11 @@ const sendAccountSetupEmail = async (to, { link, name, purpose } = {}) => {
 
   const isReset = purpose === 'RESET';
   const subject = isReset
-    ? 'Reset your TrackMe manager password'
-    : 'Activate your TrackMe manager account';
+    ? 'Reset your Pingo manager password'
+    : 'Activate your Pingo manager account';
   const intro = isReset
-    ? 'A password reset was requested for your TrackMe manager account.'
-    : `You've been added as a manager on TrackMe${name ? `, ${name}` : ''}.`;
+    ? 'A password reset was requested for your Pingo manager account.'
+    : `You've been added as a manager on Pingo${name ? `, ${name}` : ''}.`;
   const action = isReset ? 'reset your password' : 'set your password';
 
   return sendMail({

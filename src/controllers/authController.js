@@ -65,7 +65,7 @@ const EMAIL_VERIFICATION_OTP_EXPIRY_MS = 10 * 60 * 1000;
 const sendVerificationEmail = async (to, otp) => {
   return sendMail({
     to,
-    subject: 'Verify your TrackMe account',
+    subject: 'Verify your Pingo account',
     html: `
       <!DOCTYPE html>
       <html>
@@ -84,7 +84,7 @@ const sendVerificationEmail = async (to, otp) => {
       <body>
         <div class="container">
           <div class="header">
-            <p>Welcome to TrackMe! Please verify your email address to finish setting up your account.</p>
+            <p>Welcome to Pingo! Please verify your email address to finish setting up your account.</p>
           </div>
 
           <p>Use this code to verify your email (valid for 10 minutes):</p>
@@ -96,8 +96,8 @@ const sendVerificationEmail = async (to, otp) => {
           <p><strong>Or copy and paste this code in the verification screen.</strong></p>
 
           <div class="footer">
-            <p>Did not create a TrackMe account? You can safely ignore this email.</p>
-            <p>TrackMe © 2026</p>
+            <p>Did not create a Pingo account? You can safely ignore this email.</p>
+            <p>Pingo © 2026</p>
           </div>
         </div>
       </body>

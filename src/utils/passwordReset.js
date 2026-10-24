@@ -17,7 +17,7 @@ const hashToken = (value) => crypto.createHash('sha256').update(value).digest('h
 const sendPasswordResetOtpEmail = async (to, otp) => {
   return sendMail({
     to,
-    subject: 'Reset Your Password - TrackMe',
+    subject: 'Reset Your Password - Pingo',
     html: `
       <!DOCTYPE html>
       <html>
@@ -36,7 +36,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
       <body>
         <div class="container">
           <div class="header">
-            <p>We received a request to reset your TrackMe password.</p>
+            <p>We received a request to reset your Pingo password.</p>
           </div>
 
           <p>Use this code to reset your password (valid for 10 minutes):</p>
@@ -49,7 +49,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
 
           <div class="footer">
             <p>Did not request this? You can safely ignore this email.</p>
-            <p>TrackMe © 2026</p>
+            <p>Pingo © 2026</p>
           </div>
         </div>
       </body>
