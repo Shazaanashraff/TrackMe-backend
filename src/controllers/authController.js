@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const { Resend } = require('resend');
+const { sendMail } = require('../utils/mailer');
 const { OAuth2Client } = require('google-auth-library');
 const Manager = require('../models/Manager');
 const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
@@ -63,13 +63,7 @@ const PASSWORD_RESET_OTP_EXPIRY_MS = 5 * 60 * 1000;
 const EMAIL_VERIFICATION_OTP_EXPIRY_MS = 10 * 60 * 1000;
 
 const sendVerificationEmail = async (to, otp) => {
-  if (!process.env.RESEND_API_KEY) return false;
-
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const from = process.env.RESEND_FROM || 'onboarding@resend.dev';
-
-  const { data, error } = await resend.emails.send({
-    from,
+  return sendMail({
     to,
     subject: 'Verify your TrackMe account',
     html: `
@@ -109,15 +103,7 @@ const sendVerificationEmail = async (to, otp) => {
       </body>
       </html>
     `
-  });
-
-  if (error) {
-    console.error('[Resend] sendVerificationEmail error:', JSON.stringify(error));
-    return false;
-  }
-
-  console.log('[Resend] sendVerificationEmail sent, id:', data?.id);
-  return true;
+  }, 'sendVerificationEmail');
 };
 
 // Email verification is only enforced for riders. Every other role is created by an

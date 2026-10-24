@@ -23,6 +23,15 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-24 — Email: SMTP fallback behind Resend (shared mailer)
+- **Branch:** main
+- **Modules touched:** auth — [`docs/modules/AUTH.md`](modules/AUTH.md) (§7 side effects)
+- **What changed:** New `src/utils/mailer.js` is the single outbound-mail path. It tries Resend, then falls back to SMTP via `nodemailer` when Resend is unset, returns an error, or throws. `sendVerificationEmail` (authController), `sendPasswordResetOtpEmail` (passwordReset) and `sendAccountSetupEmail` (accountSetup) now call it instead of each building their own Resend client; their return contract (`true` delivered / `false` not, never throws) is unchanged. `isEmailConfigured` now also counts SMTP. `.env.example` documents `SMTP_*`. `tests/jest.setup.js` blanks `RESEND_API_KEY`/`SMTP_HOST` so tests can never send real mail (the password-reset suite had been hitting the live Resend API through `.env`).
+- **Why:** Play testers never received verification codes — `RESEND_FROM=onboarding@resend.dev` only delivers to the Resend account owner. Verifying `pingo.lk` fixes it for good; the fallback keeps mail flowing if a provider or domain is misconfigured.
+- **Tests:** `tests/unit/mailer.test.js` (7); existing auth, password-reset, manager-organizations and rate-limit suites re-run green apart from two avatar tests in `auth.test.js` that were already failing and are unrelated.
+- **Docs updated:** AUTH.md §7, TESTING_GUIDE.md, `.env.example`.
+- **Follow-ups / known issues:** set `RESEND_FROM` to a `pingo.lk` address on Render once the domain verifies; set `SMTP_*` there only if a fallback is wanted.
+
 ## 2026-10-24: Google sign-in no longer refuses a login that holds no profile
 - **Branch:** main
 - **Modules touched:** auth (`controllers/authController.js` `googleSignIn`; [AUTH.md](modules/AUTH.md))

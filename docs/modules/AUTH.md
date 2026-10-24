@@ -119,7 +119,7 @@ flowchart TD
 
 | Effect | Trigger | Detail |
 |---|---|---|
-| Email | register / resend / forgot-password | OTP delivery. |
+| Email | register / resend / forgot-password / manager invite+reset | OTP or link delivery through `utils/mailer.js`: Resend first, then the SMTP (nodemailer) fallback when Resend is unset, errors, or throws (`SMTP_HOST`/`SMTP_USER`/`SMTP_PASS`). Resend only delivers to its account owner until a sender domain is verified, so the fallback keeps verification codes reaching everyone meanwhile. |
 | Account bootstrap | server start | `ensureSuperAdminAccount` creates the super-admin if absent. |
 
 ## 8. Not visible in the API surface

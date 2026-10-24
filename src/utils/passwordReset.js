@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Resend } = require('resend');
+const { sendMail } = require('./mailer');
 
 // Password-reset OTP delivery, shared by the self-service flow
 // (POST /api/auth/forgot-password/request-otp) and the two admin "reset this
@@ -15,13 +15,7 @@ const { Resend } = require('resend');
 const hashToken = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 const sendPasswordResetOtpEmail = async (to, otp) => {
-  if (!process.env.RESEND_API_KEY) return false;
-
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const from = process.env.RESEND_FROM || 'onboarding@resend.dev';
-
-  const { data, error } = await resend.emails.send({
-    from,
+  return sendMail({
     to,
     subject: 'Reset Your Password - TrackMe',
     html: `
@@ -61,15 +55,7 @@ const sendPasswordResetOtpEmail = async (to, otp) => {
       </body>
       </html>
     `
-  });
-
-  if (error) {
-    console.error('[Resend] sendPasswordResetOtpEmail error:', JSON.stringify(error));
-    return false;
-  }
-
-  console.log('[Resend] sendPasswordResetOtpEmail sent, id:', data?.id);
-  return true;
+  }, 'sendPasswordResetOtpEmail');
 };
 
 // Stamp a fresh reset OTP on the identity and mail it. Returns the OTP so callers can

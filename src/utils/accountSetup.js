@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Resend } = require('resend');
+const { sendMail, isEmailConfigured: isMailerConfigured } = require('./mailer');
 
 // Invite / password-reset links are long-lived compared to the 10-minute OTPs
 // used elsewhere: the super admin sends them out-of-band (email) and a manager
@@ -29,16 +29,15 @@ const buildSetupLink = (rawToken) => {
 // Whether real outbound email is set up. When true, callers must treat email as
 // the only delivery path (no on-screen demo link); when false we're in local demo
 // mode and surface the link instead.
-const isEmailConfigured = () => Boolean(process.env.RESEND_API_KEY);
+// Resend or the SMTP fallback counts — see utils/mailer.js.
+const isEmailConfigured = () => isMailerConfigured();
 
 // Sends the invite/reset link. Returns false (never throws) when email isn't
 // configured, so callers can fall back to surfacing the link on-screen in dev —
 // mirroring how OTP emails degrade in authController.
 const sendAccountSetupEmail = async (to, { link, name, purpose } = {}) => {
-  if (!process.env.RESEND_API_KEY) return false;
+  if (!isMailerConfigured()) return false;
 
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const from = process.env.RESEND_FROM || 'onboarding@resend.dev';
   const isReset = purpose === 'RESET';
   const subject = isReset
     ? 'Reset your TrackMe manager password'
@@ -48,29 +47,17 @@ const sendAccountSetupEmail = async (to, { link, name, purpose } = {}) => {
     : `You've been added as a manager on TrackMe${name ? `, ${name}` : ''}.`;
   const action = isReset ? 'reset your password' : 'set your password';
 
-  try {
-    const { error } = await resend.emails.send({
-      from,
-      to,
-      subject,
-      html: `
+  return sendMail({
+    to,
+    subject,
+    html: `
         <p>${intro}</p>
         <p>Use the link below to ${action}. It is valid for 7 days:</p>
         <p><a href="${link}">${isReset ? 'Reset password' : 'Set your password'}</a></p>
         <p>Or paste this URL into your browser:<br>${link}</p>
         <p>If you weren't expecting this, you can safely ignore this email.</p>
       `
-    });
-
-    if (error) {
-      console.error('[Resend] sendAccountSetupEmail error:', JSON.stringify(error));
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error('[Resend] sendAccountSetupEmail threw:', err?.message || err);
-    return false;
-  }
+  }, 'sendAccountSetupEmail');
 };
 
 module.exports = {
