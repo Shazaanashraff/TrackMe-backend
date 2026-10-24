@@ -23,6 +23,16 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-24: Google sign-in no longer refuses a login that holds no profile
+- **Branch:** main
+- **Modules touched:** auth (`controllers/authController.js` `googleSignIn`; [AUTH.md](modules/AUTH.md))
+- **What changed:** when an `Identity` exists but holds no profile at all, Google sign-in now attaches the rider profile instead of returning 403 `NO_PROFILE_FOR_APP` ("This login has no account for this app"). The 403 still applies when the login already belongs to another role (driver/manager/super-admin) and `ALLOW_SHARED_IDENTITY` is off.
+- **Why:** a play-store tester signing up with Google was told they had no account. An identity with no profile shares nothing, so refusing it was a dead end.
+- **Contract impact:** none for working paths; a previously-403 orphaned identity now gets 200.
+- **Tests:** `tests/integration/google-signin-orphan-identity.test.js` (orphan → 200 + user role; driver-owned email → still 403).
+- **Docs updated:** TESTING_GUIDE row.
+- **Follow-ups / known issues:** if the tester's email belongs to a driver/manager account this does not change the outcome — that needs `ALLOW_SHARED_IDENTITY=true` plus the rider app sending `audience: 'user'` on Google sign-in (it does not today).
+
 ## 2026-10-19: Deliver messages the moment they are written, in a fixed number of queries
 - **Branch:** feature/fast-delivery
 - **Modules touched:** communications ([`docs/modules/COMMUNICATIONS.md`](modules/COMMUNICATIONS.md) "Delivery speed"), notifications ([`docs/modules/NOTIFICATIONS.md`](modules/NOTIFICATIONS.md) §1, §2, §3), `src/services/communications.js`, `src/controllers/communicationController.js`, `src/utils/pushHelper.js`

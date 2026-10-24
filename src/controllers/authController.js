@@ -15,6 +15,7 @@ const { userPayload, hydrateIdentity } = require('../utils/accountPayload');
 const {
   findIdentityByEmail,
   findProfilesForIdentity,
+  rolesForIdentity,
   resolveProfileForAudience,
   hasSuperAdminProfile,
   attachProfile,
@@ -585,7 +586,11 @@ exports.googleSignIn = async (req, res, next) => {
       // profile is always provisioned by an admin, so Google sign-in must not mint one.
       if (!profile) {
         const wantsRider = !audience || selectRoleForAudience(['user'], audience) === 'user';
-        if (!wantsRider || !ALLOW_SHARED_IDENTITY) {
+        // A login that holds no profile at all (a sign-up that stopped after creating the
+        // Identity) shares nothing with anyone, so it is simply finished here rather than
+        // refused. Only a login that already belongs to another role needs the sharing flag.
+        const holdsAnyProfile = (await rolesForIdentity(identity._id)).length > 0;
+        if (!wantsRider || (holdsAnyProfile && !ALLOW_SHARED_IDENTITY)) {
           return res.status(403).json({
             success: false,
             code: 'NO_PROFILE_FOR_APP',
