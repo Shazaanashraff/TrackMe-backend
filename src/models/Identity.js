@@ -67,6 +67,16 @@ const identitySchema = new mongoose.Schema({
     attempts: { type: Number, default: 0, select: false },
     resetTokenHash: { type: String, default: null, select: false },
     resetTokenExpiresAt: { type: Date, default: null, select: false }
+  },
+  // The code a signed-in person asks for before changing their password or
+  // deleting their account (utils/accountCode.js). Separate from passwordReset
+  // so a forgot-password request on another device can never consume it, and
+  // `purpose` stops a code sent for one action being spent on the other.
+  accountCode: {
+    purpose: { type: String, enum: ['CHANGE_PASSWORD', 'DELETE_ACCOUNT', null], default: null, select: false },
+    otpHash: { type: String, default: null, select: false },
+    expiresAt: { type: Date, default: null, select: false },
+    attempts: { type: Number, default: 0, select: false }
   }
 }, { timestamps: true });
 

@@ -30,8 +30,13 @@ const hashToken = (value) => crypto.createHash('sha256').update(value).digest('h
 // refresh token's hash on it. `user` is any of the four account-profile
 // documents (User/Driver/Manager/SuperAdmin) — whichever one is signing in,
 // or, for a rider, whichever one is being switched to.
+//
+// `sv` is the profile's sessionVersion at issue time. `protect` and the socket
+// handshake refuse a token whose `sv` no longer matches, which is how revoking
+// sessions (utils/sessions.js) takes effect at once. The caller must pass a
+// document that was read after any bump, or the new token is stale on arrival.
 const issueTokensForUser = async (user, role) => {
-  const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access' }, process.env.JWT_SECRET, {
+  const accessToken = jwt.sign({ id: user._id, role, tokenType: 'access', sv: user.sessionVersion || 0 }, process.env.JWT_SECRET, {
     expiresIn: accessTokenExpiresIn
   });
 

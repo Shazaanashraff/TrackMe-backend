@@ -59,8 +59,25 @@ const userSchema = applyAccountFields(new mongoose.Schema({
   qrIssuedAt: {
     type: Date,
     default: null
+  },
+  // Set on the PRIMARY profile only, when the account holder asks for their
+  // account to be deleted (services/accountDeletion.js). Until `purgeAt` the
+  // account can be kept by signing in again; after it, the household is purged.
+  // `enrollmentSnapshot` holds the enrollments that were ended at the request,
+  // so keeping the account can put them back exactly as they were.
+  deletion: {
+    requestedAt: { type: Date, default: null },
+    purgeAt: { type: Date, default: null },
+    enrollmentSnapshot: { type: [mongoose.Schema.Types.Mixed], default: undefined, select: false }
   }
 }, { timestamps: true }), { emailOptional: true, multiplePerIdentity: true });
+
+// The purge sweep's query. Partial, so the index holds only the handful of
+// accounts that are actually waiting to be deleted.
+userSchema.index(
+  { 'deletion.purgeAt': 1 },
+  { name: 'deletion_purgeAt_pending', partialFilterExpression: { 'deletion.purgeAt': { $type: 'date' } } }
+);
 
 // Exactly one PRIMARY rider profile per identity — the constraint that used to
 // live in accountFields.js for every role, now scoped so managed profiles can

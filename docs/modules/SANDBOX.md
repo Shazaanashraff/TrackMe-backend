@@ -85,7 +85,9 @@ deliberately exercising that path).
   rider (PRIMARY) + 2 managed rider profiles under the same identity (`seedManagedProfiles`,
   created directly via `User.create` — a managed profile has no login to attach, so it doesn't go
   through `createIdentityWithProfile`), 12 bookings, 3 pending manager vehicle requests. See
-  [`PROFILES.md`](PROFILES.md).
+  [`PROFILES.md`](PROFILES.md). Since 2026-10-25 also `leaving.sandbox@trackme.dev`, a rider whose
+  account is scheduled for deletion (shows the rider app's keep-or-continue screen), and one
+  `recipientRole: 'manager'` notice for the first manager's web-admin bell (`seedAccountDeletion`).
 
 ## 9. Known gotchas / regressions
 

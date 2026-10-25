@@ -28,14 +28,29 @@ const userPayload = (user, role, identity = null) => ({
   organization:
     user.organization && user.organization.name
       ? { _id: user.organization._id, name: user.organization.name }
-      : null
+      : null,
+  // Whether this login has a password to change. A Google-only login has none,
+  // and the rider app hides "Change password" for it.
+  ...(identity ? { hasPassword: hasPassword(identity) } : {}),
+  // Set only while a rider account waits to be deleted; the rider app shows the
+  // keep-or-continue screen instead of the app while it is present.
+  ...(role === 'user' ? { pendingDeletion: user.deletion?.purgeAt ? { purgeAt: user.deletion.purgeAt } : null } : {})
 });
+
+// `password` is select:false. When the caller loaded it, it is the answer; when
+// it did not, a login with no Google link must have a password (Identity.js
+// requires one), and a Google-linked one is assumed to have none.
+const hasPassword = (identity) => {
+  if (identity.password !== undefined) return Boolean(identity.password);
+  return !identity.googleId;
+};
 
 // Re-hydrates the Identity a profile document points at, for the many
 // `userPayload` call sites that only have the profile in hand. Without this,
 // userPayload falls back to the profile's own (dormant, and on a managed
 // rider profile always empty) `email`/`isEmailVerified` fields — the
 // account's real email would silently blank out of the response.
-const hydrateIdentity = async (user) => (user.identityId ? Identity.findById(user.identityId) : null);
+// `+password` is read only so `hasPassword` is exact; it never leaves this process.
+const hydrateIdentity = async (user) => (user.identityId ? Identity.findById(user.identityId).select('+password') : null);
 
-module.exports = { userPayload, hydrateIdentity };
+module.exports = { userPayload, hydrateIdentity, hasPassword };

@@ -12,7 +12,8 @@ const { findHouseholdProfiles } = require('../utils/identityRegistry');
 // than trusted outright: a client-supplied id must actually belong to the
 // caller before it can scope a query.
 async function resolveScopedUserIds(req) {
-  if (req.user.role === 'driver') return [req.user._id];
+  // A manager's own notices (web-admin bell): rows written with their Manager id.
+  if (req.user.role === 'driver' || req.user.role === 'admin') return [req.user._id];
   if (!req.identityId) return [req.user._id];
 
   const household = await findHouseholdProfiles(req.identityId);

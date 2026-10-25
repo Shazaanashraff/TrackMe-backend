@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const { sendMail } = require('../utils/mailer');
 const { OAuth2Client } = require('google-auth-library');
 const Manager = require('../models/Manager');
-const { findAccountById, findAccountByDriverCode, modelForRole, ACCOUNTS } = require('../utils/accountRegistry');
+const { findAccountById, findAccountByDriverCode, modelForRole } = require('../utils/accountRegistry');
 const {
   accessTokenExpiresIn,
   refreshTokenExpiresIn,
@@ -27,6 +27,9 @@ const { sendPasswordResetOtpEmail } = require('../utils/passwordReset');
 const { looksLikeDriverCode, normalizeDriverCode } = require('../utils/driverCode');
 const { validateSignupDetails } = require('../utils/enrollmentSchema');
 const { ensureLegacyRider } = require('../utils/riders');
+const { revokeSessions } = require('../utils/sessions');
+const accountDeletion = require('../services/accountDeletion');
+const { formatWhen } = require('../utils/accountEmails');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -113,19 +116,19 @@ const sendVerificationEmail = async (to, otp) => {
 // verified — which would be a real hole.
 const requiresEmailVerification = (role) => role === 'user';
 
-// Clear the refresh token on EVERY profile this person holds. Used when the password
-// changes: the password is now identity-wide, so leaving another app's session alive
-// after a reset would defeat the point of the reset.
-const revokeAllSessions = async (identityId) => {
-  await Promise.all(
-    ACCOUNTS.map(({ model }) =>
-      model.updateMany(
-        { identityId },
-        { $set: { 'refreshToken.tokenHash': null, 'refreshToken.expiresAt': null } }
-      )
-    )
-  );
+// Signing in after the deletion grace period purges the account on the spot
+// (services/accountDeletion.js) and answers with this, so nobody is handed back
+// an account they asked to delete.
+const ACCOUNT_DELETED_RESPONSE = {
+  success: false,
+  code: 'ACCOUNT_DELETED',
+  message: 'This account was deleted. You can create a new account with this email.'
 };
+
+// End the session on EVERY profile this person holds. Used when the password
+// changes: the password is now identity-wide, so leaving another app's session alive
+// after a reset would defeat the point of the reset. See utils/sessions.js.
+const revokeAllSessions = (identityId, io) => revokeSessions(identityId, { io });
 
 const PHONE_NUMBER_REGEX = /^[0-9+()\-\s]{7,20}$/;
 
@@ -162,7 +165,26 @@ exports.register = async (req, res, next) => {
     const riderSeed = { category: signup.category, details: signup.values };
 
     const derivedName = (name && name.trim()) || normalizedEmail.split('@')[0];
-    const existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+    let existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+
+    // An account waiting to be deleted keeps its email until it is purged: the
+    // owner can still keep it by signing in. Once the grace period is over it is
+    // purged here, and the sign-up carries on as if the email were new.
+    if (existingIdentity) {
+      const primary = await accountDeletion.findPrimary(existingIdentity._id);
+      if (primary?.deletion?.purgeAt) {
+        if (!accountDeletion.isDue(primary)) {
+          return res.status(409).json({
+            success: false,
+            code: 'ACCOUNT_PENDING_DELETION',
+            purgeAt: primary.deletion.purgeAt,
+            message: `This email has an account that will be deleted on ${formatWhen(primary.deletion.purgeAt)}. Sign in to keep it, or try again after that.`
+          });
+        }
+        await accountDeletion.purgeAccount(primary);
+        existingIdentity = await findIdentityByEmail(normalizedEmail, { select: '+password' });
+      }
+    }
 
     if (existingIdentity) {
       const passwordMatches = await existingIdentity.comparePassword(password);
@@ -466,6 +488,11 @@ exports.login = async (req, res, next) => {
     }
     const { doc: user, role } = profile;
 
+    if (role === 'user' && accountDeletion.isDue(user)) {
+      await accountDeletion.purgeAccount(user);
+      return res.status(410).json(ACCOUNT_DELETED_RESPONSE);
+    }
+
     // Per-role deactivation: switching off someone's driver profile must leave their
     // rider login working, so this is checked on the profile, not the identity.
     if (user.isActive === false) {
@@ -538,7 +565,7 @@ exports.googleSignIn = async (req, res, next) => {
     }
     const derivedName = payload.name || email.split('@')[0];
 
-    let identity = await findIdentityByEmail(email);
+    let identity = await findIdentityByEmail(email, { select: '+password' });
     let profile;
 
     if (!identity) {
@@ -596,6 +623,11 @@ exports.googleSignIn = async (req, res, next) => {
         profile.doc.name = derivedName;
         await profile.doc.save();
       }
+    }
+
+    if (profile.role === 'user' && accountDeletion.isDue(profile.doc)) {
+      await accountDeletion.purgeAccount(profile.doc);
+      return res.status(410).json(ACCOUNT_DELETED_RESPONSE);
     }
 
     if (profile.doc.isActive === false) {
@@ -907,7 +939,7 @@ exports.resetPasswordWithToken = async (req, res, next) => {
 
     // The new password unlocks every role this person holds, so every existing session
     // must die — not just the one whose app happened to run the reset.
-    await revokeAllSessions(identity._id);
+    await revokeAllSessions(identity._id, req.app.get('io'));
 
     return res.status(200).json({
       success: true,

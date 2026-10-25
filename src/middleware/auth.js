@@ -1,6 +1,23 @@
 const jwt = require('jsonwebtoken');
 const { findAccountById } = require('../utils/accountRegistry');
 
+// A token minted before its profile's sessions were revoked (password changed,
+// account deletion requested) carries an older `sv`. Tokens issued before `sv`
+// existed carry none and count as version 0, which every profile starts at.
+const isRevokedToken = (decoded, doc) => (decoded.sv || 0) !== (doc.sessionVersion || 0);
+
+// While an account waits to be deleted, its holder may only sign in to answer
+// "keep or continue" (services/accountDeletion.js). These are the calls that
+// screen makes; everything else is refused until they choose.
+const PENDING_DELETION_ALLOWED = new Set([
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/auth/delete-account/cancel',
+  '/api/notifications/device-token'
+]);
+
+const isPendingDeletion = (role, doc) => role === 'user' && Boolean(doc.deletion?.purgeAt);
+
 // Verify JWT token
 const protect = async (req, res, next) => {
   try {
@@ -31,6 +48,19 @@ const protect = async (req, res, next) => {
 
     if (!account) {
       return res.status(401).json({ message: 'User not found' });
+    }
+
+    if (isRevokedToken(decoded, account.doc)) {
+      return res.status(401).json({ code: 'SESSION_REVOKED', message: 'Session ended. Please sign in again.' });
+    }
+
+    if (isPendingDeletion(account.role, account.doc) && !PENDING_DELETION_ALLOWED.has(req.originalUrl.split('?')[0])) {
+      return res.status(423).json({
+        success: false,
+        code: 'ACCOUNT_PENDING_DELETION',
+        message: 'This account is scheduled for deletion. Keep it to continue.',
+        purgeAt: account.doc.deletion.purgeAt
+      });
     }
 
     req.user = account.doc;
@@ -73,7 +103,7 @@ const optionalAuth = async (req, res, next) => {
       // read downstream (utils/riders.js, controllers/studentController.js).
       select: '-avatarUrl'
     });
-    if (account && account.doc.isActive !== false) {
+    if (account && account.doc.isActive !== false && !isRevokedToken(decoded, account.doc)) {
       req.user = account.doc;
       req.user.role = account.role;
       req.identityId = account.doc.identityId || null;

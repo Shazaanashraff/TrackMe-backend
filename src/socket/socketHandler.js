@@ -52,12 +52,17 @@ const setupSocket = (io) => {
       // layer used to trust the claims alone, so a deactivated or deleted
       // account kept a working connection until its token expired. One lookup
       // per connection, not per message.
-      const account = await findAccountById(decoded.id, decoded.role, { select: 'isActive' });
+      const account = await findAccountById(decoded.id, decoded.role, { select: 'isActive sessionVersion' });
       if (!account?.doc) {
         return next(new Error('Invalid token: account not found'));
       }
       if (account.doc.isActive === false) {
         return next(new Error('Invalid token: account is deactivated'));
+      }
+      // Same rule as `protect`: a token from before the last session revoke
+      // (utils/sessions.js) no longer opens anything.
+      if ((decoded.sv || 0) !== (account.doc.sessionVersion || 0)) {
+        return next(new Error('Invalid token: session revoked'));
       }
 
       debugLog('✅ Token verified. User ID:', decoded.id);

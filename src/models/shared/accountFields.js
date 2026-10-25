@@ -107,6 +107,15 @@ const applyAccountFields = (schema, { emailOptional = false, multiplePerIdentity
     refreshToken: {
       tokenHash: { type: String, default: null, select: false },
       expiresAt: { type: Date, default: null, select: false }
+    },
+    // Stamped into every access token as `sv` (utils/tokens.js). Bumping it
+    // (utils/sessions.js) makes every token issued before the bump fail in
+    // `protect` and at the socket handshake on its very next use, instead of
+    // living out its 15 minutes. Kept on the profile, which `protect` already
+    // loads, so the check costs no extra query.
+    sessionVersion: {
+      type: Number,
+      default: 0
     }
   });
 

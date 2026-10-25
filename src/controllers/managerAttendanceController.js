@@ -51,7 +51,9 @@ exports.getManagerAttendance = async (req, res, next) => {
     const nameById = new Map(students.map((student) => [String(student._id), student.fullName]));
 
     const rollup = [...byStudent.values()]
-      .map((entry) => ({ ...entry, studentName: nameById.get(entry.studentId) || 'Unknown' }))
+      // A rider row is only ever missing once its account was deleted and purged
+      // (services/accountDeletion.js); the events stay, the person does not.
+      .map((entry) => ({ ...entry, studentName: nameById.get(entry.studentId) || 'Deleted rider' }))
       .sort((a, b) => (b.boardCount + b.alightCount) - (a.boardCount + a.alightCount));
 
     // Pagination is opt-in — callers that don't pass page/limit keep getting the

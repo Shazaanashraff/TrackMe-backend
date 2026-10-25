@@ -3,7 +3,9 @@ const { notificationCreated } = require('../utils/notificationEvents');
 
 const notificationSchema = new mongoose.Schema({
   eventId: { type: String, unique: true, sparse: true },
-  recipientRole: { type: String, enum: ['user', 'driver'], default: 'user' },
+  // 'manager' rows are read by web-admin's notification bell; `userId` then
+  // holds the Manager id (the ref below is nominal, nothing populates it).
+  recipientRole: { type: String, enum: ['user', 'driver', 'manager'], default: 'user' },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -21,7 +23,8 @@ const notificationSchema = new mongoose.Schema({
       'VEHICLE_ARRIVAL', 'VEHICLE_DEPARTURE', 'ROUTE_UPDATE', 'SYSTEM_ALERT', 'BOOKING_CONFIRMATION', 'PAYMENT_SUCCESS',
       'ROUTE_ACCESS_REQUEST', 'ROUTE_ACCESS_APPROVED', 'ROUTE_ACCESS_REJECTED', 'ROUTE_ACCESS_REVOKED',
       'ENROLLMENT_APPROVED', 'ENROLLMENT_REJECTED', 'BOARDING_EVENT', 'COMMUNICATION',
-      'APP_UPDATE_AVAILABLE'
+      'APP_UPDATE_AVAILABLE',
+      'RIDER_ACCOUNT_DELETED', 'RIDER_ACCOUNT_RESTORED'
     ],
     required: [true, 'Notification type is required']
   },

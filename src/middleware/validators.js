@@ -300,6 +300,30 @@ exports.validateForgotPasswordReset = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
+// Signed-in account actions (controllers/accountController.js).
+exports.validateAccountCodeRequest = [
+  body('purpose')
+    .isIn(['CHANGE_PASSWORD', 'DELETE_ACCOUNT']).withMessage('purpose must be CHANGE_PASSWORD or DELETE_ACCOUNT')
+];
+
+const accountCodeField = () => body('code')
+  .trim()
+  .notEmpty().withMessage('Code is required')
+  .matches(/^\d{6}$/).withMessage('Code must be 6 digits');
+
+exports.validateChangePassword = [
+  accountCodeField(),
+  body('password')
+    .notEmpty().withMessage('Password is required')
+    .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
+];
+
+exports.validateDeleteAccount = [accountCodeField()];
+
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const ORG_SERVICE_TYPES = ['SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
