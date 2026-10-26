@@ -19,6 +19,7 @@ const {
   mapValuesToObject
 } = require('../utils/riders');
 const { riderRoleForResolvedService } = require('../utils/riderRole');
+const { afterEnrollmentRemoved } = require('../utils/enrollmentExit');
 
 // One message for every reason a key does not work, so a caller cannot use the
 // response to learn which keys exist or which drivers are private.
@@ -325,24 +326,11 @@ exports.leaveEnrollment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Enrollment not found' });
     }
 
-    await require('../services/communications').retireAbsences({ enrollmentId: enrollment._id });
-
-    // One of the two ways a rider comes off ACTIVE; the other is the manager
+    // One of the ways a rider comes off ACTIVE; the others are the manager
     // removing them (managerEnrollmentsController.removeManagerEnrollment),
-    // which performs this same revoke. If they had a live-tracking socket open
-    // on this vehicle it stays joined to the room until it disconnects or
-    // explicitly unsubscribes, so tell it to leave now rather than on a timeout.
-    if (enrollment.status === 'ACTIVE') {
-      const vehicle = await Vehicle.findOne({ driverId: enrollment.driverId, isDeleted: false })
-        .select('vehicleId')
-        .lean();
-      if (vehicle) {
-        req.app.get('io')?.to(`vehicle:${vehicle.vehicleId}`).emit('vehicle:access-revoked', {
-          vehicleId: vehicle.vehicleId,
-          riderId: String(enrollment.studentId || '')
-        });
-      }
-    }
+    // which performs this same revoke, and an account deletion request
+    // (services/accountDeletion.js).
+    await afterEnrollmentRemoved(enrollment, req.app.get('io'));
 
     return res.status(200).json({ success: true, message: 'Enrollment removed' });
   } catch (error) {

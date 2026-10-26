@@ -11,10 +11,12 @@ function bindIo(server) {
 // Rooms: a rider socket joins `student:<profileId>` for every profile in its
 // household (socket/socketHandler.js), and Notification.userId is that profile
 // id, so one emit reaches whichever household member is connected. Drivers
-// join `driver:<id>`.
+// join `driver:<id>`. Managers (web-admin) join `account:<id>`.
+const ROOM_PREFIX = { driver: 'driver', manager: 'account' };
+
 function notificationCreated(notification) {
   if (!io || !notification?.userId) return;
-  const room = `${notification.recipientRole === 'driver' ? 'driver' : 'student'}:${notification.userId}`;
+  const room = `${ROOM_PREFIX[notification.recipientRole] || 'student'}:${notification.userId}`;
   io.to(room).emit('notification:new', {
     notificationId: String(notification._id),
     type: notification.type,

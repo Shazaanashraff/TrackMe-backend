@@ -15,6 +15,9 @@ const message = new Schema({
   text: { type: String, maxlength: 1000, required: true }, templateId: String,
   absenceId: Schema.Types.ObjectId, revision: Number, absenceStatus: String,
   announcementId: Schema.Types.ObjectId, correctionOf: Schema.Types.ObjectId,
+  // A system message only the driver should be told about (a rider leaving
+  // because their account is being deleted): the rider gets no notification.
+  driverOnly: { type: Boolean, default: false },
   deliveryPending: { type: Boolean, default: true, index: true },
 }, { timestamps: true });
 message.index({ conversationId: 1, _id: -1 });

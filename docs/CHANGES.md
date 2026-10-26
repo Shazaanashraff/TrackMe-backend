@@ -23,6 +23,21 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-25: Rider change password and delete account (issues #58, #59)
+- **Branch:** feature/account-deletion-password
+- **Modules touched:** auth ([`AUTH.md`](modules/AUTH.md)), notifications ([`NOTIFICATIONS.md`](modules/NOTIFICATIONS.md)), communications ([`COMMUNICATIONS.md`](modules/COMMUNICATIONS.md)), sandbox ([`SANDBOX.md`](modules/SANDBOX.md))
+- **What changed:**
+  - New `POST /api/auth/account-code`, `/change-password`, `/delete-account`, `/delete-account/cancel` (`controllers/accountController.js`), each confirmed with an emailed 6-digit code (forgot-password rules).
+  - Instant session revocation: access tokens carry `sv` (profile `sessionVersion`); `protect` returns 401 `SESSION_REVOKED` and the socket handshake refuses a stale one. `utils/sessions.js` `revokeSessions` replaces the refresh-only `revokeAllSessions`, so a forgot-password reset now also ends access tokens at once.
+  - Account deletion with a 3-day grace (`ACCOUNT_DELETION_GRACE_DAYS`): enrollments end at the request and come back on "keep"; driver told by a `driverOnly` system chat message, manager by a new `recipientRole: 'manager'` Notification (bell) and email; purge by an hourly sweep, on start, or at a late sign-in (410 `ACCOUNT_DELETED`); boarding events kept without GPS ("Deleted rider").
+  - `userPayload` adds `hasPassword` and `pendingDeletion`; pending accounts get 423 `ACCOUNT_PENDING_DELETION` outside an allow-list; register with that email is 409.
+- **Why:** UserApp issues #58 (Google Play requires in-app deletion) and #59.
+- **Contract impact:** additive. New endpoints and payload fields; new 401 `SESSION_REVOKED`, 423 and 410 statuses; managers can now read their own rows from `/api/notifications`. Consumers: user-app (Profile screens, pending screen) and web-admin (manager bell) docs updated in their own branches.
+- **Tests:** `tests/integration/account-actions.test.js` (18), `tests/unit/account-deletion-grace.test.js` (8). Targeted re-run: same 5 pre-existing failures as main (3 avatar, 2 session-revocation), plus the known profiles/qr-attendance/login-rate-limit/manager-drivers failures, identical on main.
+- **Docs updated:** AUTH.md, NOTIFICATIONS.md, COMMUNICATIONS.md, SANDBOX.md, TESTING_GUIDE.md, `.env.example`.
+- **Migration:** none. New fields default; the partial `deletion_purgeAt_pending` index builds on start.
+- **Follow-ups / known issues:** the Play Console web deletion link is UserApp issue #60. Purges lag while Render sleeps (the sweep runs on wake).
+
 ## 2026-10-24 — Email: SMTP fallback behind Resend (shared mailer)
 - **Branch:** main
 - **Modules touched:** auth — [`docs/modules/AUTH.md`](modules/AUTH.md) (§7 side effects)

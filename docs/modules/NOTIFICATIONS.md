@@ -56,7 +56,13 @@ move its unread badge at once, without a push (web has none) or a foreground ref
 
 | Event | Emitted to | Payload |
 |---|---|---|
-| `notification:new` | `student:<userId>` for a rider (the same profile-id room every household socket joins), `driver:<userId>` for a driver | `{ notificationId, type, title, studentId, createdAt }` |
+| `notification:new` | `student:<userId>` for a rider (the same profile-id room every household socket joins), `driver:<userId>` for a driver, `account:<managerId>` for a manager (`recipientRole: 'manager'`, since 2026-10-25) | `{ notificationId, type, title, studentId, createdAt }` |
+
+**Manager notices (2026-10-25).** `recipientRole: 'manager'` rows (`userId` = the Manager id) feed
+web-admin's notification bell through the same `GET /api/notifications`, `GET
+/api/notifications/count/unread`, `PUT /:id/read` and `PUT /read-all` routes: for role `admin`,
+`resolveScopedUserIds` returns the caller's own id. Types so far: `RIDER_ACCOUNT_DELETED`,
+`RIDER_ACCOUNT_RESTORED` (written by `services/accountDeletion.js`, see [`AUTH.md`](AUTH.md) §8).
 
 The emit lives in `src/utils/notificationEvents.js` (`bindIo(io)` from `server.js`,
 `notificationCreated(doc)`). A `pre/post('save')` pair on the model calls it for every

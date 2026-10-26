@@ -29,7 +29,9 @@ const ManagerVehicleRequest = require('../src/models/ManagerVehicleRequest');
 const RiderProfile = require('../src/models/RiderProfile');
 const DriverEnrollment = require('../src/models/DriverEnrollment');
 const VehicleLiveLocation = require('../src/models/VehicleLiveLocation');
+const Notification = require('../src/models/Notification');
 const { createIdentityWithProfile } = require('../src/utils/identityRegistry');
+const { graceMs } = require('../src/services/accountDeletion');
 const { generateUniqueDriverCode } = require('../src/utils/driverCode');
 const { generateUniqueRiderCode } = require('../src/utils/riderCode');
 
@@ -74,6 +76,7 @@ async function wipeCollections() {
     RiderProfile.deleteMany({}),
     DriverEnrollment.deleteMany({}),
     VehicleLiveLocation.deleteMany({}),
+    Notification.deleteMany({ recipientRole: 'manager' }),
   ]);
 }
 
@@ -381,6 +384,32 @@ async function seedPendingRequests(managers, vehicles) {
   ]);
 }
 
+// Account deletion (docs/modules/AUTH.md §8): a second rider whose account is
+// waiting to be deleted, so signing in as them shows the rider app's
+// keep-or-continue screen, and one manager bell notice for web-admin.
+async function seedAccountDeletion(managers) {
+  const requestedAt = new Date();
+  const { doc: rider } = await createIdentityWithProfile({
+    email: 'leaving.sandbox@trackme.dev',
+    password: SANDBOX_PASSWORD,
+    isEmailVerified: true,
+    role: 'user',
+    fields: { name: 'Sandbox Leaving Rider', isActive: true, isEmailVerified: true },
+  });
+  rider.deletion = { requestedAt, purgeAt: new Date(requestedAt.getTime() + graceMs()), enrollmentSnapshot: [] };
+  await rider.save();
+
+  await Notification.create({
+    userId: managers[0]._id,
+    recipientRole: 'manager',
+    type: 'RIDER_ACCOUNT_DELETED',
+    title: 'Rider left',
+    message: "Sandbox Leaving Rider left Sandbox Driver's shuttle because they are deleting their account.",
+    data: { type: 'RIDER_ACCOUNT_DELETED' },
+  });
+  return rider;
+}
+
 async function main() {
   const { uri, dbName } = await assertSandboxDatabase();
 
@@ -433,6 +462,9 @@ async function main() {
 
   const pendingRequests = await seedPendingRequests(managers, vehicles);
   console.log(`Seeded ${pendingRequests.length} pending requests`);
+
+  await seedAccountDeletion(managers);
+  console.log('Seeded a rider pending deletion and a manager bell notice');
 
   console.log('Sandbox seed complete.');
   await mongoose.disconnect();

@@ -56,6 +56,8 @@ All three authorize on the caller's own ACTIVE enrollment (`activeEnrollment`). 
 
 ## Realtime contract
 
+A system message with `driverOnly: true` (2026-10-25: a rider leaving or coming back because of account deletion, `services/accountDeletion.js`) notifies and pushes the driver only; the rider gets no `COMMUNICATION` notification for it.
+
 Authenticated sockets join `account:<accountId>` or `driver:<driverId>`. `communication:event` carries a stable `eventId`, `conversationId`, `riderId`, an optional absence revision, and (since 2026-09-10) `text`/`sender`/`absenceStatus` (mirrors `Message.text`/`sender`/`absenceStatus`, undefined on a bare read-receipt event) so a client can show the real copy (e.g. an absence-acknowledgment banner) without a round-trip fetch of the thread. The push job's `data` payload carries the same fields. Clients deduplicate event IDs and refetch authoritative state after events and reconnects.
 
 Since 2026-10-19 the event is emitted before the delivery's `Notification` and push rows are written, because nothing in them changes the event. A client that refetches its notification list on `communication:event` can therefore miss the newest row; `notification:new` is emitted once that row exists, so a client refetching on both is always right. A pass that fails after the emit repeats it on the next pass with the same `eventId`.

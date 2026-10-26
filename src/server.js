@@ -120,6 +120,7 @@ const bootstrap = async () => {
     await connectDB();
     startupState.dbConnected = true;
     require('./services/communications').startDispatcher(io);
+    require('./services/accountDeletion').startDeletionSweeper();
     console.log(`✅ [${new Date().toISOString()}] DB connected (${Date.now() - startupState.startTime}ms)`);
 
     console.log(`⏱️  [${new Date().toISOString()}] Ensuring super admin account...`);

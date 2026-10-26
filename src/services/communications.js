@@ -306,7 +306,7 @@ async function deliverMessages(messages, io) {
     // dedupe on eventId, so a pass that fails after this and repeats it next
     // time costs nothing; notification:new follows once the rows exist.
     io?.to(`account:${c.accountId}`).to(`driver:${c.driverId}`).emit('communication:event', event);
-    const roles = m.sender === 'system' ? ['user', 'driver'] : [m.sender === 'driver' ? 'user' : 'driver'];
+    const roles = m.sender === 'system' ? (m.driverOnly ? ['driver'] : ['user', 'driver']) : [m.sender === 'driver' ? 'user' : 'driver'];
     for (const role of roles) {
       const recipientId = role === 'driver' ? c.driverId : c.accountId;
       const fields = { eventId: `${m.eventId}:${role}`, userId: recipientId, recipientRole: role,

@@ -293,7 +293,8 @@ exports.getBoardingRoster = async (req, res, next) => {
           const trip = statusByStudent.get(String(id));
           return {
             studentId: String(id),
-            studentName: nameById.get(String(id)) || 'Unknown',
+            // Missing only after the rider's account was purged.
+            studentName: nameById.get(String(id)) || 'Deleted rider',
             lastEventAt: trip?.lastEventAt || null
           };
         })

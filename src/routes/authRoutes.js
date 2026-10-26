@@ -27,11 +27,22 @@ const {
 	validateForgotPasswordVerifyOtp,
 	validateForgotPasswordReset,
 	validateAccountSetupValidate,
-	validateAccountSetupComplete
+	validateAccountSetupComplete,
+	validateAccountCodeRequest,
+	validateVerifyAccountCode,
+	validateChangePassword,
+	validateDeleteAccount
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
-const { protect } = require('../middleware/auth');
+const { protect, requireUser, requirePrimaryProfile } = require('../middleware/auth');
 const { createEmailRateLimiter } = require('../middleware/emailRateLimiter');
+const {
+	requestAccountCode,
+	verifyAccountCode,
+	changePassword,
+	deleteAccount,
+	cancelDeletion
+} = require('../controllers/accountController');
 
 const RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_EMAIL_RATE_LIMIT_WINDOW_MS) || 10 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.AUTH_EMAIL_RATE_LIMIT_MAX) || 3;
@@ -116,5 +127,29 @@ router.put('/profile', protect, updateProfile);
 // PUT /api/auth/avatar — body carries a base64 image data URL; the app-wide JSON
 // limit (3 MB, set in server.js) covers it. Size is re-checked in the controller.
 router.put('/avatar', protect, updateAvatar);
+
+// Signed-in account actions (rider app Profile). Same request ceiling as the
+// forgot-password code, keyed on the login rather than a typed email.
+const accountCodeRateLimit = createEmailRateLimiter({
+	windowMs: RATE_LIMIT_WINDOW_MS,
+	max: RATE_LIMIT_MAX,
+	message: 'Too many code requests for this account. Please wait before trying again.',
+	keyExtractor: (req) => (req.identityId ? String(req.identityId) : '')
+});
+
+// POST /api/auth/account-code
+router.post('/account-code', protect, requireUser, validateAccountCodeRequest, handleValidationErrors, accountCodeRateLimit, requestAccountCode);
+
+// POST /api/auth/account-code/verify (change password checks the code before asking for the new one)
+router.post('/account-code/verify', protect, requireUser, validateVerifyAccountCode, handleValidationErrors, verifyAccountCode);
+
+// POST /api/auth/change-password
+router.post('/change-password', protect, requireUser, validateChangePassword, handleValidationErrors, changePassword);
+
+// POST /api/auth/delete-account/cancel (declared before /delete-account by convention)
+router.post('/delete-account/cancel', protect, requireUser, requirePrimaryProfile, cancelDeletion);
+
+// POST /api/auth/delete-account
+router.post('/delete-account', protect, requireUser, validateDeleteAccount, handleValidationErrors, deleteAccount);
 
 module.exports = router;

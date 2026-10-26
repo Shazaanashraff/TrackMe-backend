@@ -42,6 +42,11 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 | `GET` | `/me` | `protect` | `getMe` | Re-reads the caller's own profile — see `user-app`'s `AUTH.md`. |
 | `PUT` | `/profile` | `protect` | `updateProfile` | name, phoneNumber. `phoneNumber` is silently ignored for a `MANAGED` rider profile — see [`PROFILES.md`](PROFILES.md). |
 | `PUT` | `/avatar` | `protect` | `updateAvatar` | base64 data URL; size re-checked in controller. |
+| `POST` | `/account-code` | `protect` + `requireUser` | `accountController.requestAccountCode` | `{ purpose: 'CHANGE_PASSWORD' \| 'DELETE_ACCOUNT' }`. Emails a 6-digit code to the login's address (same rules as the forgot-password code: 5 minutes, wiped on the 5th wrong try). 3 requests per 10 minutes per login. `CHANGE_PASSWORD` on a Google-only login ⇒ 409 `NO_PASSWORD`. Dev echo `developmentOtp`, 502 when mail fails in production. |
+| `POST` | `/account-code/verify` | `protect` + `requireUser` | `accountController.verifyAccountCode` | `{ purpose: 'CHANGE_PASSWORD', code }`. Checks the code before the app asks for the new password: wrong ⇒ 400 `INVALID_CODE` (5th wrong try wipes it), expired, Google-only ⇒ 409 `NO_PASSWORD`. A right code is spent and answered with `{ token }`, valid 10 minutes, single use, stored hashed on `Identity.accountCode.tokenHash` (same idea as the forgot-password reset token). |
+| `POST` | `/change-password` | `protect` + `requireUser` | `accountController.changePassword` | `{ token, password }`: `token` comes from `/account-code/verify`; wrong, expired or reused ⇒ 400 `INVALID_TOKEN`, password policy as register. Revokes **every** session of every role on the login, then returns a fresh token pair (+ `user`) for the caller only. Emails "Password changed". |
+| `POST` | `/delete-account` | `protect` + `requireUser` | `accountController.deleteAccount` | `{ code }`. Schedules deletion after a grace period (§8 "Account deletion"); returns `purgeAt`. Already scheduled ⇒ 409 `ACCOUNT_PENDING_DELETION`. |
+| `POST` | `/delete-account/cancel` | `protect` + `requireUser` + `requirePrimaryProfile` | `accountController.cancelDeletion` | "Keep my account". Restores the ended enrollments, returns `user` and `restoredEnrollments`. Not scheduled ⇒ 409 `NOT_PENDING_DELETION`. |
 
 ## 3. Key files (one job each)
 
@@ -57,6 +62,11 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 | `src/utils/tokens.js` | `issueTokensForUser`, `hashToken`, token-expiry config — shared by login, refresh, and `PROFILES.md`'s profile-switch endpoint. |
 | `src/utils/accountPayload.js` | `userPayload` (the client-facing account shape) + `hydrateIdentity` — shared by every response that hands back an account. |
 | `src/utils/ensureSuperAdminAccount.js` | Bootstraps the super-admin on startup. |
+| `src/controllers/accountController.js` | Signed-in account actions: account code, change password, delete account, keep account. |
+| `src/utils/sessions.js` | `revokeSessions(identityId, { roles, io, keepSocketsOf })`: bumps `sessionVersion`, clears refresh tokens, drops open sockets. |
+| `src/utils/accountCode.js` | Issue/consume the emailed account-action code (`Identity.accountCode`). |
+| `src/utils/accountEmails.js` | Code, password-changed, deletion scheduled/cancelled/done, and the manager rider-notice emails. |
+| `src/services/accountDeletion.js` | Schedule, cancel and purge, the driver/manager notices, and the hourly purge sweep. |
 | `src/models/Identity.js` | The login: email, password, verification/reset state. |
 | `src/models/{User,Driver,Manager,SuperAdmin}.js` | The four profile collections. |
 | `src/models/shared/accountFields.js` | The field set + indexes shared by all four profile collections, including the `multiplePerIdentity` option `User` alone uses — see [`PROFILES.md`](PROFILES.md). |
@@ -65,8 +75,9 @@ All under `/api/auth` (`src/routes/authRoutes.js`). Every public endpoint runs a
 
 | Model | Key fields | Indexes / invariants |
 |---|---|---|
-| `Identity` | `email` (unique, global), `password` (bcrypt, `select:false`), `googleId`, `isEmailVerified`, `isProvisional`, `emailVerification.*`, `passwordReset.*` | `email` unique across the whole collection — this is where cross-role email uniqueness actually lives. |
-| `User` / `Driver` / `Manager` / `SuperAdmin` | `identityId` (ref `Identity`), `name`, `email` (mirrored from `Identity.email`), `avatarUrl`, `isActive` | `email` unique **per collection**, so one `Identity` can hold a `User` and a `Driver` profile with the same mirrored email without colliding. `identityId` unique per collection too — **except `User`**, which allows several profiles per identity; see [`PROFILES.md`](PROFILES.md) for the exact index shape. |
+| `Identity` | `email` (unique, global), `password` (bcrypt, `select:false`), `googleId`, `isEmailVerified`, `isProvisional`, `emailVerification.*`, `passwordReset.*`, `accountCode.{purpose,otpHash,expiresAt,attempts}` (all `select:false`) | `email` unique across the whole collection — this is where cross-role email uniqueness actually lives. |
+| `User` (PRIMARY only) | `deletion.{requestedAt,purgeAt,enrollmentSnapshot}` (`enrollmentSnapshot` `select:false`) | Partial index `deletion_purgeAt_pending` on `deletion.purgeAt` for the purge sweep. |
+| `User` / `Driver` / `Manager` / `SuperAdmin` | `identityId` (ref `Identity`), `name`, `email` (mirrored from `Identity.email`), `avatarUrl`, `isActive`, `sessionVersion` (stamped into access tokens as `sv`) | `email` unique **per collection**, so one `Identity` can hold a `User` and a `Driver` profile with the same mirrored email without colliding. `identityId` unique per collection too — **except `User`**, which allows several profiles per identity; see [`PROFILES.md`](PROFILES.md) for the exact index shape. |
 | `Driver` | `driverCode` (permanent, sparse-unique) | May have **no** `identityId` — a driver-code driver's `password` field is its live credential, not a dormant mirror. |
 
 `Identity.email` is the single source of email uniqueness; a profile's own `email` field is a
@@ -94,6 +105,14 @@ flowchart TD
 
 - `protect` verifies the JWT then **re-loads the profile document** via `accountRegistry` — a
   token alone is never trusted as the identity record.
+- **Instant revocation.** Access tokens carry `sv`, the profile's `sessionVersion` at issue time.
+  `protect` answers 401 `SESSION_REVOKED` and the socket handshake refuses (`Invalid token: session
+  revoked`) when it no longer matches. A token with no `sv` (issued before this) counts as 0.
+  `utils/sessions.js` bumps it, so a password change, a password reset or a deletion request ends
+  other devices on their next request, not 15 minutes later.
+- **Pending deletion.** While a rider's PRIMARY has `deletion.purgeAt`, `protect` answers 423
+  `ACCOUNT_PENDING_DELETION` to every call except `GET /api/auth/me`, `POST /api/auth/logout`,
+  `POST /api/auth/delete-account/cancel` and `/api/notifications/device-token`.
 - `optionalAuth` hydrates `req.user` when a token is present but does not reject anonymous callers.
 - `requireRoles(...roles)` is the single role gate; the named exports are thin wrappers. Manager
   endpoints must **additionally** scope to owned resources (see
@@ -121,6 +140,9 @@ flowchart TD
 |---|---|---|
 | Email | register / resend / forgot-password / manager invite+reset | OTP or link delivery through `utils/mailer.js`: Resend first, then the SMTP (nodemailer) fallback when Resend is unset, errors, or throws (`SMTP_HOST`/`SMTP_USER`/`SMTP_PASS`). Resend only delivers to its account owner until a sender domain is verified, so the fallback keeps verification codes reaching everyone meanwhile. |
 | Account bootstrap | server start | `ensureSuperAdminAccount` creates the super-admin if absent. |
+| Email | account code / change password / deletion scheduled, cancelled, purged | `utils/accountEmails.js`. A failed send never fails the action (except the code request itself, 502 in production). |
+| Driver + manager notice | deletion scheduled / cancelled | Driver: a `driverOnly` system message in the rider's chat thread (ACTIVE enrollments only), pushed by the communications dispatcher. Manager: a `recipientRole: 'manager'` Notification (`RIDER_ACCOUNT_DELETED` / `RIDER_ACCOUNT_RESTORED`) announced on `account:<managerId>`, plus an email. |
+| Purge sweep | server start, then hourly | `startDeletionSweeper` purges every PRIMARY whose `deletion.purgeAt` has passed. |
 
 ## 8. Not visible in the API surface
 
@@ -155,8 +177,25 @@ flowchart TD
 - OTPs carry expiry; the password-reset token is separate from and shorter-lived than an access
   token.
 - **A password reset revokes every profile's session**, not just the one being reset from —
-  `authController.revokeAllSessions(identityId)` clears `refreshToken` on every profile sharing
-  that `Identity`, `MANAGED` rider profiles included.
+  `authController.revokeAllSessions(identityId)` (now `utils/sessions.js` `revokeSessions`) clears
+  `refreshToken` and bumps `sessionVersion` on every profile sharing that `Identity`, `MANAGED`
+  rider profiles included. In-app change password does the same, then re-issues the caller's pair.
+- **`hasPassword` / `pendingDeletion` in `userPayload`.** `hasPassword` (present when the Identity
+  is known) is exact when `+password` was loaded (`hydrateIdentity` and Google sign-in load it) and
+  otherwise inferred from `googleId`. `pendingDeletion` is `{ purgeAt }` or `null` on every rider
+  payload.
+- **Account deletion** (`services/accountDeletion.js`). Grace period `ACCOUNT_DELETION_GRACE_DAYS`
+  (default 3; `0` purges at the next sweep). On request: the household's PENDING and ACTIVE
+  enrollments are snapshotted on the PRIMARY and deleted, push tokens cleared, rider sessions
+  revoked (driver/manager sessions on the same login are untouched), driver and manager told.
+  Signing in during the grace period works (payload carries `pendingDeletion`), register with the
+  email is 409 `ACCOUNT_PENDING_DELETION`. Keeping the account re-inserts the snapshot rows (same
+  `_id`s; a row is skipped if its driver or rider is gone). After `purgeAt`, the sweep, a sign-in
+  (410 `ACCOUNT_DELETED`) or a register purges: household `User`s, `RiderProfile`s, places,
+  enrollments, organization profiles, rider notifications, chats (conversations, messages,
+  absences, announcement recipients, push deliveries), bookings and reviews. `BoardingEvent`s stay
+  with `lat`/`lng` nulled and show as "Deleted rider"; the manager's notices stay without the
+  name. The `Identity` is deleted only when no other profile still uses it.
 
 ## 9. Known gotchas / regressions
 
@@ -183,6 +222,8 @@ flowchart TD
 | Unit | `tests/unit/account-login-filter.test.js` | `loginFilterForRole` — the account/profile precedence multiple rider profiles depend on. |
 | Unit | `tests/unit/recoverable-password.test.js` | AES-GCM round trip, the feature gate, a fresh IV per record, and refusal (not garbage, not a throw) on a wrong key, a tampered tag, an unknown version, or malformed input. |
 | Integration | `tests/integration/manager-driver-password.test.js` | Viewing a driver password: the cross-manager refusal, unauthenticated refusal, the audit entry (and that it never contains the password), 404 for a pre-feature driver, 503 with the feature off, ciphertext absent from ordinary reads, and that storage is encrypted while `password` stays bcrypt. |
+| Integration | `tests/integration/account-actions.test.js` | Account code (401/403/400, Google-only 409, 3-per-10-minutes 429); verify (wrong/expired/5-tries/wrong-purpose codes, Google-only 409, 10-minute token); change password with the token (wrong/expired/reused token 400, other sessions and roles 401 at once, caller's new pair works, wrong/expired/5-tries/wrong-purpose codes, policy); delete account (enrollments ended + snapshot, driver-only message, manager notices, 403 for drivers); grace period (423 gate, register 409, keep restores enrollments + notices); purge (household gone, boarding kept without GPS, manager notice anonymised, sign-in 410, driver login kept). |
+| Unit | `tests/unit/account-deletion-grace.test.js` | `ACCOUNT_DELETION_GRACE_DAYS` parsing and `isDue`. |
 | Integration | `tests/integration/auth.test.js`, `identity-registry.test.js`, `account-registry.test.js` | register→verify→login, unverified 403 `requiresVerification`, refresh rotation, forgot/reset chain, profile + avatar (incl. oversize rejection), role-guard 401/403 matrix, duplicate-email register (`canSignIn`). |
 
 Canonical matrix: [`../TEST_PLAN_INTEGRATION.md`](../TEST_PLAN_INTEGRATION.md) and
