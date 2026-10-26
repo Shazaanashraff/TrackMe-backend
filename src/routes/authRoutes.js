@@ -144,7 +144,16 @@ router.post('/change-password', protect, requireUser, validateChangePassword, ha
 // POST /api/auth/delete-account/cancel (declared before /delete-account by convention)
 router.post('/delete-account/cancel', protect, requireUser, requirePrimaryProfile, cancelDeletion);
 
+// Deleting is confirmed with the password, so each try is a password guess:
+// the same ceiling as sign-in, keyed on the login.
+const deleteAccountRateLimit = createEmailRateLimiter({
+	windowMs: LOGIN_RATE_LIMIT_WINDOW_MS,
+	max: LOGIN_RATE_LIMIT_MAX,
+	message: 'Too many tries for this account. Please wait before trying again.',
+	keyExtractor: (req) => (req.identityId ? String(req.identityId) : '')
+});
+
 // POST /api/auth/delete-account
-router.post('/delete-account', protect, requireUser, validateDeleteAccount, handleValidationErrors, deleteAccount);
+router.post('/delete-account', protect, requireUser, validateDeleteAccount, handleValidationErrors, deleteAccountRateLimit, deleteAccount);
 
 module.exports = router;

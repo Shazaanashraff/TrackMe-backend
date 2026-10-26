@@ -7,10 +7,11 @@ const { ACCOUNT_CODE_SELECT, issueAccountCode, consumeAccountCode } = require('.
 const { sendAccountCodeEmail, sendPasswordChangedEmail } = require('../utils/accountEmails');
 const accountDeletion = require('../services/accountDeletion');
 
-// Signed-in account actions from the rider app's Profile: change password and
-// delete account, each confirmed with a code emailed to the account. Both act
-// on the whole login (the Identity), so they work from a switched-in managed
-// profile too. See docs/modules/AUTH.md "Account actions".
+// Signed-in account actions from the rider app's Profile: change password
+// (confirmed with a code emailed to the account) and delete account (confirmed
+// with the password, or an emailed code when the login has no password). Both
+// act on the whole login (the Identity), so they work from a switched-in
+// managed profile too. See docs/modules/AUTH.md "Account actions".
 
 const shouldEchoDevOtp = () =>
   process.env.ENABLE_DEV_OTP_ECHO === 'true' && process.env.NODE_ENV !== 'production';
@@ -105,8 +106,9 @@ exports.changePassword = async (req, res, next) => {
   }
 };
 
-// @desc    Schedule the rider account for deletion, confirmed with an emailed code
-// @route   POST /api/auth/delete-account   { code }
+// @desc    Schedule the rider account for deletion. A login with a password
+//          confirms with it; a Google-only login confirms with an emailed code.
+// @route   POST /api/auth/delete-account   { password } or { code }
 // @access  Private (rider)
 exports.deleteAccount = async (req, res, next) => {
   try {
@@ -115,9 +117,20 @@ exports.deleteAccount = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Account not found' });
     }
 
-    const result = await consumeAccountCode(identity, 'DELETE_ACCOUNT', req.body.code);
-    if (!result.ok) {
-      return res.status(400).json({ success: false, code: 'INVALID_CODE', message: result.message });
+    if (hasPassword(identity)) {
+      const { password } = req.body;
+      if (!password || !(await identity.comparePassword(password))) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PASSWORD',
+          message: password ? 'That password is not right.' : 'Enter your password to confirm.'
+        });
+      }
+    } else {
+      const result = await consumeAccountCode(identity, 'DELETE_ACCOUNT', req.body.code);
+      if (!result.ok) {
+        return res.status(400).json({ success: false, code: 'INVALID_CODE', message: result.message });
+      }
     }
 
     const scheduled = await accountDeletion.scheduleDeletion({ identity, io: req.app.get('io') });
