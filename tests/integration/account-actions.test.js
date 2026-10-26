@@ -1,3 +1,9 @@
+// Every request here comes from one address, and this suite makes more than the
+// 100-per-15-minutes auth ceiling (middleware/rateLimiters.js). Lift it before
+// the server loads, as auth-ip-rate-limit.test.js does; the per-login limiters
+// under test are separate.
+process.env.AUTH_IP_RATE_LIMIT_MAX = '1000';
+
 const request = require('supertest');
 const app = require('../../src/server');
 const Identity = require('../../src/models/Identity');
@@ -107,6 +113,75 @@ describe('POST /api/auth/account-code', () => {
   });
 });
 
+// Change password checks the code first: verify spends it and hands back a
+// token, and the new password goes with that token.
+const verifyCode = (token, code, purpose = 'CHANGE_PASSWORD') =>
+  request(app).post('/api/auth/account-code/verify').set(...authHeader(token)).send({ purpose, code });
+
+async function changeToken(token) {
+  const code = await requestCode(token, 'CHANGE_PASSWORD');
+  const res = await verifyCode(token, code);
+  expect(res.status).toBe(200);
+  expect(res.body.token).toMatch(/^[0-9a-f]{64}$/);
+  return res.body.token;
+}
+
+const changePassword = (token, body) =>
+  request(app).post('/api/auth/change-password').set(...authHeader(token)).send(body);
+
+describe('POST /api/auth/account-code/verify', () => {
+  it('needs a signed-in rider', async () => {
+    expect((await request(app).post('/api/auth/account-code/verify').send({ purpose: 'CHANGE_PASSWORD', code: '123456' })).status).toBe(401);
+    const driver = await createDriver();
+    expect((await verifyCode(driver.token, '123456')).status).toBe(403);
+  });
+
+  it('refuses a wrong code and wipes the code on the 5th wrong try', async () => {
+    const rider = await createRider();
+    const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
+    const wrong = code === '111111' ? '222222' : '111111';
+
+    for (let i = 0; i < 4; i += 1) {
+      const res = await verifyCode(rider.token, wrong);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_CODE');
+      expect(res.body.token).toBeUndefined();
+    }
+    const fifth = await verifyCode(rider.token, wrong);
+    expect(fifth.body.message).toMatch(/Too many wrong codes/);
+
+    // The right code no longer works either.
+    expect((await verifyCode(rider.token, code)).status).toBe(400);
+  });
+
+  it('refuses an expired code', async () => {
+    const rider = await createRider();
+    const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
+    await Identity.updateOne({ _id: rider.identity._id }, { $set: { 'accountCode.expiresAt': new Date(Date.now() - 1000) } });
+
+    const res = await verifyCode(rider.token, code);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/expired/);
+  });
+
+  it('does not accept a code that was sent for account deletion, or a DELETE_ACCOUNT purpose', async () => {
+    const rider = await createRider();
+    const code = await requestCode(rider.token, 'DELETE_ACCOUNT');
+    expect((await verifyCode(rider.token, code)).status).toBe(400);
+    expect((await verifyCode(rider.token, code, 'DELETE_ACCOUNT')).status).toBe(400);
+  });
+
+  it('refuses a Google-only login (409 NO_PASSWORD)', async () => {
+    const { doc } = await createIdentityWithProfile({
+      email: uniqueEmail('google-verify'), googleId: `g-verify-${Date.now()}`, isEmailVerified: true, role: 'user', fields: { name: 'Google Rider' }
+    });
+    const { accessToken } = await issueTokensForUser(doc, 'user');
+    const res = await verifyCode(accessToken, '123456');
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NO_PASSWORD');
+  });
+});
+
 describe('POST /api/auth/change-password', () => {
   it('changes the password, keeps the caller signed in and ends every other session at once', async () => {
     const rider = await createRider();
@@ -118,8 +193,8 @@ describe('POST /api/auth/change-password', () => {
     const me = await request(app).get('/api/auth/me').set(...authHeader(rider.token));
     expect(me.body.user.hasPassword).toBe(true);
 
-    const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
-    const res = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code, password: NEW_PASSWORD });
+    const token = await changeToken(rider.token);
+    const res = await changePassword(rider.token, { token, password: NEW_PASSWORD });
     expect(res.status).toBe(200);
     expect(res.body.accessToken).toBeTruthy();
     expect(res.body.refreshToken).toBeTruthy();
@@ -141,45 +216,45 @@ describe('POST /api/auth/change-password', () => {
     expect((await login(rider.email, NEW_PASSWORD, 'user')).status).toBe(200);
   });
 
-  it('refuses a wrong code and wipes the code on the 5th wrong try', async () => {
+  it('refuses a wrong token, and the code itself in place of the token (400 INVALID_TOKEN)', async () => {
     const rider = await createRider();
+    await changeToken(rider.token);
+    const wrong = await changePassword(rider.token, { token: 'f'.repeat(64), password: NEW_PASSWORD });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.code).toBe('INVALID_TOKEN');
+
     const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
-    const wrong = code === '111111' ? '222222' : '111111';
-
-    for (let i = 0; i < 4; i += 1) {
-      const res = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code: wrong, password: NEW_PASSWORD });
-      expect(res.status).toBe(400);
-      expect(res.body.code).toBe('INVALID_CODE');
-    }
-    const fifth = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code: wrong, password: NEW_PASSWORD });
-    expect(fifth.body.message).toMatch(/Too many wrong codes/);
-
-    // The right code no longer works either.
-    const late = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code, password: NEW_PASSWORD });
-    expect(late.status).toBe(400);
+    expect((await changePassword(rider.token, { token: code, password: NEW_PASSWORD })).status).toBe(400);
+    expect((await login(rider.email, DEFAULT_PASSWORD, 'user')).status).toBe(200);
   });
 
-  it('refuses an expired code', async () => {
+  it('refuses an expired token', async () => {
     const rider = await createRider();
-    const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
-    await Identity.updateOne({ _id: rider.identity._id }, { $set: { 'accountCode.expiresAt': new Date(Date.now() - 1000) } });
+    const token = await changeToken(rider.token);
+    await Identity.updateOne({ _id: rider.identity._id }, { $set: { 'accountCode.tokenExpiresAt': new Date(Date.now() - 1000) } });
 
-    const res = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code, password: NEW_PASSWORD });
+    const res = await changePassword(rider.token, { token, password: NEW_PASSWORD });
     expect(res.status).toBe(400);
-    expect(res.body.message).toMatch(/expired/);
+    expect(res.body.code).toBe('INVALID_TOKEN');
+    expect(res.body.message).toMatch(/new code/);
   });
 
-  it('does not accept a code that was sent for account deletion', async () => {
+  it('a token works once', async () => {
     const rider = await createRider();
-    const code = await requestCode(rider.token, 'DELETE_ACCOUNT');
-    const res = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code, password: NEW_PASSWORD });
-    expect(res.status).toBe(400);
+    const token = await changeToken(rider.token);
+    const first = await changePassword(rider.token, { token, password: NEW_PASSWORD });
+    expect(first.status).toBe(200);
+
+    const again = await changePassword(first.body.accessToken, { token, password: 'An0ther!Pass' });
+    expect(again.status).toBe(400);
+    expect(again.body.code).toBe('INVALID_TOKEN');
   });
 
-  it('enforces the password policy', async () => {
+  it('enforces the password policy and needs a token', async () => {
     const rider = await createRider();
-    const res = await request(app).post('/api/auth/change-password').set(...authHeader(rider.token)).send({ code: '123456', password: 'weak' });
-    expect(res.status).toBe(400);
+    const token = await changeToken(rider.token);
+    expect((await changePassword(rider.token, { token, password: 'weak' })).status).toBe(400);
+    expect((await changePassword(rider.token, { password: NEW_PASSWORD })).status).toBe(400);
   });
 });
 

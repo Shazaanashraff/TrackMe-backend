@@ -29,6 +29,7 @@ const {
 	validateAccountSetupValidate,
 	validateAccountSetupComplete,
 	validateAccountCodeRequest,
+	validateVerifyAccountCode,
 	validateChangePassword,
 	validateDeleteAccount
 } = require('../middleware/validators');
@@ -37,6 +38,7 @@ const { protect, requireUser, requirePrimaryProfile } = require('../middleware/a
 const { createEmailRateLimiter } = require('../middleware/emailRateLimiter');
 const {
 	requestAccountCode,
+	verifyAccountCode,
 	changePassword,
 	deleteAccount,
 	cancelDeletion
@@ -137,6 +139,9 @@ const accountCodeRateLimit = createEmailRateLimiter({
 
 // POST /api/auth/account-code
 router.post('/account-code', protect, requireUser, validateAccountCodeRequest, handleValidationErrors, accountCodeRateLimit, requestAccountCode);
+
+// POST /api/auth/account-code/verify (change password checks the code before asking for the new one)
+router.post('/account-code/verify', protect, requireUser, validateVerifyAccountCode, handleValidationErrors, verifyAccountCode);
 
 // POST /api/auth/change-password
 router.post('/change-password', protect, requireUser, validateChangePassword, handleValidationErrors, changePassword);

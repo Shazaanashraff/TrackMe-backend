@@ -311,8 +311,13 @@ const accountCodeField = () => body('code')
   .notEmpty().withMessage('Code is required')
   .matches(/^\d{6}$/).withMessage('Code must be 6 digits');
 
+exports.validateVerifyAccountCode = [
+  body('purpose').equals('CHANGE_PASSWORD').withMessage('purpose must be CHANGE_PASSWORD'),
+  accountCodeField()
+];
+
 exports.validateChangePassword = [
-  accountCodeField(),
+  body('token').isString().withMessage('Token is required').bail().notEmpty().withMessage('Token is required'),
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8, max: 64 }).withMessage('Password must be between 8 and 64 characters')

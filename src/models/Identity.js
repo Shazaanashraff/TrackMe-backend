@@ -76,7 +76,11 @@ const identitySchema = new mongoose.Schema({
     purpose: { type: String, enum: ['CHANGE_PASSWORD', 'DELETE_ACCOUNT', null], default: null, select: false },
     otpHash: { type: String, default: null, select: false },
     expiresAt: { type: Date, default: null, select: false },
-    attempts: { type: Number, default: 0, select: false }
+    attempts: { type: Number, default: 0, select: false },
+    // Change password checks the code on its own first; a right code becomes
+    // this short-lived token, which the new password is then sent with.
+    tokenHash: { type: String, default: null, select: false },
+    tokenExpiresAt: { type: Date, default: null, select: false }
   }
 }, { timestamps: true });
 

@@ -3,20 +3,30 @@ const { modelForRole } = require('../utils/accountRegistry');
 const { issueTokensForUser } = require('../utils/tokens');
 const { userPayload, hasPassword } = require('../utils/accountPayload');
 const { revokeSessions } = require('../utils/sessions');
-const { ACCOUNT_CODE_SELECT, issueAccountCode, consumeAccountCode } = require('../utils/accountCode');
+const {
+  ACCOUNT_CODE_SELECT, issueAccountCode, consumeAccountCode, issueAccountToken, consumeAccountToken
+} = require('../utils/accountCode');
 const { sendAccountCodeEmail, sendPasswordChangedEmail } = require('../utils/accountEmails');
 const accountDeletion = require('../services/accountDeletion');
 
 // Signed-in account actions from the rider app's Profile: change password and
-// delete account, each confirmed with a code emailed to the account. Both act
-// on the whole login (the Identity), so they work from a switched-in managed
-// profile too. See docs/modules/AUTH.md "Account actions".
+// delete account, each confirmed with a code emailed to the account. Change
+// password checks the code first (verify, which hands back a short-lived token)
+// and takes the new password with that token. Both act on the whole login (the
+// Identity), so they work from a switched-in managed profile too. See
+// docs/modules/AUTH.md "Account actions".
 
 const shouldEchoDevOtp = () =>
   process.env.ENABLE_DEV_OTP_ECHO === 'true' && process.env.NODE_ENV !== 'production';
 
 const loadIdentity = (req, extraSelect = '') =>
   req.identityId ? Identity.findById(req.identityId).select(`+password ${ACCOUNT_CODE_SELECT} ${extraSelect}`.trim()) : null;
+
+const noPassword = (res) => res.status(409).json({
+  success: false,
+  code: 'NO_PASSWORD',
+  message: 'This account signs in with Google, so it has no password to change.'
+});
 
 // @desc    Email a code that confirms a password change or account deletion
 // @route   POST /api/auth/account-code   { purpose }
@@ -29,13 +39,7 @@ exports.requestAccountCode = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Account not found' });
     }
 
-    if (purpose === 'CHANGE_PASSWORD' && !hasPassword(identity)) {
-      return res.status(409).json({
-        success: false,
-        code: 'NO_PASSWORD',
-        message: 'This account signs in with Google, so it has no password to change.'
-      });
-    }
+    if (purpose === 'CHANGE_PASSWORD' && !hasPassword(identity)) return noPassword(res);
 
     const code = await issueAccountCode(identity, purpose);
     const emailSent = await sendAccountCodeEmail(identity.email, code, purpose);
@@ -57,8 +61,33 @@ exports.requestAccountCode = async (req, res, next) => {
   }
 };
 
-// @desc    Change the password with an emailed code; this device stays signed in
-// @route   POST /api/auth/change-password   { code, password }
+// @desc    Check the emailed code before the new password is asked for. A right
+//          code is spent and answered with a 10-minute token for change-password.
+// @route   POST /api/auth/account-code/verify   { purpose: 'CHANGE_PASSWORD', code }
+// @access  Private (rider)
+exports.verifyAccountCode = async (req, res, next) => {
+  try {
+    const identity = await loadIdentity(req);
+    if (!identity) {
+      return res.status(404).json({ success: false, message: 'Account not found' });
+    }
+    if (!hasPassword(identity)) return noPassword(res);
+
+    const result = await consumeAccountCode(identity, 'CHANGE_PASSWORD', req.body.code);
+    if (!result.ok) {
+      return res.status(400).json({ success: false, code: 'INVALID_CODE', message: result.message });
+    }
+
+    const token = await issueAccountToken(identity, 'CHANGE_PASSWORD');
+    return res.status(200).json({ success: true, token });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Change the password with the token from a verified code; this device
+//          stays signed in
+// @route   POST /api/auth/change-password   { token, password }
 // @access  Private (rider)
 exports.changePassword = async (req, res, next) => {
   try {
@@ -66,17 +95,11 @@ exports.changePassword = async (req, res, next) => {
     if (!identity) {
       return res.status(404).json({ success: false, message: 'Account not found' });
     }
-    if (!hasPassword(identity)) {
-      return res.status(409).json({
-        success: false,
-        code: 'NO_PASSWORD',
-        message: 'This account signs in with Google, so it has no password to change.'
-      });
-    }
+    if (!hasPassword(identity)) return noPassword(res);
 
-    const result = await consumeAccountCode(identity, 'CHANGE_PASSWORD', req.body.code);
+    const result = await consumeAccountToken(identity, 'CHANGE_PASSWORD', req.body.token);
     if (!result.ok) {
-      return res.status(400).json({ success: false, code: 'INVALID_CODE', message: result.message });
+      return res.status(400).json({ success: false, code: 'INVALID_TOKEN', message: result.message });
     }
 
     identity.password = req.body.password;
