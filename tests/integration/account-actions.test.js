@@ -148,7 +148,7 @@ describe('POST /api/auth/account-code/verify', () => {
       expect(res.body.token).toBeUndefined();
     }
     const fifth = await verifyCode(rider.token, wrong);
-    expect(fifth.body.message).toMatch(/Too many wrong codes/);
+    expect(fifth.body.message).toMatch(/Too many invalid attempts/);
 
     // The right code no longer works either.
     expect((await verifyCode(rider.token, code)).status).toBe(400);

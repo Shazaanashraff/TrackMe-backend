@@ -35,13 +35,13 @@ const issueAccountCode = async (identity, purpose) => {
 const consumeAccountCode = async (identity, purpose, code) => {
   const stored = identity.accountCode || {};
   if (!stored.otpHash || !stored.expiresAt || stored.purpose !== purpose) {
-    return { ok: false, message: 'Request a new code first.' };
+    return { ok: false, message: 'No code found. Please request a new code.' };
   }
 
   if (stored.expiresAt.getTime() < Date.now()) {
     identity.accountCode = emptyCode();
     await identity.save();
-    return { ok: false, message: 'This code has expired. Request a new one.' };
+    return { ok: false, message: 'This code has expired. Please request a new code.' };
   }
 
   if (!safeCompare(hashToken(String(code || '').trim()), stored.otpHash)) {
@@ -55,8 +55,8 @@ const consumeAccountCode = async (identity, purpose, code) => {
     return {
       ok: false,
       message: attempts >= MAX_ACCOUNT_CODE_ATTEMPTS
-        ? 'Too many wrong codes. Request a new one.'
-        : 'That code is not right.'
+        ? 'Too many invalid attempts. Please request a new code.'
+        : 'Invalid code. Please try again.'
     };
   }
 
@@ -88,7 +88,7 @@ const consumeAccountToken = async (identity, purpose, token) => {
     && stored.tokenExpiresAt.getTime() >= Date.now()
     && safeCompare(hashToken(String(token || '')), stored.tokenHash);
   if (!usable) {
-    return { ok: false, message: 'This took too long. Ask for a new code.' };
+    return { ok: false, message: 'Your verification has expired. Please request a new code.' };
   }
 
   identity.accountCode = emptyCode();
