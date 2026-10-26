@@ -129,6 +129,12 @@ its full life, same as an access token; (b) loads the account via `findAccountBy
 `isActive === false` — previously a deactivated account kept a working socket until its token
 expired on its own. Both are one query at connect time, not per message.
 
+**Revoked sessions (2026-10-25).** The same lookup reads `sessionVersion`, and a token whose `sv`
+claim differs (`(sv || 0) !== (sessionVersion || 0)`, the rule `protect` uses) is refused with
+`Invalid token: session revoked`. A password change or account deletion bumps the version
+(`utils/sessions.js` `revokeSessions`), so sockets opened with an older token cannot reconnect.
+Tokens issued before `sv` existed count as version 0, the same as an account that was never revoked.
+
 **Handshake error labels (2026-10-19).** Only a token problem says so: a `jwt.verify` failure
 (`JsonWebTokenError`, `TokenExpiredError`, `NotBeforeError`) answers `Invalid token: <jwt
 message>`, and the account checks answer `Invalid token: account not found` / `account is

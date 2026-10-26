@@ -23,6 +23,21 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-10-26: Change password checks the code first; professional code errors
+- **Branch:** feature/account-deletion-password (merged into main)
+- **Modules touched:** auth ([`AUTH.md`](modules/AUTH.md))
+- **What changed:**
+  - New `POST /api/auth/account-code/verify { purpose: 'CHANGE_PASSWORD', code }` (`accountController.verifyAccountCode`): checks the code on its own (same 5-minute, 5-try rules) and answers a right code with a single-use token valid 10 minutes, stored hashed on `Identity.accountCode.tokenHash` / `tokenExpiresAt` (`utils/accountCode.js` `issueAccountToken`, `consumeAccountToken`).
+  - `POST /api/auth/change-password` takes `{ token, password }` instead of `{ code, password }`; a wrong, expired or reused token is 400 `INVALID_TOKEN`.
+  - Account code messages reworded: "Invalid code. Please try again.", "Too many invalid attempts. Please request a new code.", "This code has expired. Please request a new code.", "No code found. Please request a new code.", "Your verification has expired. Please request a new code."
+  - Delete account confirmed by password was tried (`42dbf1e`) and reverted (`a95a386`); it stays confirmed by the emailed code.
+- **Why:** the user-app now asks for the code first and for the new password only once the code is accepted, so a mistyped code never costs a retyped password.
+- **Contract impact:** `/change-password` body changes (`code` becomes `token`). Its only consumer is user-app, updated on the same branch; no released app calls it yet.
+- **Tests:** `tests/integration/account-actions.test.js` 23 (was 18); the suite lifts the per-address auth ceiling the way `auth-ip-rate-limit.test.js` does, since it now makes more than 100 auth requests. `npm test` 3/3.
+- **Docs updated:** AUTH.md, TESTING_GUIDE.md.
+- **Migration:** none. The two new `accountCode` fields default to null.
+- **Follow-ups / known issues:** none.
+
 ## 2026-10-25: Rider change password and delete account (issues #58, #59)
 - **Branch:** feature/account-deletion-password
 - **Modules touched:** auth ([`AUTH.md`](modules/AUTH.md)), notifications ([`NOTIFICATIONS.md`](modules/NOTIFICATIONS.md)), communications ([`COMMUNICATIONS.md`](modules/COMMUNICATIONS.md)), sandbox ([`SANDBOX.md`](modules/SANDBOX.md))
