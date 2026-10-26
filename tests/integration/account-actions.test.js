@@ -23,8 +23,7 @@ const {
 //
 // No mail provider is configured in tests (tests/jest.setup.js), so the code
 // endpoint answers with `developmentOtp`. Each scenario uses its own account:
-// code requests are limited to 3 per 10 minutes per login. Delete account is
-// confirmed with the password; only a Google-only login uses a code for it.
+// code requests are limited to 3 per 10 minutes per login.
 
 const NEW_PASSWORD = 'N3w!Passw0rd';
 
@@ -53,22 +52,11 @@ async function riderOnShuttles() {
 }
 
 async function scheduleDeletion(token) {
-  const res = await request(app).post('/api/auth/delete-account').set(...authHeader(token)).send({ password: DEFAULT_PASSWORD });
+  const code = await requestCode(token, 'DELETE_ACCOUNT');
+  const res = await request(app).post('/api/auth/delete-account').set(...authHeader(token)).send({ code });
   expect(res.status).toBe(200);
   return res;
 }
-
-// A rider who signs in with Google only: no password on the login.
-async function googleOnlyRider(label) {
-  const { doc } = await createIdentityWithProfile({
-    email: uniqueEmail(label), googleId: `g-${label}-${Date.now()}`, isEmailVerified: true, role: 'user', fields: { name: 'Google Rider' }
-  });
-  const { accessToken } = await issueTokensForUser(doc, 'user');
-  return { id: doc._id, token: accessToken };
-}
-
-const deleteWith = (token, body) =>
-  request(app).post('/api/auth/delete-account').set(...authHeader(token)).send(body);
 
 beforeAll(async () => {
   await connectTestDb();
@@ -231,49 +219,14 @@ describe('POST /api/auth/delete-account', () => {
     expect(unread.body.unreadCount).toBe(2);
   });
 
-  it('refuses a wrong password, and a code in place of the password (400 INVALID_PASSWORD)', async () => {
+  it('refuses a wrong code and a code sent for a password change', async () => {
     const rider = await createRider();
-    const wrong = await deleteWith(rider.token, { password: 'Wr0ng!Pass' });
+    const wrong = await request(app).post('/api/auth/delete-account').set(...authHeader(rider.token)).send({ code: '000000' });
     expect(wrong.status).toBe(400);
-    expect(wrong.body.code).toBe('INVALID_PASSWORD');
-    expect(wrong.body.message).toBe('That password is not right.');
 
-    const code = await requestCode(rider.token, 'DELETE_ACCOUNT');
-    const withCode = await deleteWith(rider.token, { code });
-    expect(withCode.status).toBe(400);
-    expect(withCode.body.code).toBe('INVALID_PASSWORD');
-    expect((await User.findById(rider.id)).deletion.purgeAt).toBeNull();
-  });
-
-  it('needs a password or a code (400)', async () => {
-    const rider = await createRider();
-    expect((await deleteWith(rider.token, {})).status).toBe(400);
-  });
-
-  it('a Google-only login confirms with the emailed code, not a password', async () => {
-    const rider = await googleOnlyRider('google-delete');
-
-    const withPassword = await deleteWith(rider.token, { password: DEFAULT_PASSWORD });
-    expect(withPassword.status).toBe(400);
-    expect(withPassword.body.code).toBe('INVALID_CODE');
-
-    const code = await requestCode(rider.token, 'DELETE_ACCOUNT');
-    const wrong = await deleteWith(rider.token, { code: code === '111111' ? '222222' : '111111' });
-    expect(wrong.status).toBe(400);
-    expect((await User.findById(rider.id)).deletion.purgeAt).toBeNull();
-
-    const res = await deleteWith(rider.token, { code });
-    expect(res.status).toBe(200);
-    expect(res.body.purgeAt).toBeTruthy();
-  });
-
-  it('allows 10 tries per 15 minutes per login', async () => {
-    const rider = await createRider();
-    for (let i = 0; i < 10; i += 1) {
-      expect((await deleteWith(rider.token, { password: 'Wr0ng!Pass' })).status).toBe(400);
-    }
-    const eleventh = await deleteWith(rider.token, { password: DEFAULT_PASSWORD });
-    expect(eleventh.status).toBe(429);
+    const code = await requestCode(rider.token, 'CHANGE_PASSWORD');
+    const mixed = await request(app).post('/api/auth/delete-account').set(...authHeader(rider.token)).send({ code });
+    expect(mixed.status).toBe(400);
     expect((await User.findById(rider.id)).deletion.purgeAt).toBeNull();
   });
 

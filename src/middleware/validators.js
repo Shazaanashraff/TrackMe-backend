@@ -322,13 +322,7 @@ exports.validateChangePassword = [
     .matches(/[^A-Za-z0-9]/).withMessage('Password must contain at least one special character')
 ];
 
-// Deleting confirms with the password, or with an emailed code when the login
-// has no password (Google only). The controller decides which one applies.
-exports.validateDeleteAccount = [
-  body('password').optional().isString().withMessage('Password must be text'),
-  body('code').optional().trim().matches(/^\d{6}$/).withMessage('Code must be 6 digits'),
-  body().custom((value) => Boolean(value?.password || value?.code)).withMessage('Enter your password or the code')
-];
+exports.validateDeleteAccount = [accountCodeField()];
 
 const MANAGER_SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const ORG_SERVICE_TYPES = ['SCHOOL', 'UNIVERSITY', 'OFFICE'];
