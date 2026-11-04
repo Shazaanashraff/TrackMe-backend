@@ -16,7 +16,7 @@ const {
   validateRouteId
 } = require('../middleware/validators');
 const { handleValidationErrors } = require('../middleware/errorHandler');
-const { protect, requireManagerOrAbove } = require('../middleware/auth');
+const { protect, optionalAuth, requireManagerOrAbove } = require('../middleware/auth');
 
 // Manager-or-super-admin routes with basic protect middleware
 
@@ -30,7 +30,9 @@ router.get('/', getAllRoutes);
 router.get('/stats/overview', getRoutesStats);
 
 // GET /api/routes/:routeId - Get single route
-router.get('/:routeId', validateRouteId, handleValidationErrors, getRouteById);
+// optionalAuth: public routes stay public, but a custom route is only readable by
+// the people it belongs to (see canViewCustomRoute).
+router.get('/:routeId', optionalAuth, validateRouteId, handleValidationErrors, getRouteById);
 
 // PUT /api/routes/:routeId - Update route (admin)
 router.put('/:routeId', protect, requireManagerOrAbove, validateUpdateRoute, handleValidationErrors, updateRoute);

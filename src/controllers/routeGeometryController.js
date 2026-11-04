@@ -6,6 +6,7 @@
 // Requires the Routes API to be enabled on the Google project.
 
 const Route = require('../models/Route');
+// canViewCustomRoute is required lazily below: utils/customRoute imports this file.
 
 const ROUTES_API = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
@@ -108,16 +109,32 @@ exports.getRoutePath = async (req, res) => {
     return res.status(200).json({ success: true, data: { coords: c.coords, coordsReturn: c.coordsReturn || [], cached: true } });
   }
 
-  const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
-  if (!key) {
-    return res.status(503).json({ success: false, message: 'Routing not configured (missing GOOGLE_PLACES_KEY).' });
-  }
-
   try {
-    // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route geometry.
     const route = await Route.findOne({ routeId, isDeleted: false })
-      .select('stops routeId pathPolyline pathPolylineReturn');
+      .select('stops routeId pathPolyline pathPolylineReturn origin status managerId');
     if (!route) return res.status(404).json({ success: false, message: 'Route not found.' });
+
+    // A driver-recorded custom route: only the people it belongs to may read it, the
+    // stored line is the only source (never the Google fallback below, which would
+    // invent a different road from the stops), and it is never put in the shared
+    // cache, which is served without any access check.
+    if (route.origin === 'RECORDED') {
+      const { canViewCustomRoute } = require('../utils/customRoute');
+      if (!(await canViewCustomRoute(req.user, route))) {
+        return res.status(404).json({ success: false, message: 'Route not found.' });
+      }
+      const coords = route.pathPolyline ? decodePolyline(route.pathPolyline) : [];
+      const coordsReturn = route.pathPolylineReturn ? decodePolyline(route.pathPolylineReturn) : [];
+      return res.status(200).json({
+        success: true,
+        data: { coords, coordsReturn, cached: false, matched: coords.length > 0, source: 'recorded' }
+      });
+    }
+
+    const key = process.env.GOOGLE_ROUTES_KEY || process.env.GOOGLE_PLACES_KEY;
+    if (!key) {
+      return res.status(503).json({ success: false, message: 'Routing not configured (missing GOOGLE_PLACES_KEY).' });
+    }
 
     // Prefer pre-computed accurate geometry (backfilled from a matched transit line).
     // Instant, stable, and no live API call. coordsReturn is the return-direction path

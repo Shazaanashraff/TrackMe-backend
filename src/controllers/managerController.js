@@ -11,6 +11,7 @@ const { isValidPhone, PHONE_FORMAT_MESSAGE } = require('../utils/phoneNumber');
 const { generateUniqueDriverCode } = require('../utils/driverCode');
 const { ensureDriverEnrollmentKey } = require('../utils/enrollmentKey');
 const { plateConflict } = require('../utils/vehiclePlateGuard');
+const { createProvisionalRoute } = require('../utils/customRoute');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -137,17 +138,29 @@ exports.getManagerVehicles = async (req, res, next) => {
     // vehicles table render a route name without the manager portal having to
     // fetch the full assignable-routes list just to visit this page (issue #18).
     const routeIds = [...new Set(vehicles.map((v) => v.routeId).filter(Boolean))];
-    const routeNameById = routeIds.length
+    const routeById = routeIds.length
       ? new Map(
-          (await Route.find({ routeId: { $in: routeIds } }).select('routeId routeName'))
-            .map((r) => [r.routeId, r.routeName])
+          (await Route.find({ routeId: { $in: routeIds } })
+            .select('routeId routeName origin status recording.acceptedRuns recording.requiredRuns'))
+            .map((r) => [r.routeId, r])
         )
       : new Map();
 
-    const data = vehicles.map((v) => ({
-      ...v,
-      routeName: v.routeId ? routeNameById.get(v.routeId) || null : null
-    }));
+    // A custom route also reports where it is in its life (recording n of 5 / waiting
+    // for the manager / live), so the table can say so instead of showing a
+    // placeholder name.
+    const data = vehicles.map((v) => {
+      const route = v.routeId ? routeById.get(v.routeId) : null;
+      return {
+        ...v,
+        routeName: route ? route.routeName : null,
+        routeOrigin: route ? route.origin : null,
+        routeStatus: route ? route.status : null,
+        routeProgress: route && route.origin === 'RECORDED'
+          ? { acceptedRuns: route.recording?.acceptedRuns ?? 0, requiredRuns: route.recording?.requiredRuns ?? 5 }
+          : null
+      };
+    });
 
     return res.status(200).json({
       success: true,
@@ -245,9 +258,13 @@ exports.updateManagerVehicle = async (req, res, next) => {
     if (updateData.routeId) {
       // A manager may assign a PUBLIC route or one of their own named (ACTIVE)
       // PRIVATE custom routes — never another manager's private route.
+      // A custom route still being recorded or reviewed cannot be handed to another
+      // vehicle; a vehicle may keep the one it is already on (e.g. a rename).
+      const changingRoute = updateData.routeId !== vehicle.routeId;
       const route = await Route.findOne({
         routeId: updateData.routeId,
         isDeleted: false,
+        ...(changingRoute ? { status: { $nin: ['RECORDING', 'PENDING_REVIEW'] } } : {}),
         $or: [{ managerId: null }, { managerId: req.user._id }]
       });
       if (!route) {
@@ -348,6 +365,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       vehicleName,
       numberPlate,
       routeId,
+      routeMode,
       vehicleType,
       serviceType,
       bookingEnabled,
@@ -366,6 +384,15 @@ exports.createManagerVehicle = async (req, res, next) => {
     const normalizedReg = String(req.body?.registrationNumber || `AUTO-${normalizedVehicleId}`).trim();
     const normalizedRouteId = String(routeId || '').trim();
     const normalizedEmail = String(driverEmail || '').trim().toLowerCase();
+    // CUSTOM = the driver records the route over their first rides; the route is
+    // created for them, so naming an existing one as well makes no sense.
+    const wantsCustomRoute = String(routeMode || '').toUpperCase() === 'CUSTOM';
+    if (wantsCustomRoute && normalizedRouteId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose an existing route or a custom route, not both'
+      });
+    }
 
     // A vehicle may be added to the fleet on its own and given a driver later,
     // so the driver half of this form is optional. Naming a driver still means
@@ -453,6 +480,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       route = await Route.findOne({
         routeId: normalizedRouteId,
         isDeleted: false,
+        status: { $nin: ['RECORDING', 'PENDING_REVIEW'] },
         $or: [{ managerId: null }, { managerId: req.user._id }]
       });
       if (!route) {
@@ -511,6 +539,7 @@ exports.createManagerVehicle = async (req, res, next) => {
         vehicleId: normalizedVehicleId,
         reason: String(reason || '').trim(),
         payload: {
+          ...(wantsCustomRoute ? { routeMode: 'CUSTOM' } : {}),
           vehicle: {
             vehicleId: normalizedVehicleId,
             vehicleName: String(vehicleName || '').trim() || normalizedNumberPlate,
@@ -580,6 +609,17 @@ exports.createManagerVehicle = async (req, res, next) => {
       }
     }
 
+    // The provisional route a custom-route vehicle records onto. Created only now,
+    // on the path that really creates the vehicle, so a failed request leaves none.
+    let provisionalRoute = null;
+    if (wantsCustomRoute) {
+      provisionalRoute = await createProvisionalRoute({
+        managerId: req.user._id,
+        serviceType: normalizedServiceType
+      });
+    }
+    const vehicleRouteId = provisionalRoute ? provisionalRoute.routeId : normalizedRouteId;
+
     let vehicle;
     try {
       vehicle = await Vehicle.create({
@@ -588,7 +628,7 @@ exports.createManagerVehicle = async (req, res, next) => {
         vehicleName: String(vehicleName || '').trim() || normalizedNumberPlate,
         numberPlate: normalizedNumberPlate,
         registrationNumber: normalizedReg,
-        routeId: normalizedRouteId,
+        routeId: vehicleRouteId,
         vehicleType: vehicleType || 'AC',
         serviceType: normalizedServiceType,
         organization: org.organizationId,
@@ -602,6 +642,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       // A driver with no vehicle is a half-provisioned account nobody asked
       // for, so a brand new one goes back if the vehicle will not save.
       if (driver && !reusedExistingDriver) await Driver.deleteOne({ _id: driver._id });
+      if (provisionalRoute) await Route.deleteOne({ _id: provisionalRoute._id });
       throw error;
     }
 
@@ -616,7 +657,7 @@ exports.createManagerVehicle = async (req, res, next) => {
       entityId: vehicle.vehicleId,
       metadata: {
         vehicleId: normalizedVehicleId,
-        routeId: normalizedRouteId,
+        routeId: vehicleRouteId,
         driverId: driver ? String(driver._id) : null,
         reason: String(reason || '').trim()
       }
@@ -794,8 +835,10 @@ exports.getManagerAssignableRoutes = async (req, res, next) => {
     const routes = await Route.find({
       isDeleted: false,
       isActive: true,
+      // Custom routes still being recorded or reviewed are not assignable yet.
+      status: { $nin: ['RECORDING', 'PENDING_REVIEW'] },
       $or: [{ managerId: null }, { managerId: req.user._id }]
-    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops');
+    }).select('routeId routeName source destination fare estimatedTime serviceType distance stopsCount stops origin');
 
     return res.status(200).json({ success: true, count: routes.length, data: routes });
   } catch (error) {

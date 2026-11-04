@@ -30,6 +30,9 @@ const RiderProfile = require('../src/models/RiderProfile');
 const DriverEnrollment = require('../src/models/DriverEnrollment');
 const VehicleLiveLocation = require('../src/models/VehicleLiveLocation');
 const Notification = require('../src/models/Notification');
+const RouteRecordingRun = require('../src/models/RouteRecordingRun');
+const HouseholdPlace = require('../src/models/HouseholdPlace');
+const { encodePolyline } = require('../src/utils/roadSnap');
 const { createIdentityWithProfile } = require('../src/utils/identityRegistry');
 const { graceMs } = require('../src/services/accountDeletion');
 const { generateUniqueDriverCode } = require('../src/utils/driverCode');
@@ -77,6 +80,9 @@ async function wipeCollections() {
     DriverEnrollment.deleteMany({}),
     VehicleLiveLocation.deleteMany({}),
     Notification.deleteMany({ recipientRole: 'manager' }),
+    RouteRecordingRun.deleteMany({}),
+    HouseholdPlace.deleteMany({}),
+    Notification.deleteMany({ type: 'VEHICLE_ARRIVAL' }),
   ]);
 }
 
@@ -183,6 +189,132 @@ async function seedRoutes() {
   ];
 
   return Route.insertMany(fixtures.map((fixture) => ({ ...fixture, isActive: true, isDeleted: false })));
+}
+
+// Custom (driver-recorded) routes, one in each state a manager can meet them:
+//   RECORDING      - 2 of 5 rides in, the driver app shows "ride 3 of 5"
+//   PENDING_REVIEW - all 5 rides merged, waiting on the manager's Confirm
+//   ACTIVE         - confirmed and live
+// Each has its own vehicle and driver so the driver app can be signed into any state.
+// The "roads" are straight lines near Colombo - enough to draw and review on a map.
+async function seedCustomRoutes(managers) {
+  const manager = managers[0];
+  const ride = (dLng, n = 40) => Array.from({ length: n }, (_, i) => ({
+    lat: 6.9 + (0.02 * i) / (n - 1),
+    lng: 79.85 + dLng,
+    t: 1_700_000_000_000 + i * 5000,
+    acc: 8,
+  }));
+  const toLine = (points) => points.map((p) => ({ lat: p.lat, lng: p.lng }));
+
+  const fixtures = [
+    { key: 'RECORDING', status: 'RECORDING', accepted: 2, name: 'Custom Route Driver (recording)' },
+    { key: 'PENDING', status: 'PENDING_REVIEW', accepted: 5, name: 'Custom Route Driver (to review)' },
+    { key: 'ACTIVE', status: 'ACTIVE', accepted: 5, name: 'Custom Route Driver (live)' },
+  ];
+  const offsets = [0, 0.00003, -0.00003, 0.00002, -0.00002];
+  const created = [];
+
+  for (const [index, fixture] of fixtures.entries()) {
+    const driver = await Driver.create({
+      name: fixture.name,
+      driverCode: await generateUniqueDriverCode(Driver),
+      password: SANDBOX_PASSWORD,
+      phoneNumber: '0770000000',
+      isActive: true,
+      isPrivate: false,
+      managerId: manager._id,
+    });
+
+    const built = fixture.status !== 'RECORDING';
+    const line = encodePolyline(toLine(ride(0)));
+    const route = await Route.create({
+      routeId: `SANDBOX-CUST-${fixture.key}`,
+      routeName: fixture.status === 'ACTIVE' ? 'Greenfield School Run' : 'Recording…',
+      source: fixture.status === 'ACTIVE' ? 'Home' : 'Recording…',
+      destination: fixture.status === 'ACTIVE' ? 'Greenfield School' : 'Recording…',
+      distance: built ? 2.2 : 0,
+      estimatedTime: built ? 26 : 0,
+      fare: 0,
+      origin: 'RECORDED',
+      status: fixture.status,
+      managerId: manager._id,
+      createdBy: manager._id,
+      isActive: true,
+      isDeleted: false,
+      pathPolyline: built ? line : '',
+      stops: built ? [
+        { stopName: "Nimal's house", order: 1, lat: 6.905, lng: 79.85 },
+        { stopName: 'School gate', order: 2, lat: 6.915, lng: 79.85 },
+      ] : [],
+      stopsCount: built ? 2 : 0,
+      recording: {
+        requiredRuns: 5,
+        acceptedRuns: fixture.accepted,
+        confidence: built ? 0.97 : null,
+        warning: '',
+        builtAt: built ? new Date() : null,
+      },
+    });
+
+    const vehicle = await Vehicle.create({
+      vehicleId: `SANDBOX-CUSTOM-${index + 1}`,
+      vehicleName: `Sandbox Custom Shuttle ${index + 1}`,
+      registrationNumber: `SB-CUST-${index + 1}`,
+      numberPlate: `SB-${2000 + index}`,
+      routeId: route.routeId,
+      driverId: driver._id,
+      managerId: manager._id,
+      seatCapacity: 20,
+      isActive: true,
+      isDeleted: false,
+    });
+
+    await RouteRecordingRun.insertMany(Array.from({ length: fixture.accepted }, (_, i) => {
+      const points = ride(offsets[i]);
+      return {
+        routeId: route.routeId,
+        vehicleId: vehicle._id,
+        driverId: driver._id,
+        managerId: manager._id,
+        clientRunId: `sandbox-${fixture.key}-${i + 1}`,
+        runNumber: i + 1,
+        status: 'ACCEPTED',
+        startedAt: new Date(1_700_000_000_000),
+        endedAt: new Date(1_700_000_000_000 + 1_500_000),
+        durationSec: 1500,
+        distanceM: 2200,
+        points,
+        stops: [{ lat: 6.905, lng: 79.85 + offsets[i], name: "Nimal's house" }, { lat: 6.915, lng: 79.85 + offsets[i], name: 'School gate' }],
+        matched: { polyline: encodePolyline(toLine(points)), confidence: 0.9, provider: 'osrm', matchedAt: new Date() },
+      };
+    }));
+    created.push({ route, vehicle, driver });
+  }
+  return created;
+}
+
+// Enrols the sandbox rider with the LIVE custom-route driver and saves a pickup place beside the first
+// stop ("Nimal's house"), so driving that shuttle past the stop in the sandbox raises the parent's
+// "your shuttle has arrived" notification. Without a pickup place no rider is tied to a stop.
+async function seedCustomRouteEnrollment(rider, customRoutes) {
+  const live = customRoutes.find((c) => c.route.status === 'ACTIVE');
+  if (!live) return null;
+  const place = await HouseholdPlace.create({
+    accountId: rider._id,
+    label: 'Home',
+    address: "Next to Nimal's house (sandbox)",
+    coordinates: { lat: 6.9052, lng: 79.8503 },
+  });
+  await DriverEnrollment.create({
+    studentId: rider._id,
+    driverId: live.driver._id,
+    managerId: live.driver.managerId || null,
+    status: 'ACTIVE',
+    requiredApproval: false,
+    pickupPlaceId: place._id,
+  });
+  return { driver: live.driver, vehicle: live.vehicle, place };
 }
 
 async function seedVehicles(managers, drivers, routes) {
@@ -422,7 +554,7 @@ async function main() {
   await Promise.all(
     [
       Identity, SuperAdmin, Manager, Driver, User, Vehicle, Route, Booking, ManagerVehicleRequest,
-      RiderProfile, DriverEnrollment, VehicleLiveLocation,
+      RiderProfile, DriverEnrollment, VehicleLiveLocation, RouteRecordingRun,
     ].map((model) => model.syncIndexes())
   );
 
@@ -465,6 +597,14 @@ async function main() {
 
   await seedAccountDeletion(managers);
   console.log('Seeded a rider pending deletion and a manager bell notice');
+
+  const customRoutes = await seedCustomRoutes(managers);
+  console.log(`Seeded ${customRoutes.length} custom routes (recording, to review, live)`);
+
+  const customEnrollment = await seedCustomRouteEnrollment(rider, customRoutes);
+  if (customEnrollment) {
+    console.log(`Enrolled the sandbox rider with ${customEnrollment.driver.name} (pickup beside stop 1, for the arrival alert)`);
+  }
 
   console.log('Sandbox seed complete.');
   await mongoose.disconnect();

@@ -38,7 +38,7 @@ router.get('/routes', getAllRoutes);
 router.get('/routes/plan', planJourney);
 
 // GET /api/vehicle/routes/:routeId/path - road-following polyline for a route (cached)
-router.get('/routes/:routeId/path', getRoutePath);
+router.get('/routes/:routeId/path', optionalAuth, getRoutePath);
 
 // GET /api/vehicle/walk - real walking polyline between two points (one call per confirm)
 router.get('/walk', getWalkPath);

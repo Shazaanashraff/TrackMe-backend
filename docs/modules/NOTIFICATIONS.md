@@ -21,7 +21,7 @@ Two things are called "notifications" here and they are **not the same pipeline*
 | Channel | What it is | Types | Reaches the device? |
 |---|---|---|---|
 | **Stored notifications** | `Notification` documents, read over REST, shown in the app's notification list + unread badge | **10** (see §4) | Only when the app fetches. No push. |
-| **Expo push** | `utils/pushHelper.js` (boarding) and `services/communicationPush.js` (messages, absences, broadcasts) → Expo push service | `BOARDING_EVENT`, `COMMUNICATION` | Yes, OS-level |
+| **Expo push** | `utils/pushHelper.js` (boarding, `sendArrivalPush`) and `services/communicationPush.js` (messages, absences, broadcasts) → Expo push service | `BOARDING_EVENT`, `VEHICLE_ARRIVAL`, `COMMUNICATION` | Yes, OS-level |
 
 Two senders push, and nothing else does (corrected 2026-10-19: this section used to say
 `pushHelper.js` was the only one). So a `ROUTE_ACCESS_APPROVED` notification is written to the
@@ -179,3 +179,12 @@ flowchart TD
 
 See [`_MODULE_TEMPLATE.md`](../guides/_MODULE_TEMPLATE.md) §11. Adding a **push** type requires a
 matching case in user-app's `getNavigationTarget` **and** a test, in the same change.
+
+## Stop arrival alert (`VEHICLE_ARRIVAL`, 2026-11-04)
+
+When a custom route's shuttle pulls up to a stop, `services/stopArrivalNotifier.js` writes one `Notification`
+per rider whose pickup place belongs to that stop (`type: 'VEHICLE_ARRIVAL'`, `priority: HIGH`,
+`data.{studentId, vehicleId, routeId}`, `eventId = arrival:<sessionId>:<stopOrder>:<riderId>` so a repeat is a
+no-op), emits `notification:new`, and sends an Expo push to the household's devices via
+`pushHelper.sendArrivalPush` (`data.type = 'VEHICLE_ARRIVAL'`, `channelId: 'communications'`). Tapping it opens the live
+map for the route (the app already routes `VEHICLE_ARRIVAL`). Full rules in [`CUSTOM_ROUTES.md`](CUSTOM_ROUTES.md).

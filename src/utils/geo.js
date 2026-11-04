@@ -103,30 +103,89 @@ function minDistanceToPolylineMeters(point, polylineCoords) {
 }
 
 /**
- * Compare a driven breadcrumb against a saved route polyline.
- * `offThresholdMeters` classifies a breadcrumb point as "off route".
- * Returns { maxMeters, fractionOff, sampleCount }; all zero when there's
- * nothing usable to compare (degenerate breadcrumb or polyline).
+ * Total length in metres of a polyline (array of { lat, lng }).
  */
-function deviationStats(breadcrumb, polylineCoords, offThresholdMeters = 150) {
-  if (!Array.isArray(breadcrumb) || breadcrumb.length === 0 ||
-      !Array.isArray(polylineCoords) || polylineCoords.length < 2) {
-    return { maxMeters: 0, fractionOff: 0, sampleCount: 0 };
+function polylineLengthMeters(coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < coords.length - 1; i += 1) {
+    total += haversineKm(coords[i].lat, coords[i].lng, coords[i + 1].lat, coords[i + 1].lng) * 1000;
   }
+  return total;
+}
 
-  let maxMeters = 0;
-  let offCount = 0;
-  breadcrumb.forEach((point) => {
-    const d = minDistanceToPolylineMeters(point, polylineCoords);
-    if (d > maxMeters) maxMeters = d;
-    if (d > offThresholdMeters) offCount += 1;
+/**
+ * Re-sample a polyline so consecutive points are `stepMeters` apart along the
+ * line (the last point is always kept). Returns [] for fewer than 2 points.
+ */
+function resamplePolyline(coords, stepMeters = 10) {
+  if (!Array.isArray(coords) || coords.length < 2) return [];
+  const out = [{ lat: coords[0].lat, lng: coords[0].lng }];
+  let carry = 0; // metres travelled since the last emitted point
+  for (let i = 0; i < coords.length - 1; i += 1) {
+    const a = coords[i];
+    const b = coords[i + 1];
+    const segLen = haversineKm(a.lat, a.lng, b.lat, b.lng) * 1000;
+    if (segLen === 0) continue;
+    let pos = stepMeters - carry; // distance into this segment of the next point
+    while (pos <= segLen) {
+      const t = pos / segLen;
+      out.push({ lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t });
+      pos += stepMeters;
+    }
+    carry = segLen - (pos - stepMeters);
+  }
+  const last = coords[coords.length - 1];
+  const tail = out[out.length - 1];
+  if (tail.lat !== last.lat || tail.lng !== last.lng) out.push({ lat: last.lat, lng: last.lng });
+  return out;
+}
+
+/**
+ * Fraction (0..1) of `from`'s points that lie within `radiusMeters` of the
+ * polyline `to`. Both are arrays of { lat, lng }; `from` should be resampled.
+ */
+function coverageFraction(from, to, radiusMeters = 25) {
+  if (!Array.isArray(from) || from.length === 0) return 0;
+  let near = 0;
+  from.forEach((point) => {
+    if (minDistanceToPolylineMeters(point, to) <= radiusMeters) near += 1;
   });
+  return near / from.length;
+}
 
-  return {
-    maxMeters,
-    fractionOff: offCount / breadcrumb.length,
-    sampleCount: breadcrumb.length
-  };
+/**
+ * Project `point` onto the polyline. Returns { point, distanceMeters (to the
+ * line), alongMeters (distance from the polyline's start to the projection) }
+ * or null for a polyline with fewer than 2 points.
+ */
+function projectOntoPolyline(point, coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  let best = null;
+  let walked = 0;
+  for (let i = 0; i < coords.length - 1; i += 1) {
+    const a = coords[i];
+    const b = coords[i + 1];
+    const segLen = haversineKm(a.lat, a.lng, b.lat, b.lng) * 1000;
+    const A = { x: 0, y: 0 };
+    const B = toLocalMeters(a, b);
+    const P = toLocalMeters(a, point);
+    const lenSq = B.x * B.x + B.y * B.y;
+    let t = lenSq === 0 ? 0 : (P.x * B.x + P.y * B.y) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const dx = P.x - (A.x + t * B.x);
+    const dy = P.y - (A.y + t * B.y);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (!best || dist < best.distanceMeters) {
+      best = {
+        point: { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t },
+        distanceMeters: dist,
+        alongMeters: walked + segLen * t
+      };
+    }
+    walked += segLen;
+  }
+  return best;
 }
 
 module.exports = {
@@ -135,5 +194,8 @@ module.exports = {
   segmentDistanceKm,
   pointToSegmentMeters,
   minDistanceToPolylineMeters,
-  deviationStats
+  polylineLengthMeters,
+  resamplePolyline,
+  coverageFraction,
+  projectOntoPolyline
 };

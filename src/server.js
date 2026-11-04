@@ -31,6 +31,7 @@ const qrRoutes = require('./routes/qrRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const driverBoardingRoutes = require('./routes/driverBoardingRoutes');
 const driverAccountRoutes = require('./routes/driverAccountRoutes');
+const customRouteRoutes = require('./routes/customRouteRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const riderRoutes = require('./routes/riderRoutes');
 const householdPlaceRoutes = require('./routes/householdPlaceRoutes');
@@ -191,6 +192,7 @@ app.use('/api/transit', transitRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/driver/boarding', driverBoardingRoutes);
+app.use('/api/driver/custom-routes', customRouteRoutes);
 // Mounted after the more specific driver routers above; this one owns what is
 // left under /api/driver, so a new sub-router must be added before it.
 app.use('/api/driver', driverAccountRoutes);

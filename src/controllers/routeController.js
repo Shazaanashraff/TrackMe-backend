@@ -1,6 +1,7 @@
 const Route = require('../models/Route');
 const Vehicle = require('../models/Vehicle');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
+const { canViewCustomRoute } = require('../utils/customRoute');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -82,9 +83,10 @@ exports.createRoute = async (req, res, next) => {
   }
 };
 
-// Every route is listable now that private routes are gone; geometry is still
-// trimmed from list responses to keep them small.
-const listableRouteFilter = () => ({});
+// Public lists never include a driver-recorded custom route, at any status: those are
+// reached through the vehicle a rider is enrolled with, never by browsing. Geometry
+// is also trimmed from list responses to keep them small.
+const listableRouteFilter = () => ({ origin: { $ne: 'RECORDED' } });
 
 const projectListedRoute = (route) => {
   const plain = route.toObject ? route.toObject() : route;
@@ -130,9 +132,13 @@ exports.getRouteById = async (req, res, next) => {
   try {
     const { routeId } = req.params;
 
-    // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
     const route = await Route.findOne({ routeId, isDeleted: false });
     if (!route) {
+      return res.status(404).json({ success: false, message: 'Route not found' });
+    }
+    // A custom route is only readable by the people it belongs to; anyone else is
+    // told it does not exist (a 404, not a 403, so its id cannot be probed).
+    if (route.origin === 'RECORDED' && !(await canViewCustomRoute(req.user, route))) {
       return res.status(404).json({ success: false, message: 'Route not found' });
     }
 
@@ -328,7 +334,7 @@ exports.getRoutesStats = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — stats only cover PUBLIC routes, never a manager's private ones.
     const [stats] = await Route.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: false, origin: { $ne: 'RECORDED' } } },
       {
         $facet: {
           total: [{ $count: 'count' }],

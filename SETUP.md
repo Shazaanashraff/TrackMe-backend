@@ -37,7 +37,7 @@ Then fill in the Google keys:
 |------|----------|-------------------|-------|
 | `TrackMe-backend/.env` | `GOOGLE_PLACES_KEY` | Places API (New) | **server-side only** — never expose to the client |
 | `TrackMe-backend/.env` | `GOOGLE_GEOCODING_KEY` | Geocoding API (**billing enabled**) | reverse-geocode of dragged pins; falls back to `GOOGLE_PLACES_KEY` if unset |
-| `TrackMe-backend/.env` | `GOOGLE_ROADS_KEY` | Roads API | snaps driver-recorded custom routes to roads; optional — falls back to `GOOGLE_ROUTES_KEY`, then `GOOGLE_PLACES_KEY`, then the raw unsnapped breadcrumb if none are set |
+| `TrackMe-backend/.env` | `MAP_MATCH_URL` | OSRM map matcher | fits driver-recorded custom routes to roads (OpenStreetMap, no Google API). Defaults to the public demo server - development only; self-host OSRM/Valhalla before real use. Related: `MAP_MATCH_PROVIDER`, `MAP_MATCH_TIMEOUT_MS`, `CUSTOM_ROUTE_REQUIRED_RUNS`, `CUSTOM_ROUTE_MIN_POINTS`, `CUSTOM_ROUTE_MIN_METERS` |
 | `TrackMe-UserApp/.env` | `EXPO_PUBLIC_GOOGLE_MAPS_KEY` | Maps JavaScript API | **browser key** — ships in the client bundle; lock it down with an **HTTP-referrer restriction** (`http://localhost:8081/*`). Keep it separate from the server keys. |
 | `TrackMe-backend/.env` | `ROOM_KEY_SECRET`, `ROOM_KEY_PEPPER` | — (no Google API) | Private Routes room-key encryption/lookup. Generate real values for anything beyond local dev: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 

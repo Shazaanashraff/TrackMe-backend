@@ -80,4 +80,39 @@ async function sendBoardingPush(student, account, event, vehicleName) {
   }
 }
 
-module.exports = { sendBoardingPush, resolvePushTokensForRider };
+// "<Driver> has arrived at <stop>" push for the parent of a rider whose stop the shuttle
+// has pulled up to. Same delivery rules as the boarding push: household tokens, never
+// throws, returns a small summary.
+async function sendArrivalPush(student, account, { vehicleName, stopName, routeId, vehicleId }) {
+  try {
+    const tokens = await resolvePushTokensForRider(account || student);
+    if (tokens.length === 0) return { sent: 0, skipped: 'NO_TOKENS' };
+
+    const who = student.fullName || student.name || 'your rider';
+    const messages = tokens.map((to) => ({
+      to,
+      sound: 'default',
+      channelId: 'communications',
+      title: `${vehicleName || 'Your shuttle'} has arrived`,
+      body: `Waiting at ${stopName || 'the stop'} for ${who}.`,
+      data: {
+        type: 'VEHICLE_ARRIVAL',
+        studentId: String(student._id),
+        routeId,
+        vehicleId
+      }
+    }));
+
+    const tickets = [];
+    for (const chunk of expo.chunkPushNotifications(messages)) {
+      // eslint-disable-next-line no-await-in-loop
+      tickets.push(...await expo.sendPushNotificationsAsync(chunk));
+    }
+    return { sent: tickets.length, tickets };
+  } catch (error) {
+    console.error('Error sending Expo push for arrival:', error.message);
+    return { sent: 0, error: error.message };
+  }
+}
+
+module.exports = { sendBoardingPush, sendArrivalPush, resolvePushTokensForRider };

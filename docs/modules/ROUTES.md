@@ -23,3 +23,10 @@ Pay particular attention to:
   scoping beyond the role check;
 - which **client apps consume it**, so a contract change updates their module docs too;
 - any invariant enforced by a **Mongoose index** rather than controller code.
+
+## Custom routes are not part of the public catalogue
+
+A driver-recorded route (`origin: 'RECORDED'`) is excluded from every public list, search,
+planner and stat (`listableRouteFilter`), and `GET /api/routes/:id`, `GET /api/vehicle/routes/:id/path`
+and `GET /api/vehicle/route/:id` answer only to the people it belongs to. See
+[CUSTOM_ROUTES.md](CUSTOM_ROUTES.md) section 6 for the rule and its tests.

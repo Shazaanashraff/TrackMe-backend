@@ -50,7 +50,7 @@ time). It exists so a replayed offline buffer can be told apart from a fresh fix
 
 | Event | Payload | Ack | Notes |
 |---|---|---|---|
-| `vehicle:subscribe` | `{ vehicleId, riderId? }` | `{ success, data: { vehicleId, live, location, vehicle, driver } }` or `{ success:false, code, error }` | `riderId` is **required** when `socket.userRole === 'user'`. Serves rider and manager through one handler, branching on role — see §5. Joins the room and seeds the current position in one round trip; there is no separate "get recent locations" call. |
+| `vehicle:subscribe` | `{ vehicleId, riderId? }` | `{ success, data: { vehicleId, live, location, vehicle, atStop, driver } }` or `{ success:false, code, error }` | `atStop` is `null`, or `{ stopOrder, stopName, lat, lng, since, forYou }` when a custom route's shuttle is waiting at a stop right now (so a parent who opens the app late still sees it). `riderId` is **required** when `socket.userRole === 'user'`. Serves rider and manager through one handler, branching on role — see §5. Joins the room and seeds the current position in one round trip; there is no separate "get recent locations" call. |
 | `vehicle:unsubscribe` | `{ vehicleId }` | `{ success:true }` | |
 
 Unchanged from before: `join-route`, `leave-route` — QR attendance only, untouched by this work.
@@ -65,6 +65,8 @@ Unchanged from before: `join-route`, `leave-route` — QR attendance only, untou
 | `notification:new` | `student:<userId>` (rider) or `driver:<userId>` | `{ notificationId, type, title, studentId, createdAt }` on every stored `Notification` row — see [`NOTIFICATIONS.md`](NOTIFICATIONS.md) §2 |
 | `vehicle:update` | `vehicle:<vehicleId>` | every **accepted** `driver:location` — see payload below |
 | `vehicle:status` | `vehicle:<vehicleId>` | `{ vehicleId, live, reason, at }` — `reason` is one of `DRIVER_STARTED` \| `DRIVER_STOPPED` \| `DRIVER_DISCONNECTED` \| `STALE_TIMEOUT` |
+| `vehicle:arrival` | `vehicle:<vehicleId>` (`forYou: false`) and the `student:<riderId>` rooms of the households the stop belongs to (`forYou: true`) | `{ vehicleId, routeId, stopOrder, stopName, lat, lng, at, arrivalId, forYou }` - a custom route's shuttle has pulled up to a stop. A household's sockets get both; clients treat `forYou: true` as winning. See [`CUSTOM_ROUTES.md`](CUSTOM_ROUTES.md) |
+| `vehicle:departure` | `vehicle:<vehicleId>` | `{ vehicleId, stopOrder, stopName, lat, lng, at }` - it drove away from the stop it was waiting at, or the shift ended |
 | `vehicle:access-revoked` | `vehicle:<vehicleId>` | `{ vehicleId, riderId }` — emitted when a rider's ACTIVE enrolment is removed (`DELETE /api/enrollments/:id`); tells a watching socket to leave, since there is no other trigger that would make it stop |
 | `error` | the socket | error channel |
 

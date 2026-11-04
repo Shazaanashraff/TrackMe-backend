@@ -48,8 +48,10 @@ const MODULES = [
     /routeController/, /routeGeometryController/, /routeRoutes/, /^src\/models\/Route\./,
   ]},
   { doc: 'docs/modules/CUSTOM_ROUTES.md', label: 'custom-routes', match: [
-    /customRouteController/, /customRouteRoutes/, /^src\/utils\/(customRoute|roadSnap)\./,
-    /^src\/models\/RouteChangeRequest\./,
+    /customRouteController/, /customRouteRoutes/, /managerCustomRoutesController/,
+    /^src\/utils\/(customRoute|roadSnap|routeConsensus|stopArrival)\./, /^src\/utils\/mapMatch\//,
+    /^src\/services\/stopArrivalNotifier\./,
+    /^src\/models\/RouteRecordingRun\./,
   ]},
   { doc: 'docs/modules/QR_ATTENDANCE.md', label: 'qr-attendance', match: [
     /qrController/, /qrRoutes/, /attendanceController/, /attendanceRoutes/,

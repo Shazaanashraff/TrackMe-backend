@@ -2,7 +2,9 @@ const mongoose = require('mongoose');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 const ORIGIN_TYPES = ['SYSTEM', 'RECORDED'];
-const ROUTE_STATUSES = ['ACTIVE', 'PENDING_NAMING'];
+// RECORDING = custom route still collecting its recording rides; PENDING_REVIEW = rides
+// merged, waiting for the manager to confirm; ACTIVE = live. Public routes are always ACTIVE.
+const ROUTE_STATUSES = ['ACTIVE', 'RECORDING', 'PENDING_REVIEW'];
 
 const routeSchema = new mongoose.Schema({
   routeId: {
@@ -104,8 +106,8 @@ const routeSchema = new mongoose.Schema({
     enum: ORIGIN_TYPES,
     default: 'SYSTEM'
   },
-  // PENDING_NAMING = provisional route auto-created for a not-yet-recorded custom
-  // driver, or recorded but not yet named by the manager. Hidden everywhere until ACTIVE.
+  // Custom (driver-recorded) routes move RECORDING -> PENDING_REVIEW -> ACTIVE and are
+  // hidden from riders until ACTIVE. See docs/modules/CUSTOM_ROUTES.md.
   status: {
     type: String,
     enum: ROUTE_STATUSES,
@@ -118,6 +120,23 @@ const routeSchema = new mongoose.Schema({
     rawPointCount: { type: Number, default: 0 },
     snapped: { type: Boolean, default: false }
   },
+  // Progress and result of the recording rides for a custom route.
+  recording: {
+    requiredRuns: { type: Number, default: 5 },
+    acceptedRuns: { type: Number, default: 0 },
+    confidence: { type: Number, default: null },
+    // '' or 'RUNS_DISAGREE' (the rides did not agree well enough to trust blindly)
+    warning: { type: String, default: '' },
+    builtAt: { type: Date, default: null },
+    // Candidate geometry while a live route is being re-recorded: it replaces the
+    // live line only when the manager confirms, so a live route is never blanked.
+    candidate: {
+      pathPolyline: { type: String, default: '' },
+      stops: [{ stopName: String, order: Number, lat: Number, lng: Number }],
+      distance: { type: Number, default: 0 },
+      estimatedTime: { type: Number, default: 0 }
+    }
+  },
   // QR Attendance (see docs/features/qr-attendance/QR_SYSTEM.md). Manager-owned toggle —
   // when true, a driver's vehicle on this route may record BOARD/ALIGHT scans.
   qrEnabled: { type: Boolean, default: false }
@@ -128,6 +147,7 @@ const routeSchema = new mongoose.Schema({
 // Index for faster queries
 // Note: routeId already has a unique index from `unique: true` on the field.
 routeSchema.index({ isActive: 1, isDeleted: 1 });
+routeSchema.index({ managerId: 1, origin: 1, status: 1, isDeleted: 1 });
 routeSchema.index({ serviceType: 1, isActive: 1, isDeleted: 1 });
 routeSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
 routeSchema.index({ province: 1 });

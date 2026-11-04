@@ -25,6 +25,14 @@ const {
   revertDriverEnrollmentKey,
   deleteManagerDriver
 } = require('../controllers/managerDriversController');
+const {
+  listCustomRoutes,
+  countPendingReview,
+  getCustomRoute,
+  confirmCustomRoute,
+  recordMore,
+  reRecord
+} = require('../controllers/managerCustomRoutesController');
 const { getManagerAttendance } = require('../controllers/managerAttendanceController');
 const { getManagerFleetLive } = require('../controllers/liveLocationController');
 const {
@@ -46,6 +54,14 @@ router.get('/dashboard', getManagerDashboard);
 router.get('/vehicles', getManagerVehicles);
 router.get('/vehicles/live', getManagerFleetLive);
 router.get('/routes', getManagerAssignableRoutes);
+// Driver-recorded custom routes: review and confirm. `count` is declared before
+// `/:routeId` so it is not swallowed by it.
+router.get('/custom-routes/count', countPendingReview);
+router.get('/custom-routes', listCustomRoutes);
+router.get('/custom-routes/:routeId', getCustomRoute);
+router.patch('/custom-routes/:routeId/confirm', confirmCustomRoute);
+router.post('/custom-routes/:routeId/record-more', recordMore);
+router.post('/custom-routes/:routeId/rerecord', reRecord);
 router.get('/requests', getMyRequests);
 router.post('/vehicle-accounts', createManagerVehicle);
 router.patch('/vehicle-accounts/:vehicleId/reset-password', resetVehicleAccountPassword);

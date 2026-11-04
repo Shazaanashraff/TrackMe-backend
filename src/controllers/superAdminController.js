@@ -8,6 +8,7 @@ const Organization = require('../models/Organization');
 const ManagerVehicleRequest = require('../models/ManagerVehicleRequest');
 const ManagerAuditLog = require('../models/ManagerAuditLog');
 const Identity = require('../models/Identity');
+const { createProvisionalRoute } = require('../utils/customRoute');
 const {
   findIdentityByEmail,
   findProfilesForIdentity,
@@ -971,10 +972,15 @@ exports.reviewVehicleRequest = async (req, res, next) => {
         vehiclePayload.registrationNumber = `AUTO-${vehiclePayload.vehicleId}`;
       }
 
-      const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
-      if (!route) {
-        await releaseClaim();
-        return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
+      // A custom-route vehicle has no route yet: its provisional route is created
+      // below, at approval, so a rejected request leaves no orphan route behind.
+      const wantsCustomRoute = requestDoc.payload?.routeMode === 'CUSTOM';
+      if (!wantsCustomRoute) {
+        const route = await Route.findOne({ routeId: vehiclePayload.routeId, isDeleted: false });
+        if (!route) {
+          await releaseClaim();
+          return res.status(400).json({ success: false, message: 'Cannot approve request: route no longer exists' });
+        }
       }
 
       const duplicateVehicle = await Vehicle.findOne({
@@ -1068,13 +1074,27 @@ exports.reviewVehicleRequest = async (req, res, next) => {
         }
       }
 
-      await Vehicle.create({
-        ...vehiclePayload,
-        managerId: requestDoc.managerId,
-        driverId: driver._id,
-        isActive: true,
-        isDeleted: false
-      });
+      let provisionalRoute = null;
+      if (wantsCustomRoute) {
+        provisionalRoute = await createProvisionalRoute({
+          managerId: requestDoc.managerId,
+          serviceType: vehiclePayload.serviceType || 'PUBLIC'
+        });
+        vehiclePayload.routeId = provisionalRoute.routeId;
+      }
+
+      try {
+        await Vehicle.create({
+          ...vehiclePayload,
+          managerId: requestDoc.managerId,
+          driverId: driver._id,
+          isActive: true,
+          isDeleted: false
+        });
+      } catch (createError) {
+        if (provisionalRoute) await Route.deleteOne({ _id: provisionalRoute._id });
+        throw createError;
+      }
     }
 
     if (requestDoc.type === 'DELETE_VEHICLE') {

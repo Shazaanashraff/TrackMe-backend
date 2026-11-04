@@ -23,6 +23,41 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-11-04: Custom routes - named stops, "driver has arrived" alert, matcher radius fix
+- **Branch:** main
+- **Modules touched:** custom-routes ([CUSTOM_ROUTES.md](modules/CUSTOM_ROUTES.md)), realtime ([REALTIME.md](modules/REALTIME.md)), notifications ([NOTIFICATIONS.md](modules/NOTIFICATIONS.md))
+- **What changed:**
+  - New arrival detector for ACTIVE custom routes: each driver fix is checked against the route's stops (cached in memory, no DB on the hot path). Arrival (80 m, under 5 m/s) emits `vehicle:arrival` to everyone watching the vehicle plus a `forYou: true` copy to the households the stop belongs to, stores a `VEHICLE_ARRIVAL` notification and sends an Expo push. Departure emits `vehicle:departure`. `vehicle:subscribe` now returns `atStop`.
+  - A stop belongs to a rider by pickup place -> nearest stop within 250 m.
+  - Reconnecting mid-shift keeps the shift's `sessionId` (so a stop already announced is not announced again).
+  - Map matcher: the public OSRM server also refuses search radii above ~40 m; that `TooBig` was being read as "too many points" and gave up. The two are now told apart and the radius is learned. New `MAP_MATCH_MAX_RADIUS`.
+  - `scripts/verify-route-geometry.js`: checks a matched route against raw OpenStreetMap roads and buildings.
+- **Why:** drivers name stops as they record; parents should see the stops, see when the shuttle is waiting, and be told when it arrives. The radius bug made real, vague-GPS rides fail to match.
+- **Contract impact:** new socket events `vehicle:arrival`, `vehicle:departure`; new `atStop` field on the `vehicle:subscribe` ack; push `data.type = 'VEHICLE_ARRIVAL'`. user-app `LIVE_MAP.md`, driver-app `ROUTE_MANAGEMENT.md` updated.
+- **Tests:** `tests/unit/stop-arrival.test.js` (18), `tests/integration/ws/stop-arrival.test.js` (17), `tests/integration/ws/custom-route-end-to-end.test.js` (record -> confirm -> arrive, one test, mutation-checked), `map-match-osrm.test.js` (+5), `route-consensus.test.js` (+4).
+- **Docs updated:** CUSTOM_ROUTES.md, REALTIME.md, NOTIFICATIONS.md, TESTING_GUIDE.md, `.env.example`, `scripts/check-docs.mjs` map.
+- **Migration:** none.
+- **Follow-ups / known issues:** a stop passed without stopping is not announced; no "approaching" alert; return direction not handled; stop names are visible to every parent on the vehicle; notifications go only to riders with a saved pickup place.
+
+## 2026-11-04: Custom routes v2 - record 5 rides, fit to roads, manager confirms
+- **Branch:** main
+- **Modules touched:** custom-routes ([CUSTOM_ROUTES.md](modules/CUSTOM_ROUTES.md), written for the first time), routes ([ROUTES.md](modules/ROUTES.md) visibility), admin (`managerController` vehicle create / assignable routes, `superAdminController` approval)
+- **What changed:**
+  - A manager can create a vehicle with `routeMode: 'CUSTOM'`; a provisional `RECORDING` route is created for it (at creation, or at super-admin approval so a rejected request leaves nothing).
+  - New driver endpoints `/api/driver/custom-routes/{current,runs}`: the driver's first 5 rides are uploaded (idempotent on `clientRunId`), quality-gated, fitted to roads with OpenStreetMap map matching (`utils/mapMatch`, OSRM) and stored as `RouteRecordingRun`s. No Google API.
+  - After the last ride the rides are merged by picking the ride that agrees most with the others (`utils/routeConsensus.js`), stops clustered from the drivers' taps, and the route goes to `PENDING_REVIEW`.
+  - New manager endpoints `/api/manager/custom-routes[...]`: list, count, review, **confirm**, record-more, re-record.
+  - `Route.status` is now `RECORDING | PENDING_REVIEW | ACTIVE` (was `ACTIVE | PENDING_NAMING`); new `Route.recording.*`.
+  - Visibility restored: custom routes are excluded from every public list/search/plan/stats and answer only to their manager, driver, super-admins and (once live) enrolled riders - `getRouteById`, `getRoutePath` and `getVehiclesByRoute` now use `optionalAuth`. Custom routes are never put in the shared path cache and never call the Google fallback.
+  - `GET /api/manager/vehicles` rows gain `routeOrigin`, `routeStatus`, `routeProgress`.
+  - Removed: Google `snapToRoads` (and `GOOGLE_ROADS_KEY`), dead `deviationStats`.
+- **Why:** v1 (removed 2026-08-04, `f4bfff0`) recorded once, could not merge rides, and its naming screen was deleted. Plan: `CUSTOM_ROUTES_V2_PLAN.md`.
+- **Contract impact:** new endpoints above; `Route.status` enum change; `GET /api/routes/:id`, `GET /api/vehicle/routes/:id/path`, `GET /api/vehicle/route/:id` can 404 for a custom route. driver-app `ROUTE_MANAGEMENT.md`, web-admin `CUSTOM_ROUTES.md`, user-app `LIVE_MAP.md` updated.
+- **Tests:** `tests/unit/{map-match-clean,map-match-osrm,route-consensus,geo,migrate-custom-route-status}.test.js`, `tests/integration/custom-routes.test.js` (44 cases incl. every authz and visibility failure).
+- **Docs updated:** CUSTOM_ROUTES.md, TESTING_GUIDE.md (custom-routes section rewritten - its rows pointed at test files deleted with v1), `.env.example`, `SETUP.md`, `scripts/check-docs.mjs` module map.
+- **Migration:** `node scripts/migrate-custom-route-status.js [--apply]` maps any legacy `PENDING_NAMING` route (likely none); also run against the sandbox database. `scripts/seed-sandbox.js` seeds one custom route per state.
+- **Follow-ups / known issues:** run a self-hosted OSRM/Valhalla (Sri Lanka extract) and set `MAP_MATCH_URL` before real use; ride-agreement thresholds are untuned on real GPS; all rides are one direction (no return line).
+
 ## 2026-10-26: Change password checks the code first; professional code errors
 - **Branch:** feature/account-deletion-password (merged into main)
 - **Modules touched:** auth ([`AUTH.md`](modules/AUTH.md))

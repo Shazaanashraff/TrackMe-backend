@@ -7,6 +7,7 @@ const VehicleLiveLocation = require('../models/VehicleLiveLocation');
 const rateLimit = require('../utils/socketRateLimit');
 const liveVehicles = require('../utils/liveVehicles');
 const { dayTripId } = require('../utils/tripId');
+const stopArrivals = require('../services/stopArrivalNotifier');
 
 // Live vehicle location: the driver broadcasts, enrolled riders and the owning
 // manager watch.
@@ -160,6 +161,7 @@ async function watchRefusal(socket, vehicle, riderId) {
 
 function registerLiveTracking(io, socket) {
   const emitStatus = async (vehicleId, live, reason) => {
+    if (!live) stopArrivals.endTrip(io, vehicleId);
     io.to(roomFor(vehicleId)).emit('vehicle:status', {
       vehicleId,
       live,
@@ -276,6 +278,11 @@ function registerLiveTracking(io, socket) {
       if (!session) {
         const vehicle = await driverVehicle(requested, socket.userId);
         if (!vehicle) return callback?.(fail('VEHICLE_NOT_FOUND', 'Vehicle not found'));
+        // A reconnect mid-shift keeps the shift's session id, so the stops already
+        // announced to parents on this trip are not announced a second time.
+        const running = await VehicleLiveLocation.findOne({ vehicleId: vehicle.vehicleId, live: true })
+          .select('sessionId')
+          .lean();
         session = {
           vehicleId: vehicle.vehicleId,
           vehicleRef: vehicle._id,
@@ -285,7 +292,7 @@ function registerLiveTracking(io, socket) {
           vehicleName: vehicle.vehicleName || '',
           numberPlate: vehicle.numberPlate || '',
           serviceType: vehicle.serviceType || null,
-          sessionId: crypto.randomUUID()
+          sessionId: running?.sessionId || crypto.randomUUID()
         };
         socket.data.trackedVehicles = socket.data.trackedVehicles || new Map();
         socket.data.trackedVehicles.set(session.vehicleId, session);
@@ -362,6 +369,15 @@ function registerLiveTracking(io, socket) {
         sessionId: session.sessionId,
         live: true
       });
+
+      // Off the ack path: the driver's app must not wait on parent notifications.
+      stopArrivals
+        // The vehicle's assigned route, never the client-supplied one: a made-up routeId
+        // must not be able to make the server cache or query arbitrary routes.
+        .handleFix(io, session, {
+          lat, lng, speed: update.speed, accuracy: update.accuracy
+        })
+        .catch((error) => console.error('stop arrival check failed:', error?.message || error));
 
       return callback?.({ success: true, data: { acceptedAt: receivedAt.toISOString() } });
     } catch (error) {
@@ -448,6 +464,7 @@ function registerLiveTracking(io, socket) {
           live: Boolean(current?.live),
           location: locationPayload(current),
           vehicle: vehicleSummary(vehicle),
+          atStop: stopArrivals.currentStop(vehicleId, riderId),
           driver: driver ? { _id: String(driver._id), name: driver.name } : null
         }
       });

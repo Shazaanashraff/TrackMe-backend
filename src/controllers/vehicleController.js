@@ -5,6 +5,7 @@ const ManagerAuditLog = require('../models/ManagerAuditLog');
 const { nearestStop, segmentDistanceKm } = require('../utils/geo');
 const { formatPlate, PLATE_FORMAT_MESSAGE } = require('../utils/numberPlate');
 const { plateConflict } = require('../utils/vehiclePlateGuard');
+const { canViewCustomRoute } = require('../utils/customRoute');
 
 const SERVICE_TYPES = ['PUBLIC', 'SCHOOL', 'UNIVERSITY', 'OFFICE'];
 
@@ -115,7 +116,12 @@ exports.getVehiclesByRoute = async (req, res, next) => {
       $or: [{ routeId }, ...(mongoose.Types.ObjectId.isValid(routeId) ? [{ _id: routeId }] : [])]
     });
 
-    // A manager's PRIVATE route (custom shuttle, or a Private Routes feature route)
+    // A driver-recorded custom route: its vehicle and driver are only visible to the
+    // people the route belongs to; anyone else sees an empty route.
+    if (route && route.origin === 'RECORDED' && !(await canViewCustomRoute(req.user, route))) {
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
+
     // Filter vehicles by effective route lookup
     if (route) {
       filter.routeId = route.routeId;
@@ -153,7 +159,7 @@ exports.getAllRoutes = async (req, res, next) => {
   try {
     const { serviceType } = req.query;
     // Unauthenticated endpoint — never surface a manager's PRIVATE custom route.
-    const filter = { isDeleted: false, isActive: true };
+    const filter = { isDeleted: false, isActive: true, origin: { $ne: 'RECORDED' } };
 
     if (serviceType && SERVICE_TYPES.includes(String(serviceType).toUpperCase())) {
       filter.serviceType = String(serviceType).toUpperCase();
@@ -190,7 +196,7 @@ exports.getAllRoutes = async (req, res, next) => {
 exports.getStops = async (req, res, next) => {
   try {
     // Unauthenticated endpoint — never leak a manager's PRIVATE custom-route stops.
-    const routes = await Route.find({ isDeleted: false, isActive: true }).select('stops');
+    const routes = await Route.find({ isDeleted: false, isActive: true, origin: { $ne: 'RECORDED' } }).select('stops');
 
     // Dedupe by stop name (case-insensitive); first coordinates win.
     const seen = new Map();
@@ -233,7 +239,7 @@ exports.planJourney = async (req, res, next) => {
 
     // Unauthenticated endpoint — journey planning must never surface a manager's
     // PRIVATE custom route.
-    const filter = { isDeleted: false, isActive: true };
+    const filter = { isDeleted: false, isActive: true, origin: { $ne: 'RECORDED' } };
     if (req.query.serviceType && SERVICE_TYPES.includes(String(req.query.serviceType).toUpperCase())) {
       filter.serviceType = String(req.query.serviceType).toUpperCase();
     }

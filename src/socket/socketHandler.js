@@ -8,6 +8,7 @@ const { findHouseholdProfiles } = require('../utils/identityRegistry');
 const { findAccountById } = require('../utils/accountRegistry');
 const { registerLiveTracking } = require('./liveTracking');
 const liveVehicles = require('../utils/liveVehicles');
+const stopArrivals = require('../services/stopArrivalNotifier');
 
 // The socket layer carries two features.
 //
@@ -86,6 +87,7 @@ const setupSocket = (io) => {
   // One sweeper per server, not per connection: recovers vehicles left live by a
   // process that died without running its disconnect handlers.
   liveVehicles.startSweeper(async (vehicleId) => {
+    stopArrivals.endTrip(io, vehicleId);
     io.to(`vehicle:${vehicleId}`).emit('vehicle:status', {
       vehicleId,
       live: false,
