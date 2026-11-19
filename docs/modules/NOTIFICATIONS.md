@@ -27,8 +27,11 @@ Two senders push, and nothing else does (corrected 2026-10-19: this section used
 `pushHelper.js` was the only one). So a `ROUTE_ACCESS_APPROVED` notification is written to the
 database and appears in the list next time the rider opens the app; it does **not** buzz their
 phone. If you are asked "why didn't the user get notified", this asymmetry is almost always the
-answer. Both senders set `channelId: 'communications'`, the high-importance Android channel the
-apps create; without it Android shows no heads-up popup. On Android, no push reaches a device until
+answer. Each push names an Android channel the passenger app creates at startup (`pushHelper.CHANNELS`):
+`bus-updates` for arrivals, `account` for boarding and app-update notices, `communications` for driver
+updates. A channel the app has not created falls back to a generic one with no heads-up popup. Arrival
+and boarding go at `priority: 'high'` with a `ttl` (10 min and 1 h) so a stale "has arrived" is dropped
+rather than delivered late. On Android, no push reaches a device until
 the app build carries Firebase (`google-services.json`) and the Expo project holds an FCM V1 key.
 
 ## 2. API surface
@@ -80,7 +83,7 @@ badge optimistically and the count endpoint remains the truth.
 | `src/controllers/notificationController.js` | List, unread count, read/read-all, delete, device-token, cleanup. |
 | `src/models/Notification.js` | Schema + the type enum + priority. |
 | `src/utils/notificationHelper.js` | Creates `Notification` documents from other controllers. |
-| `src/utils/pushHelper.js` | `sendBoardingPush`: Expo token filtering, chunking, ticket collection, `channelId: 'communications'`. |
+| `src/utils/pushHelper.js` | `sendBoardingPush`: Expo token filtering, chunking, ticket handling (`sendMessages`), Android channel + priority + ttl per push type; also `sendArrivalPush`. |
 | `src/services/communicationPush.js` | Communication push jobs: leases, retries, receipts, token pruning. |
 | `src/controllers/boardingController.js` | The one caller of `sendBoardingPush`. |
 
@@ -151,8 +154,10 @@ flowchart TD
   to the caller.
 - **`{ sent: 0, skipped: 'NO_TOKENS' }`** is the normal result for a rider who never granted
   notification permission. Not an error.
-- **Expo tickets are returned but not reconciled.** Nobody polls Expo receipts, so permanently
-  invalid tokens are never pruned from `user.pushTokens`.
+- **Tickets are checked (2026-11-19).** `pushHelper.sendMessages` prunes a token whose ticket says
+  `DeviceNotRegistered` and logs any other ticket error (`InvalidCredentials` means Firebase/APNs is
+  not set up on the Expo project). Receipts are still not polled for these two senders;
+  `communicationPush.js` does poll them.
 
 ## 9. Known gotchas / regressions
 

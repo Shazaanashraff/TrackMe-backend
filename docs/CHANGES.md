@@ -23,6 +23,23 @@ Feeds [`CHANGELOG.md`](../CHANGELOG.md) / release notes — see [`guides/RELEASI
 
 ---
 
+## 2026-11-19 — Push: Android channels, high priority, expiry, dead-token pruning
+- **Branch:** claude/magical-hawking-ea4tzr
+- **Modules touched:** notifications ([`docs/modules/NOTIFICATIONS.md`](modules/NOTIFICATIONS.md))
+- **What changed:**
+  - Arrival pushes use channel `bus-updates`; boarding and app-update pushes use `account`; driver updates keep `communications`. These match the channels the passenger app now creates.
+  - Arrival, boarding and driver-update pushes are `priority: 'high'`; arrival expires after 10 min, boarding after 1 h.
+  - New shared `pushHelper.sendMessages` prunes `DeviceNotRegistered` tokens and logs other ticket errors (a missing FCM/APNs key shows up as `InvalidCredentials`).
+- **Why:** push to a backgrounded or locked phone. Needed for the passenger app's lock-screen work.
+- **Contract impact:** push `channelId` values change. Passenger app doc `docs/modules/NOTIFICATIONS.md` already lists the channels. Deploy after the passenger app build that creates them; Android push did not reach devices before this, so older builds lose nothing.
+- **Tests:** `tests/integration/push-helper.test.js` +3 (arrival channel/priority/ttl, token pruning, credentials error log); the channel assertion updated. Passes. The Mongo-backed household suite could not run here (no database).
+- **Docs updated:** `docs/modules/NOTIFICATIONS.md`, `docs/TESTING_GUIDE.md`
+- **Migration:** none
+- **Follow-ups / known issues:** Firebase `google-services.json` in the app build and an FCM V1 key on the Expo project are still needed. Receipts are not polled for boarding/arrival pushes.
+
+---
+
+
 ## 2026-11-04: Custom routes - named stops, "driver has arrived" alert, matcher radius fix
 - **Branch:** main
 - **Modules touched:** custom-routes ([CUSTOM_ROUTES.md](modules/CUSTOM_ROUTES.md)), realtime ([REALTIME.md](modules/REALTIME.md)), notifications ([NOTIFICATIONS.md](modules/NOTIFICATIONS.md))

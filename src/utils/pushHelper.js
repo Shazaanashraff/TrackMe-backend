@@ -2,8 +2,39 @@
 // See docs/features/qr-attendance/QR_ATTENDANCE_PLAN.md "Push notifications".
 const { Expo } = require('expo-server-sdk');
 const User = require('../models/User');
+const { removeToken } = require('../services/communicationPush');
 
 const expo = new Expo();
+
+// Android channels the passenger app creates at startup (notificationHandler.ts,
+// communications/provider.js). Both show on the lock screen. A channelId the app
+// has not created falls back to a generic channel with no heads-up popup.
+const CHANNELS = { BUS_UPDATES: 'bus-updates', ACCOUNT: 'account', COMMUNICATIONS: 'communications' };
+
+// Send Expo messages in chunks, then deal with what the tickets say: a token the
+// device no longer honours is pruned, and a credentials error (Firebase/APNs not
+// set up on the Expo project) is logged, since otherwise a push that never
+// arrives looks like success. Returns the tickets; the caller handles throws.
+async function sendMessages(messages) {
+  const tickets = [];
+  for (const chunk of expo.chunkPushNotifications(messages)) {
+    // eslint-disable-next-line no-await-in-loop
+    const chunkTickets = await expo.sendPushNotificationsAsync(chunk);
+    for (let i = 0; i < chunkTickets.length; i++) {
+      const ticket = chunkTickets[i];
+      if (ticket.status !== 'error') continue;
+      const code = ticket.details && ticket.details.error;
+      if (code === 'DeviceNotRegistered') {
+        // eslint-disable-next-line no-await-in-loop
+        await removeToken(chunk[i].to).catch(() => {});
+      } else {
+        console.error(`Expo push ticket error${code ? ` (${code})` : ''}: ${ticket.message || ''}`);
+      }
+    }
+    tickets.push(...chunkTickets);
+  }
+  return tickets;
+}
 
 function formatTime(date) {
   return new Date(date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -50,10 +81,9 @@ async function sendBoardingPush(student, account, event, vehicleName) {
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
-      // The high-importance channel the passenger app creates for driver
-      // updates. Without it Android files the push under its default channel,
-      // which shows no heads-up popup.
-      channelId: 'communications',
+      channelId: CHANNELS.ACCOUNT,
+      priority: 'high',
+      ttl: 60 * 60, // a boarding notice is worthless after an hour
       title: `${student.fullName || student.name || 'Rider'} ${verb} ${vehicleName || 'the vehicle'}`,
       body: `at ${formatTime(event.timestamp)}`,
       data: {
@@ -66,13 +96,7 @@ async function sendBoardingPush(student, account, event, vehicleName) {
       }
     }));
 
-    const chunks = expo.chunkPushNotifications(messages);
-    const tickets = [];
-    for (const chunk of chunks) {
-      // eslint-disable-next-line no-await-in-loop
-      const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-      tickets.push(...ticketChunk);
-    }
+    const tickets = await sendMessages(messages);
     return { sent: tickets.length, tickets };
   } catch (error) {
     console.error('Error sending Expo push for boarding event:', error.message);
@@ -92,7 +116,9 @@ async function sendArrivalPush(student, account, { vehicleName, stopName, routeI
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
-      channelId: 'communications',
+      channelId: CHANNELS.BUS_UPDATES,
+      priority: 'high',
+      ttl: 10 * 60, // "has arrived" is stale after ten minutes
       title: `${vehicleName || 'Your shuttle'} has arrived`,
       body: `Waiting at ${stopName || 'the stop'} for ${who}.`,
       data: {
@@ -103,11 +129,7 @@ async function sendArrivalPush(student, account, { vehicleName, stopName, routeI
       }
     }));
 
-    const tickets = [];
-    for (const chunk of expo.chunkPushNotifications(messages)) {
-      // eslint-disable-next-line no-await-in-loop
-      tickets.push(...await expo.sendPushNotificationsAsync(chunk));
-    }
+    const tickets = await sendMessages(messages);
     return { sent: tickets.length, tickets };
   } catch (error) {
     console.error('Error sending Expo push for arrival:', error.message);
@@ -115,4 +137,4 @@ async function sendArrivalPush(student, account, { vehicleName, stopName, routeI
   }
 }
 
-module.exports = { sendBoardingPush, sendArrivalPush, resolvePushTokensForRider };
+module.exports = { sendBoardingPush, sendArrivalPush, resolvePushTokensForRider, sendMessages, CHANNELS };

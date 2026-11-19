@@ -156,6 +156,7 @@ exports.notifyAppUpdateAvailable = async ({ app, version, downloadUrl }) => {
     const messages = tokens.map((to) => ({
       to,
       sound: 'default',
+      channelId: 'account',
       title,
       body: message,
       data: { type: 'APP_UPDATE_AVAILABLE', version, downloadUrl }

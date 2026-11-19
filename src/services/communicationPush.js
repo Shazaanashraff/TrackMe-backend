@@ -22,7 +22,7 @@ async function dispatchPush() {
       const pending = job.devices.filter(d => d.state === 'pending');
       for (let offset = 0; offset < pending.length; offset += 100) {
         const batch = pending.slice(offset, offset + 100);
-        const tickets = await expo.sendPushNotificationsAsync(batch.map(d => ({ to: d.token, title: job.title, body: job.body, sound: 'default', channelId: 'communications', data: job.data })));
+        const tickets = await expo.sendPushNotificationsAsync(batch.map(d => ({ to: d.token, title: job.title, body: job.body, sound: 'default', channelId: 'communications', priority: 'high', data: job.data })));
         for (let i = 0; i < batch.length; i++) {
           const ticket = tickets[i];
           if (ticket.status === 'ok') { batch[i].ticketId = ticket.id; batch[i].state = 'receipts'; }
